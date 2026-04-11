@@ -216,7 +216,7 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
     return trades_df
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Backtest trading strategies")
     parser.add_argument("--symbol", default=None, help="Symbol to backtest (defaults to SPY for equity or BTC/USD for crypto)")
     parser.add_argument("--days", type=int, default=30, help="Number of days to backtest")
@@ -237,3 +237,6 @@ if __name__ == "__main__":
         args.symbol = "BTC/USD" if asset_class == "crypto" else "SPY"
 
     run_backtest(args.symbol, args.days, args.strategy, args.timeframe)
+
+if __name__ == "__main__":
+    main()
