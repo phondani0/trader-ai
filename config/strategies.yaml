@@ -32,7 +32,7 @@ vwap_reversion:
   rsi_overbought: 70
   rsi_period: 14
   # Risk
-  stop_loss_pct: 0.5
+  stop_loss_pct: 1.5
   max_position_pct: 10
 
 supertrend:
@@ -40,8 +40,8 @@ supertrend:
   regime: ["trending_low_vol", "trending_high_vol"]
   timeframe: 5Min
   # Supertrend parameters
-  atr_period: 10
-  atr_multiplier: 3.0
+  atr_period: 14
+  atr_multiplier: 4.5
   # Confirmation
   ema_period: 20
   volume_multiplier: 1.2          # Volume must be 1.2x average
@@ -83,8 +83,8 @@ ema_crossover:
   enabled: true
   regime: ["trending_low_vol"]
   timeframe: 5Min
-  fast_ema: 9
-  slow_ema: 21
+  fast_ema: 20
+  slow_ema: 50
   # Filters
   require_vwap_alignment: true
   adx_min: 25                    # Only trade when ADX > 25 (strong trend)
@@ -93,8 +93,8 @@ ema_crossover:
   max_position_pct: 15
 
 chart_patterns:
-  enabled: true
-  regime: ["all"]
+  enabled: false
+  regime: ["trending_high_vol"]
   timeframe: 15Min               # Patterns work better on higher timeframes
   # Pivot detection
   pivot_lookback: 5              # Candles to look back for pivot
@@ -105,6 +105,6 @@ chart_patterns:
   # Harmonic / ABCD
   fib_tolerance: 0.05            # Tolerance for Fibonacci ratio matching
   # Risk
-  stop_loss_pct: 1.0
+  stop_loss_pct: 2.5
   take_profit_rr_ratio: 2.0
   max_position_pct: 10

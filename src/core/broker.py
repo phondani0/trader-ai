@@ -152,6 +152,7 @@ class AlpacaBroker:
         Returns the order with updated ID and status.
         """
         side = OrderSide.BUY if order.side == Side.BUY else OrderSide.SELL
+        tif = TimeInForce.GTC if self.asset_class == "crypto" else TimeInForce.DAY
 
         try:
             if order.order_type == OrderType.MARKET:
@@ -159,14 +160,14 @@ class AlpacaBroker:
                     symbol=order.symbol,
                     qty=order.quantity,
                     side=side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=tif,
                 )
             elif order.order_type == OrderType.LIMIT:
                 request = LimitOrderRequest(
                     symbol=order.symbol,
                     qty=order.quantity,
                     side=side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=tif,
                     limit_price=order.limit_price,
                 )
             elif order.order_type == OrderType.STOP:
@@ -174,7 +175,7 @@ class AlpacaBroker:
                     symbol=order.symbol,
                     qty=order.quantity,
                     side=side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=tif,
                     stop_price=order.stop_price,
                 )
             elif order.order_type == OrderType.STOP_LIMIT:
@@ -182,7 +183,7 @@ class AlpacaBroker:
                     symbol=order.symbol,
                     qty=order.quantity,
                     side=side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=tif,
                     stop_price=order.stop_price,
                     limit_price=order.limit_price,
                 )
@@ -191,7 +192,7 @@ class AlpacaBroker:
                     symbol=order.symbol,
                     qty=order.quantity,
                     side=side,
-                    time_in_force=TimeInForce.DAY,
+                    time_in_force=tif,
                     trail_percent=order.stop_price,  # Using stop_price field for trail %
                 )
             else:
