@@ -68,17 +68,26 @@ cp .env.example .env
 ### 4. Run
 
 ```bash
-# Paper trading (default, safe)
-uv run python -m src.main
+# Start bot in Paper trading mode (default, safe)
+uv run start
 
 # Run a single scan cycle (testing)
-uv run python -m src.main --once
+uv run start --once
 
 # Backtest strategies
-uv run python scripts/backtest.py --symbol SPY --days 30
+uv run backtest --symbol BTC/USD --days 30
 
-# Live trading (requires explicit confirmation)
-uv run python -m src.main --mode live
+# Manual CLI Trading Override (Injects live trades to Alpaca bypassing strategies)
+uv run trade --symbol BTC/USD --side buy --qty 0.01
+
+# Manual CLI Trading (Full Round-Trip Buy then Sell Test)
+uv run trade --symbol BTC/USD --side buy --qty 0.01 --round-trip
+
+# Manual CLI Trading (Emergency Liquidation)
+uv run trade --close-all
+
+# Execute Live Trading Bot (requires explicit terminal confirmation)
+uv run start --mode live
 ```
 
 ## 🛡️ Risk Management

@@ -28,6 +28,7 @@ class RiskManager:
 
     def __init__(self, config: dict, initial_capital: float):
         risk_config = config.get("risk_management", {})
+        self.asset_class = config.get("trading", {}).get("asset_class", "equity").lower()
 
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
@@ -79,6 +80,10 @@ class RiskManager:
             if pos.symbol == signal.symbol:
                 return False, f"Already in position for {signal.symbol}", None
 
+        # Block short selling for Crypto
+        if self.asset_class == "crypto" and signal.side == Side.SELL:
+            return False, "Short selling crypto is not supported by Alpaca", None
+
         # Mandatory stop-loss
         if self.mandatory_stop_loss and signal.stop_loss == 0:
             return False, "Signal has no stop-loss (mandatory)", None
@@ -95,13 +100,13 @@ class RiskManager:
         position_value = signal.entry_price * quantity
         max_exposure = self.current_capital * (self.max_exposure_per_stock_pct / 100)
         if position_value > max_exposure:
-            quantity = int(max_exposure / signal.entry_price)
+            quantity = round(max_exposure / signal.entry_price, 4)
             if quantity <= 0:
                 return False, f"Exceeds max exposure per stock ({self.max_exposure_per_stock_pct}%)", None
 
         # Buying power check
         if position_value > buying_power:
-            quantity = int(buying_power / signal.entry_price)
+            quantity = round(buying_power / signal.entry_price, 4)
             if quantity <= 0:
                 return False, "Insufficient buying power", None
 
@@ -143,7 +148,7 @@ class RiskManager:
         entry_price: float,
         stop_loss: float,
         buying_power: float,
-    ) -> int:
+    ) -> float:
         """
         Calculate position size using fixed-fractional (risk-based) sizing.
 
@@ -154,13 +159,14 @@ class RiskManager:
             return 0
 
         max_risk_amount = self.current_capital * (self.max_risk_per_trade_pct / 100)
-        shares = int(max_risk_amount / risk_per_share)
+        shares = max_risk_amount / risk_per_share
 
         # Ensure we don't exceed buying power
-        max_by_capital = int(buying_power / entry_price) if entry_price > 0 else 0
+        max_by_capital = buying_power / entry_price if entry_price > 0 else 0
         shares = min(shares, max_by_capital)
 
-        return max(0, shares)
+        # Round to 4 decimal places (works for fractional stocks & crypto)
+        return round(max(0.0, shares), 4)
 
     def record_trade(self, trade: Trade):
         """Record a completed trade for daily tracking."""

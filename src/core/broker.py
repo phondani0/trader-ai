@@ -306,10 +306,7 @@ class AlpacaBroker:
     def close_position(self, symbol: str) -> bool:
         """Close an open position entirely."""
         try:
-            self.trading_client.close_position(
-                symbol,
-                close_options=ClosePositionRequest(qty=None, percentage=None),
-            )
+            self.trading_client.close_position(symbol_or_asset_id=symbol)
             logger.info(f"Position closed: {symbol}")
             return True
         except Exception as e:

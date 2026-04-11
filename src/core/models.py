@@ -92,13 +92,13 @@ class Order(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     symbol: str
     side: Side
-    quantity: int
+    quantity: float
     order_type: OrderType = OrderType.MARKET
     limit_price: Optional[float] = None
     stop_price: Optional[float] = None
     status: OrderStatus = OrderStatus.PENDING
     filled_price: Optional[float] = None
-    filled_quantity: Optional[int] = None
+    filled_quantity: Optional[float] = None
     strategy_name: str = ""
     signal: Optional[Signal] = None
 
@@ -107,7 +107,7 @@ class Position(BaseModel):
     """Current open position."""
     symbol: str
     side: Side
-    quantity: int
+    quantity: float
     entry_price: float
     current_price: float = 0.0
     stop_loss: float = 0.0
@@ -124,7 +124,10 @@ class Position(BaseModel):
             self.unrealized_pnl = (current_price - self.entry_price) * self.quantity
         else:
             self.unrealized_pnl = (self.entry_price - current_price) * self.quantity
-        self.unrealized_pnl_pct = (self.unrealized_pnl / (self.entry_price * self.quantity)) * 100
+        if self.entry_price > 0 and self.quantity > 0:
+            self.unrealized_pnl_pct = (self.unrealized_pnl / (self.entry_price * self.quantity)) * 100
+        else:
+            self.unrealized_pnl_pct = 0.0
 
 
 class Trade(BaseModel):
@@ -132,7 +135,7 @@ class Trade(BaseModel):
     id: Optional[int] = None
     symbol: str
     side: Side
-    quantity: int
+    quantity: float
     entry_price: float
     exit_price: float
     entry_time: datetime
@@ -150,7 +153,10 @@ class Trade(BaseModel):
             self.pnl = (self.exit_price - self.entry_price) * self.quantity
         else:
             self.pnl = (self.entry_price - self.exit_price) * self.quantity
-        self.pnl_pct = (self.pnl / (self.entry_price * self.quantity)) * 100
+        if self.entry_price > 0 and self.quantity > 0:
+            self.pnl_pct = (self.pnl / (self.entry_price * self.quantity)) * 100
+        else:
+            self.pnl_pct = 0.0
 
 
 class DailySummary(BaseModel):

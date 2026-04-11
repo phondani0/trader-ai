@@ -337,12 +337,27 @@ class TradingEngine:
 
             sl_side = Side.SELL if order.side == Side.BUY else Side.BUY
 
+            asset_class = self.config.get("trading", {}).get("asset_class", "equity").lower()
+            
+            # Alpaca Crypto does not support standard STOP orders; must use STOP_LIMIT
+            if asset_class == "crypto":
+                order_type = OrderType.STOP_LIMIT
+                # 1% slippage buffer for the limit price to ensure standard market-like execution
+                if sl_side == Side.SELL:
+                    limit_price = order.signal.stop_loss * 0.99
+                else:
+                    limit_price = order.signal.stop_loss * 1.01
+            else:
+                order_type = OrderType.STOP
+                limit_price = None
+
             sl_order = OrderModel(
                 symbol=order.symbol,
                 side=sl_side,
                 quantity=order.quantity,
-                order_type=OrderType.STOP,
+                order_type=order_type,
                 stop_price=order.signal.stop_loss,
+                limit_price=limit_price,
                 strategy_name=f"{order.strategy_name}_stoploss",
             )
 
