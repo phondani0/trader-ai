@@ -1,0 +1,29 @@
+[project]
+name = "trader-ai"
+version = "1.0.0"
+description = "Autonomous intraday trading bot for US markets using Alpaca"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.5",
+    "alpaca-py>=0.43.2",
+    "apscheduler>=3.11.2",
+    "fastapi>=0.128.8",
+    "jinja2>=3.1.6",
+    "loguru>=0.7.3",
+    "matplotlib>=3.9.4",
+    "mplfinance>=0.12.10b0",
+    "numpy>=2.0.2",
+    "pandas>=2.3.3",
+    "pandas-ta>=0.4.71b0",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "python-telegram-bot>=22.5",
+    "pytz>=2026.1.post1",
+    "pyyaml>=6.0.3",
+    "requests>=2.32.5",
+    "rich>=14.3.4",
+    "scipy>=1.13.1",
+    "sqlalchemy>=2.0.49",
+    "uvicorn>=0.39.0",
+]

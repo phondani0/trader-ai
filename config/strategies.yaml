@@ -1,0 +1,110 @@
+# ═══════════════════════════════════════════════════
+# Strategy Parameters
+# ═══════════════════════════════════════════════════
+
+# Strategy-specific parameters. Each strategy reads its config from here.
+# Modify these to tune strategy behavior without touching code.
+
+macd_bollinger:
+  enabled: true
+  regime: ["sideways_low_vol", "sideways_high_vol"]
+  timeframe: 5Min
+  # MACD parameters
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  # Bollinger Bands parameters
+  bb_period: 20
+  bb_std_dev: 2.0
+  # Risk
+  stop_loss_atr_multiplier: 1.5
+  take_profit_rr_ratio: 2.0       # Risk:Reward 1:2
+  max_position_pct: 15
+
+vwap_reversion:
+  enabled: true
+  regime: ["sideways_low_vol"]
+  timeframe: 5Min
+  # VWAP deviation threshold
+  vwap_std_entry: 2.0             # Enter when price is 2 std devs from VWAP
+  vwap_std_exit: 0.5              # Exit when price returns near VWAP
+  rsi_oversold: 30
+  rsi_overbought: 70
+  rsi_period: 14
+  # Risk
+  stop_loss_pct: 0.5
+  max_position_pct: 10
+
+supertrend:
+  enabled: true
+  regime: ["trending_low_vol", "trending_high_vol"]
+  timeframe: 5Min
+  # Supertrend parameters
+  atr_period: 10
+  atr_multiplier: 3.0
+  # Confirmation
+  ema_period: 20
+  volume_multiplier: 1.2          # Volume must be 1.2x average
+  # Risk
+  trailing_stop: true
+  max_position_pct: 15
+
+orb:
+  enabled: true
+  regime: ["all"]                 # Active in all regimes during ORB window
+  timeframe: 5Min
+  # ORB window
+  orb_minutes: 30                 # First 30 minutes
+  # Filters
+  require_vwap_alignment: true    # Price must align with VWAP direction
+  min_range_pct: 0.3              # Min ORB range as % of price
+  max_range_pct: 2.0              # Max ORB range (avoid crazy opens)
+  volume_multiplier: 1.5          # Volume confirmation
+  # Risk
+  stop_loss_at_opposite_range: true
+  take_profit_rr_ratio: 2.0
+  max_position_pct: 15
+
+rsi_divergence:
+  enabled: true
+  regime: ["trending_low_vol", "trending_high_vol"]
+  timeframe: 5Min
+  rsi_period: 14
+  lookback_bars: 30               # Bars to look back for divergence
+  min_swing_pct: 0.5              # Min price swing to qualify
+  # Confirmation
+  require_macd_confirmation: true
+  # Risk
+  stop_loss_swing: true           # Stop at recent swing
+  take_profit_rr_ratio: 2.0
+  max_position_pct: 10
+
+ema_crossover:
+  enabled: true
+  regime: ["trending_low_vol"]
+  timeframe: 5Min
+  fast_ema: 9
+  slow_ema: 21
+  # Filters
+  require_vwap_alignment: true
+  adx_min: 25                    # Only trade when ADX > 25 (strong trend)
+  # Risk
+  trailing_stop_atr: 2.0
+  max_position_pct: 15
+
+chart_patterns:
+  enabled: true
+  regime: ["all"]
+  timeframe: 15Min               # Patterns work better on higher timeframes
+  # Pivot detection
+  pivot_lookback: 5              # Candles to look back for pivot
+  pivot_lookahead: 2             # Candles to confirm pivot
+  # Triangle parameters
+  min_touches: 3                 # Minimum touches on trendline
+  convergence_threshold: 0.7     # How close lines must converge (0-1)
+  # Harmonic / ABCD
+  fib_tolerance: 0.05            # Tolerance for Fibonacci ratio matching
+  # Risk
+  stop_loss_pct: 1.0
+  take_profit_rr_ratio: 2.0
+  max_position_pct: 10
