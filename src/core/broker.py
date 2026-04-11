@@ -31,14 +31,17 @@ from alpaca.trading.enums import (
     OrderStatus as AlpacaOrderStatus,
     QueryOrderStatus,
 )
-from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import (
     StockBarsRequest,
     StockLatestQuoteRequest,
     StockSnapshotRequest,
+    CryptoBarsRequest,
+    CryptoLatestQuoteRequest,
+    CryptoSnapshotRequest,
 )
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.data.live import StockDataStream
+from alpaca.data.live import StockDataStream, CryptoDataStream
 
 from src.core.models import (
     Order, Position, Side, OrderType, OrderStatus, TradingMode,
@@ -80,6 +83,16 @@ class AlpacaBroker:
         self.mode = mode
         is_paper = mode == TradingMode.PAPER
 
+        import yaml
+        from pathlib import Path
+        config_path = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
+        try:
+            with open(config_path, "r") as f:
+                settings = yaml.safe_load(f)
+            self.asset_class = settings.get("trading", {}).get("asset_class", "equity").lower()
+        except Exception:
+            self.asset_class = "equity"
+
         # Trading client
         self.trading_client = TradingClient(
             api_key=api_key,
@@ -88,15 +101,20 @@ class AlpacaBroker:
         )
 
         # Data client (no auth needed for free tier, but auth gives more data)
-        self.data_client = StockHistoricalDataClient(
-            api_key=api_key,
-            secret_key=secret_key,
-        )
+        if self.asset_class == "crypto":
+            self.data_client = CryptoHistoricalDataClient(
+                api_key=api_key,
+                secret_key=secret_key,
+            )
+            self._stream: Optional[CryptoDataStream] = None
+        else:
+            self.data_client = StockHistoricalDataClient(
+                api_key=api_key,
+                secret_key=secret_key,
+            )
+            self._stream: Optional[StockDataStream] = None
 
-        # WebSocket stream for real-time data
-        self._stream: Optional[StockDataStream] = None
-
-        logger.info(f"Alpaca broker initialized in {'PAPER' if is_paper else '🔴 LIVE'} mode")
+        logger.info(f"Alpaca broker initialized in {'PAPER' if is_paper else '🔴 LIVE'} mode (Asset Class: {self.asset_class})")
 
     # ─── Account ──────────────────────────────────────────────────
 
@@ -334,14 +352,23 @@ class AlpacaBroker:
 
         start = datetime.utcnow() - timedelta(days=lookback_days)
 
-        request_params = StockBarsRequest(
-            symbol_or_symbols=symbol,
-            timeframe=tf,
-            start=start,
-            limit=limit,
-        )
-
-        bars = self.data_client.get_stock_bars(request_params)
+        if self.asset_class == "crypto":
+            request_params = CryptoBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=tf,
+                start=start,
+                limit=limit,
+            )
+            bars = self.data_client.get_crypto_bars(request_params)
+        else:
+            request_params = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=tf,
+                start=start,
+                limit=limit,
+            )
+            bars = self.data_client.get_stock_bars(request_params)
+            
         df = bars.df
 
         if isinstance(df.index, pd.MultiIndex):
@@ -370,13 +397,21 @@ class AlpacaBroker:
 
         start = datetime.utcnow() - timedelta(days=lookback_days)
 
-        request_params = StockBarsRequest(
-            symbol_or_symbols=symbols,
-            timeframe=tf,
-            start=start,
-        )
-
-        bars = self.data_client.get_stock_bars(request_params)
+        if self.asset_class == "crypto":
+            request_params = CryptoBarsRequest(
+                symbol_or_symbols=symbols,
+                timeframe=tf,
+                start=start,
+            )
+            bars = self.data_client.get_crypto_bars(request_params)
+        else:
+            request_params = StockBarsRequest(
+                symbol_or_symbols=symbols,
+                timeframe=tf,
+                start=start,
+            )
+            bars = self.data_client.get_stock_bars(request_params)
+            
         df = bars.df
 
         result = {}
@@ -400,8 +435,13 @@ class AlpacaBroker:
 
     def get_latest_quote(self, symbol: str) -> dict:
         """Get the latest quote (bid/ask) for a symbol."""
-        request = StockLatestQuoteRequest(symbol_or_symbols=symbol)
-        quotes = self.data_client.get_stock_latest_quote(request)
+        if self.asset_class == "crypto":
+            request = CryptoLatestQuoteRequest(symbol_or_symbols=symbol)
+            quotes = self.data_client.get_crypto_latest_quote(request)
+        else:
+            request = StockLatestQuoteRequest(symbol_or_symbols=symbol)
+            quotes = self.data_client.get_stock_latest_quote(request)
+            
         quote = quotes[symbol]
         return {
             "symbol": symbol,
@@ -415,8 +455,12 @@ class AlpacaBroker:
 
     def get_snapshot(self, symbol: str) -> dict:
         """Get a complete snapshot for a symbol (quote + latest bar + prev close)."""
-        request = StockSnapshotRequest(symbol_or_symbols=symbol)
-        snapshots = self.data_client.get_stock_snapshot(request)
+        if self.asset_class == "crypto":
+            request = CryptoSnapshotRequest(symbol_or_symbols=symbol)
+            snapshots = self.data_client.get_crypto_snapshot(request)
+        else:
+            request = StockSnapshotRequest(symbol_or_symbols=symbol)
+            snapshots = self.data_client.get_stock_snapshot(request)
         snap = snapshots[symbol]
         return {
             "symbol": symbol,
@@ -448,6 +492,8 @@ class AlpacaBroker:
 
     def is_market_open(self) -> bool:
         """Check if the US stock market is currently open."""
+        if self.asset_class == "crypto":
+            return True
         clock = self.trading_client.get_clock()
         return clock.is_open
 

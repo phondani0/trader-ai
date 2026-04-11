@@ -50,7 +50,7 @@ supertrend:
   max_position_pct: 15
 
 orb:
-  enabled: true
+  enabled: false
   regime: ["all"]                 # Active in all regimes during ORB window
   timeframe: 5Min
   # ORB window

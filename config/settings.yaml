@@ -6,6 +6,7 @@ trading:
   mode: paper                    # paper | live (NEVER change to live without extensive testing)
   capital: 25000                 # Starting capital in USD (PDT rule: need $25k for unlimited day trades)
   market: US                     # US stock market
+  asset_class: crypto            # equity | crypto
 
 market_hours:
   timezone: "US/Eastern"

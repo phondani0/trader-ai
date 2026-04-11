@@ -107,7 +107,9 @@ class ChartPatternStrategy(BaseStrategy):
         low_slope = np.polyfit(low_x, recent_lows["price"].values, 1)[0]
 
         curr = df.iloc[-1]
+        prev = df.iloc[-2]
         close = curr["close"]
+        prev_close = prev["close"]
         atr = curr["atr"]
 
         if pd.isna(atr) or atr == 0:
@@ -123,7 +125,7 @@ class ChartPatternStrategy(BaseStrategy):
             last_low = float(recent_lows["price"].iloc[-1])
 
             # Breakout above → Buy
-            if close > last_high:
+            if close > last_high and prev_close <= last_high:
                 stop_loss = close * (1 - stop_loss_pct / 100)
                 take_profit = close + (close - stop_loss) * 2
                 return self._create_signal(
@@ -139,7 +141,7 @@ class ChartPatternStrategy(BaseStrategy):
                     metadata={"pattern": pattern},
                 )
             # Breakdown below → Sell
-            elif close < last_low:
+            elif close < last_low and prev_close >= last_low:
                 stop_loss = close * (1 + stop_loss_pct / 100)
                 take_profit = close - (stop_loss - close) * 2
                 return self._create_signal(
@@ -160,7 +162,7 @@ class ChartPatternStrategy(BaseStrategy):
             pattern = "Descending Triangle"
             support = float(recent_lows["price"].iloc[-1])
 
-            if close < support:
+            if close < support and prev_close >= support:
                 stop_loss = close * (1 + stop_loss_pct / 100)
                 take_profit = close - (stop_loss - close) * 2
                 return self._create_signal(
@@ -181,7 +183,7 @@ class ChartPatternStrategy(BaseStrategy):
             pattern = "Ascending Triangle"
             resistance = float(recent_highs["price"].iloc[-1])
 
-            if close > resistance:
+            if close > resistance and prev_close <= resistance:
                 stop_loss = close * (1 - stop_loss_pct / 100)
                 take_profit = close + (close - stop_loss) * 2
                 return self._create_signal(
@@ -210,7 +212,9 @@ class ChartPatternStrategy(BaseStrategy):
         swing_highs, swing_lows = self._find_pivots(df)
 
         curr = df.iloc[-1]
+        prev = df.iloc[-2]
         close = curr["close"]
+        prev_close = prev["close"]
         atr = curr["atr"]
 
         if pd.isna(atr) or atr == 0:
@@ -232,7 +236,7 @@ class ChartPatternStrategy(BaseStrategy):
                     neckline = float(neckline_area["high"].max())
 
                     # Breakout above neckline
-                    if close > neckline:
+                    if close > neckline and prev_close <= neckline:
                         pattern_height = neckline - min(low1, low2)
                         stop_loss = min(low1, low2) - (atr * 0.5)
                         take_profit = neckline + pattern_height
@@ -261,7 +265,7 @@ class ChartPatternStrategy(BaseStrategy):
                 if not neckline_area.empty:
                     neckline = float(neckline_area["low"].min())
 
-                    if close < neckline:
+                    if close < neckline and prev_close >= neckline:
                         pattern_height = max(high1, high2) - neckline
                         stop_loss = max(high1, high2) + (atr * 0.5)
                         take_profit = neckline - pattern_height
@@ -299,7 +303,9 @@ class ChartPatternStrategy(BaseStrategy):
             return None
 
         curr = df.iloc[-1]
+        prev = df.iloc[-2]
         close = curr["close"]
+        prev_close = prev["close"]
         atr = curr["atr"]
 
         if pd.isna(atr) or atr == 0:
@@ -328,8 +334,8 @@ class ChartPatternStrategy(BaseStrategy):
                     d_target_low = c + (bc * 1.272)
                     d_target_high = c + (bc * 1.618)
 
-                    # Check if current price is near the D target
-                    if d_target_low <= close <= d_target_high:
+                    # Check if current price just entered the D target from below
+                    if d_target_low <= close <= d_target_high and prev_close < d_target_low:
                         stop_loss = a - (atr * 0.5)
                         take_profit = close + (close - stop_loss) * 1.5
 

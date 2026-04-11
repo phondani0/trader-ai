@@ -40,13 +40,8 @@ consumer:
 
 # Default active watchlist (what the bot monitors daily)
 active_watchlist:
-  - AAPL
-  - MSFT
-  - NVDA
-  - TSLA
-  - AMD
-  - META
-  - SPY
-  - QQQ
-  - AMZN
-  - GOOGL
+  - BTC/USD
+  - ETH/USD
+  - SOL/USD
+  - DOGE/USD
+  - LTC/USD

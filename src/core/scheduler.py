@@ -67,6 +67,28 @@ class MarketScheduler:
     def start(self):
         """Start the scheduler with all registered callbacks."""
 
+        if self.broker.asset_class == "crypto":
+            # 24/7 continuous scan
+            if "scan_tick" in self._callbacks:
+                self.scheduler.add_job(
+                    self._safe_run("scan_tick"),
+                    CronTrigger(minute="*/1", timezone=pytz.UTC),
+                    id="scan_tick",
+                    name="Strategy Scan Tick (Crypto 24/7)",
+                )
+            # Daily report at midnight UTC
+            if "market_close" in self._callbacks:
+                self.scheduler.add_job(
+                    self._safe_run("market_close"),
+                    CronTrigger(hour=0, minute=5, timezone=pytz.UTC),
+                    id="market_close",
+                    name="Daily Crypto Close Report (Midnight UTC)",
+                )
+            self.scheduler.start()
+            logger.info("📅 Market scheduler started — running continuously for CRYPTO")
+            self._log_schedule()
+            return
+
         # Pre-market preparation
         if "pre_market" in self._callbacks:
             self.scheduler.add_job(
@@ -149,26 +171,40 @@ class MarketScheduler:
 
     def is_market_hours(self) -> bool:
         """Check if we're currently within trading hours."""
+        if self.broker.asset_class == "crypto":
+            return True
         now_et = datetime.now(ET).time()
         return self.market_open <= now_et <= time(self.stop_entries.hour, self.stop_entries.minute)
 
     def is_orb_window(self) -> bool:
         """Check if we're in the Opening Range Breakout window."""
+        if self.broker.asset_class == "crypto":
+            return False
         now_et = datetime.now(ET).time()
         return self.market_open <= now_et <= self.orb_end
 
     def can_open_new_positions(self) -> bool:
         """Check if we can still open new positions."""
+        if self.broker.asset_class == "crypto":
+            return True
         now_et = datetime.now(ET).time()
         return self.market_open <= now_et <= time(self.stop_entries.hour, self.stop_entries.minute)
 
     def is_square_off_time(self) -> bool:
         """Check if it's time to close all positions."""
+        if self.broker.asset_class == "crypto":
+            return False
         now_et = datetime.now(ET).time()
         return now_et >= time(self.auto_square_off.hour, self.auto_square_off.minute)
 
     def time_to_close_minutes(self) -> float:
         """Minutes remaining until market close."""
+        if self.broker.asset_class == "crypto":
+            from datetime import timedelta
+            now_utc = datetime.now(pytz.UTC)
+            next_midnight = (now_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            return (next_midnight - now_utc).total_seconds() / 60
+            
         now_et = datetime.now(ET)
         close_time = now_et.replace(
             hour=self.market_close.hour,

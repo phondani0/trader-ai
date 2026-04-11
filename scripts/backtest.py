@@ -64,23 +64,20 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
     # Regime detector
     regime_detector = RegimeDetector()
 
-    # Initialize strategies
+    # Initialize strategies from config file
+    import yaml
+    config_path = Path(__file__).parent.parent / "config" / "strategies.yaml"
+    with open(config_path, "r") as f:
+        strat_config = yaml.safe_load(f)
+
     all_strategies = {
-        "macd_bollinger": MACDBollingerStrategy({"enabled": True, "regime": ["all"],
-                                                  "stop_loss_atr_multiplier": 1.5, "take_profit_rr_ratio": 2.0}),
-        "vwap_reversion": VWAPReversionStrategy({"enabled": True, "regime": ["all"],
-                                                  "vwap_std_entry": 2.0, "stop_loss_pct": 0.5,
-                                                  "rsi_oversold": 30, "rsi_overbought": 70}),
-        "supertrend": SupertrendStrategy({"enabled": True, "regime": ["all"], "volume_multiplier": 1.2}),
-        "rsi_divergence": RSIDivergenceStrategy({"enabled": True, "regime": ["all"],
-                                                  "lookback_bars": 30, "min_swing_pct": 0.5,
-                                                  "require_macd_confirmation": True, "take_profit_rr_ratio": 2.0}),
-        "ema_crossover": EMACrossoverStrategy({"enabled": True, "regime": ["all"],
-                                                "fast_ema": 9, "slow_ema": 21, "adx_min": 25,
-                                                "require_vwap_alignment": True, "trailing_stop_atr": 2.0}),
-        "chart_patterns": ChartPatternStrategy({"enabled": True, "regime": ["all"],
-                                                 "pivot_lookback": 5, "fib_tolerance": 0.05,
-                                                 "stop_loss_pct": 1.0, "take_profit_rr_ratio": 2.0}),
+        "macd_bollinger": MACDBollingerStrategy(strat_config.get("macd_bollinger", {})),
+        "vwap_reversion": VWAPReversionStrategy(strat_config.get("vwap_reversion", {})),
+        "supertrend": SupertrendStrategy(strat_config.get("supertrend", {})),
+        "orb": ORBStrategy(strat_config.get("orb", {})),
+        "rsi_divergence": RSIDivergenceStrategy(strat_config.get("rsi_divergence", {})),
+        "ema_crossover": EMACrossoverStrategy(strat_config.get("ema_crossover", {})),
+        "chart_patterns": ChartPatternStrategy(strat_config.get("chart_patterns", {})),
     }
 
     strategies = list(all_strategies.values()) if strategy_name == "all" else [all_strategies[strategy_name]]
@@ -88,48 +85,91 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
     # Walk-forward simulation
     min_lookback = 50  # Need at least 50 bars for indicators
     trades = []
+    
+    # State tracking per strategy to ensure we don't exit instantaneously
+    current_positions = {strat.name: None for strat in strategies}
 
-    for i in range(min_lookback, len(df) - 1):
+    for i in range(min_lookback, len(df)):
         window = df.iloc[:i + 1]
+        current_bar = df.iloc[i]
         regime = regime_detector.detect(window)
 
         for strategy in strategies:
-            signal = strategy.generate_signal(symbol, window, regime)
+            pos = current_positions[strategy.name]
 
-            if signal:
-                # Simulate trade: enter at signal price, exit at next bar's close (simplified)
-                next_bar = df.iloc[i + 1]
-                entry_price = signal.entry_price
-                exit_price = float(next_bar["close"])
+            if pos is None:
+                # Look for new entry
+                if strategy.should_run(regime):
+                    signal = strategy.generate_signal(symbol, window, regime)
+                    if signal:
+                        current_positions[strategy.name] = {
+                        "entry_price": signal.entry_price,
+                        "stop_loss": signal.stop_loss,
+                        "take_profit": signal.take_profit,
+                        "side": signal.side,
+                        "entry_time": window.index[-1],
+                        "regime": regime.value,
+                        "reason": signal.reason,
+                        "strategy": signal.strategy_name
+                    }
+            else:
+                # Check for exit on current bar
+                high = float(current_bar["high"])
+                low = float(current_bar["low"])
+                exit_price = None
 
-                # Check stop loss
-                if signal.side == Side.BUY:
-                    if float(next_bar["low"]) <= signal.stop_loss:
-                        exit_price = signal.stop_loss  # Stopped out
-                    elif signal.take_profit and float(next_bar["high"]) >= signal.take_profit:
-                        exit_price = signal.take_profit  # Take profit
+                if pos["side"] == Side.BUY:
+                    if low <= pos["stop_loss"]:
+                        exit_price = pos["stop_loss"]  # Stopped out
+                    elif pos["take_profit"] and high >= pos["take_profit"]:
+                        exit_price = pos["take_profit"]  # Take profit
                 else:
-                    if float(next_bar["high"]) >= signal.stop_loss:
-                        exit_price = signal.stop_loss
-                    elif signal.take_profit and float(next_bar["low"]) <= signal.take_profit:
-                        exit_price = signal.take_profit
+                    if high >= pos["stop_loss"]:
+                        exit_price = pos["stop_loss"]
+                    elif pos["take_profit"] and low <= pos["take_profit"]:
+                        exit_price = pos["take_profit"]
 
-                # Calculate P&L
-                if signal.side == Side.BUY:
-                    pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-                else:
-                    pnl_pct = ((entry_price - exit_price) / entry_price) * 100
+                if exit_price is not None:
+                    # Calculate P&L
+                    if pos["side"] == Side.BUY:
+                        pnl_pct = ((exit_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                    else:
+                        pnl_pct = ((pos["entry_price"] - exit_price) / pos["entry_price"]) * 100
 
-                trades.append({
-                    "timestamp": window.index[-1],
-                    "strategy": signal.strategy_name,
-                    "side": signal.side.value,
-                    "entry": entry_price,
-                    "exit": exit_price,
-                    "pnl_pct": pnl_pct,
-                    "regime": regime.value,
-                    "reason": signal.reason,
-                })
+                    trades.append({
+                        "timestamp": pos["entry_time"],
+                        "exit_time": window.index[-1],
+                        "strategy": pos["strategy"],
+                        "side": pos["side"].value,
+                        "entry": pos["entry_price"],
+                        "exit": exit_price,
+                        "pnl_pct": pnl_pct,
+                        "regime": pos["regime"],
+                        "reason": pos["reason"],
+                    })
+                    # Clear position
+                    current_positions[strategy.name] = None
+                    
+    # Force close any remaining open positions at the end of backtest
+    last_close = float(df.iloc[-1]["close"])
+    last_time = df.index[-1]
+    for strat_name, pos in current_positions.items():
+        if pos is not None:
+            if pos["side"] == Side.BUY:
+                pnl_pct = ((last_close - pos["entry_price"]) / pos["entry_price"]) * 100
+            else:
+                pnl_pct = ((pos["entry_price"] - last_close) / pos["entry_price"]) * 100
+            trades.append({
+                "timestamp": pos["entry_time"],
+                "exit_time": last_time,
+                "strategy": pos["strategy"],
+                "side": pos["side"].value,
+                "entry": pos["entry_price"],
+                "exit": last_close,
+                "pnl_pct": pnl_pct,
+                "regime": pos["regime"],
+                "reason": pos["reason"] + " (EOD Close)",
+            })
 
     # Results
     if not trades:
@@ -178,10 +218,22 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backtest trading strategies")
-    parser.add_argument("--symbol", default="SPY", help="Stock symbol to backtest")
+    parser.add_argument("--symbol", default=None, help="Symbol to backtest (defaults to SPY for equity or BTC/USD for crypto)")
     parser.add_argument("--days", type=int, default=30, help="Number of days to backtest")
     parser.add_argument("--strategy", default="all", help="Strategy name or 'all'")
     parser.add_argument("--timeframe", default="5Min", help="Candle timeframe")
     args = parser.parse_args()
+
+    import yaml
+    config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+    try:
+        with open(config_path, "r") as f:
+            settings = yaml.safe_load(f)
+        asset_class = settings.get("trading", {}).get("asset_class", "equity").lower()
+    except Exception:
+        asset_class = "equity"
+        
+    if args.symbol is None:
+        args.symbol = "BTC/USD" if asset_class == "crypto" else "SPY"
 
     run_backtest(args.symbol, args.days, args.strategy, args.timeframe)
