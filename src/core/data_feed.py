@@ -1,25 +1,18 @@
 """
-Data Feed Manager.
-
-Manages historical data fetching, caching, and provides
-clean DataFrames with technical indicators pre-computed.
-
-Uses pandas-ta for all technical indicator calculations.
+Data fetching, pagination, and indicator enrichment.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Optional
+from datetime import datetime, timedelta
+from typing import Optional, Sequence
 
 import pandas as pd
-import pandas_ta as ta
 from loguru import logger
 
 from src.core.base_broker import BaseBroker
-
-# ─── Internal Timeframe Mapping ───────────────────────────────────────
-# Config uses "5Min" style, brokers use "5m" style. Translate here once.
+from src.core.indicator_engine import IndicatorPipeline
+from src.intelligence.regime_detector import RegimeDetector
 
 _TIMEFRAME_MAP = {
     "1Min": "1m",
@@ -30,12 +23,18 @@ _TIMEFRAME_MAP = {
     "1Day": "1d",
 }
 
+_TIMEFRAME_MINUTES = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "1d": 1440,
+}
+
 
 class DataFeed:
-    """
-    Central data manager that fetches, caches, and enriches market data
-    with technical indicators needed by all strategies.
-    """
+    """Fetch and enrich market data for runtime and research workflows."""
 
     def __init__(self, broker: BaseBroker, config: dict):
         self.broker = broker
@@ -43,206 +42,150 @@ class DataFeed:
 
         raw_tf = config.get("data", {}).get("candle_interval", "5Min")
         self.timeframe = _TIMEFRAME_MAP.get(raw_tf, raw_tf)
-        self.lookback_days = config.get("data", {}).get("lookback_days", 60)
+        self.lookback_days = int(config.get("data", {}).get("lookback_days", 60))
+        self.max_bars_per_request = int(
+            config.get("data", {}).get("max_bars_per_request", 1000)
+        )
 
-        # Cache: symbol -> DataFrame (refreshed every candle)
         self._cache: dict[str, pd.DataFrame] = {}
         self._last_update: dict[str, datetime] = {}
+        self.regime_detector = RegimeDetector(config=config)
+        self.indicator_pipeline = IndicatorPipeline(self.regime_detector)
 
-    def get_data(self, symbol: str, force_refresh: bool = False) -> pd.DataFrame:
-        """
-        Get enriched OHLCV data for the default lookback period.
-        """
-        if not force_refresh and symbol in self._cache:
-            return self._cache[symbol]
-
-        df = self.broker.fetch_ohlcv(symbol, timeframe=self.timeframe, days=self.lookback_days)
-        if not df.empty:
-            df = self._add_indicators(df)
-            self._cache[symbol] = df
-            self._last_update[symbol] = datetime.utcnow()
-
-        return df
-
-    def get_historical_range(
-        self, symbol: str, start_date: datetime, end_date: datetime
+    def get_data(
+        self,
+        symbol: str,
+        force_refresh: bool = False,
+        strategies: Sequence | None = None,
     ) -> pd.DataFrame:
         """
-        Fetch and enrich data for a specific historical date range.
-        Uses pagination to handle exchange limits.
+        Fetch the default lookback window with paginated historical requests.
+        """
+        if not force_refresh and symbol in self._cache:
+            cached = self.indicator_pipeline.enrich(self._cache[symbol], strategies)
+            self._cache[symbol] = cached
+            return cached
+
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=self.lookback_days)
+        return self.get_historical_range(
+            symbol,
+            start_date,
+            end_date,
+            strategies=strategies,
+            cache_symbol=symbol,
+        )
+
+    def get_historical_range(
+        self,
+        symbol: str,
+        start_date: datetime,
+        end_date: datetime,
+        *,
+        strategies: Sequence | None = None,
+        cache_symbol: str | None = None,
+    ) -> pd.DataFrame:
+        """
+        Fetch and enrich a specific date range using paginated broker requests.
         """
         logger.info(f"Fetching historical range for {symbol}: {start_date} to {end_date}")
 
-        all_df = pd.DataFrame()
-        current_since = int(start_date.timestamp() * 1000)
-        end_timestamp = int(end_date.timestamp() * 1000)
-
-        while True:
-            df = self.broker.fetch_ohlcv(
-                symbol, timeframe=self.timeframe, limit=1000, since=current_since
-            )
-            if df.empty:
-                break
-
-            all_df = pd.concat([all_df, df])
-            
-            # Use the last timestamp + 1 interval as the next 'since'
-            # (Timeframe mapping needed here, but CCXT handles it well enough if we just increment)
-            last_ts = int(df.index[-1].timestamp() * 1000)
-            if last_ts >= end_timestamp or len(df) < 100:
-                break
-            
-            # Add 1ms to avoid duplicates
-            current_since = last_ts + 1
-
-        if all_df.empty:
-            return all_df
-
-        # Filter to exact range and deduplicate
-        all_df = all_df[~all_df.index.duplicated(keep="first")]
-        mask = (all_df.index >= start_date) & (all_df.index <= end_date)
-        df_range = all_df.loc[mask].copy()
-
-        if not df_range.empty:
-            df_range = self._add_indicators(df_range)
-
-        return df_range
-
-    def get_data(self, symbol: str, force_refresh: bool = False) -> pd.DataFrame:
-        """
-        Get enriched OHLCV data for the default lookback period.
-        """
-        if not force_refresh and symbol in self._cache:
-            return self._cache[symbol]
-
-        try:
-            # Estimate bar limit from lookback days and timeframe
-            minutes_map = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "1d": 1440}
-            bar_minutes = minutes_map.get(self.timeframe, 5)
-            limit = min(self.lookback_days * (1440 // bar_minutes), 1000)
-
-            df = self.broker.fetch_ohlcv(symbol, self.timeframe, limit=limit)
-
-            if df.empty:
-                logger.warning(f"No data for {symbol}")
-                return df
-
-            df = self._add_indicators(df)
-            self._cache[symbol] = df
-            self._last_update[symbol] = datetime.utcnow()
-
+        df = self._fetch_range(symbol, start_date, end_date)
+        if df.empty:
             return df
 
-        except Exception as e:
-            logger.error(f"Failed to get data for {symbol}: {e}")
-            return pd.DataFrame()
+        enriched = self.indicator_pipeline.enrich(df, strategies)
+        if cache_symbol:
+            self._cache[cache_symbol] = enriched
+            self._last_update[cache_symbol] = datetime.utcnow()
+        return enriched
 
-    def refresh_all(self, symbols: list[str]) -> dict[str, pd.DataFrame]:
-        """Refresh data for all symbols in the watchlist."""
-        result = {}
+    def refresh_all(
+        self,
+        symbols: list[str],
+        strategies: Sequence | None = None,
+    ) -> dict[str, pd.DataFrame]:
+        """Refresh the active symbol universe."""
+        result: dict[str, pd.DataFrame] = {}
         for symbol in symbols:
             try:
-                df = self.get_data(symbol, force_refresh=True)
-                result[symbol] = df
-            except Exception as e:
-                logger.error(f"Failed to refresh {symbol}: {e}")
+                result[symbol] = self.get_data(
+                    symbol,
+                    force_refresh=True,
+                    strategies=strategies,
+                )
+            except Exception as exc:
+                logger.error(f"Failed to refresh {symbol}: {exc}")
                 result[symbol] = pd.DataFrame()
         return result
 
     def get_latest_price(self, symbol: str) -> Optional[float]:
-        """Get the latest price for a symbol from cached data."""
+        """Return the latest cached close or fallback ticker price."""
         if symbol in self._cache and not self._cache[symbol].empty:
             return float(self._cache[symbol]["close"].iloc[-1])
         try:
             ticker = self.broker.fetch_ticker(symbol)
-            return ticker.get("last", 0.0)
+            return float(ticker.get("last", 0.0) or 0.0)
         except Exception:
             return None
 
     def get_vwap(self, symbol: str) -> Optional[float]:
-        """Get current VWAP for a symbol."""
+        """Return the latest cached VWAP value."""
         if symbol in self._cache and not self._cache[symbol].empty:
             df = self._cache[symbol]
             if "vwap" in df.columns:
                 return float(df["vwap"].iloc[-1])
         return None
 
-    def _add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Compute all technical indicators needed by the strategy engine.
-        This runs once per data refresh — all strategies read from this.
-        """
-        if df.empty or len(df) < 30:
-            return df
-
-        # ─── Moving Averages ──────────────────────────────────────
-        df["ema_9"] = ta.ema(df["close"], length=9)
-        df["ema_21"] = ta.ema(df["close"], length=21)
-        df["ema_200"] = ta.ema(df["close"], length=200)
-        df["sma_20"] = ta.sma(df["close"], length=20)
-        df["sma_50"] = ta.sma(df["close"], length=50)
-
-        # ─── RSI ──────────────────────────────────────────────────
-        df["rsi_14"] = ta.rsi(df["close"], length=14)
-
-        # ─── MACD ─────────────────────────────────────────────────
-        macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
-        if macd is not None and not macd.empty:
-            df["macd"] = macd.iloc[:, 0]
-            df["macd_hist"] = macd.iloc[:, 1]
-            df["macd_signal"] = macd.iloc[:, 2]
-
-        # ─── Bollinger Bands ──────────────────────────────────────
-        bbands = ta.bbands(df["close"], length=20, std=2.0)
-        if bbands is not None and not bbands.empty:
-            df["bb_lower"] = bbands.iloc[:, 0]
-            df["bb_mid"] = bbands.iloc[:, 1]
-            df["bb_upper"] = bbands.iloc[:, 2]
-            df["bb_bandwidth"] = bbands.iloc[:, 3] if bbands.shape[1] > 3 else None
-            df["bb_pct"] = bbands.iloc[:, 4] if bbands.shape[1] > 4 else None
-
-        # ─── ADX (Trend Strength) ─────────────────────────────────
-        adx = ta.adx(df["high"], df["low"], df["close"], length=14)
-        if adx is not None and not adx.empty:
-            df["adx"] = adx.iloc[:, 0]
-            df["di_plus"] = adx.iloc[:, 1]
-            df["di_minus"] = adx.iloc[:, 2]
-
-        # ─── ATR (Volatility) ─────────────────────────────────────
-        df["atr"] = ta.atr(df["high"], df["low"], df["close"], length=14)
-        df["atr_pct"] = (df["atr"] / df["close"]) * 100
-
-        # ─── Supertrend ───────────────────────────────────────────
-        supertrend = ta.supertrend(
-            df["high"], df["low"], df["close"], length=10, multiplier=3.0
-        )
-        if supertrend is not None and not supertrend.empty:
-            df["supertrend"] = supertrend.iloc[:, 0]
-            df["supertrend_dir"] = supertrend.iloc[:, 1]
-
-        # ─── Volume ───────────────────────────────────────────────
-        df["volume_sma_20"] = ta.sma(df["volume"], length=20)
-        df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
-
-        # ─── VWAP (intraday) ──────────────────────────────────────
-        if "vwap" not in df.columns or df["vwap"].isna().all():
-            df["vwap"] = ta.vwap(df["high"], df["low"], df["close"], df["volume"])
-
-        # ─── Stochastic RSI ──────────────────────────────────────
-        stoch_rsi = ta.stochrsi(df["close"], length=14)
-        if stoch_rsi is not None and not stoch_rsi.empty:
-            df["stoch_rsi_k"] = stoch_rsi.iloc[:, 0]
-            df["stoch_rsi_d"] = stoch_rsi.iloc[:, 1]
-
-        return df
-
     def clear_cache(self):
-        """Clear all cached data."""
+        """Clear the local data cache."""
         self._cache.clear()
         self._last_update.clear()
         logger.debug("Data cache cleared")
 
     @property
     def cached_symbols(self) -> list[str]:
-        """List of symbols currently in cache."""
         return list(self._cache.keys())
+
+    def _fetch_range(
+        self,
+        symbol: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> pd.DataFrame:
+        all_frames: list[pd.DataFrame] = []
+        since_ms = int(start_date.timestamp() * 1000)
+        end_ms = int(end_date.timestamp() * 1000)
+        step_ms = self._timeframe_delta_ms
+
+        while since_ms <= end_ms:
+            batch = self.broker.fetch_ohlcv(
+                symbol,
+                timeframe=self.timeframe,
+                limit=self.max_bars_per_request,
+                since=since_ms,
+            )
+            if batch.empty:
+                break
+
+            all_frames.append(batch)
+            last_ts = int(batch.index[-1].timestamp() * 1000)
+
+            if last_ts >= end_ms or last_ts < since_ms:
+                break
+
+            since_ms = last_ts + step_ms
+
+        if not all_frames:
+            return pd.DataFrame()
+
+        combined = pd.concat(all_frames)
+        combined = combined[~combined.index.duplicated(keep="first")]
+        combined.sort_index(inplace=True)
+        mask = (combined.index >= start_date) & (combined.index <= end_date)
+        return combined.loc[mask].copy()
+
+    @property
+    def _timeframe_delta_ms(self) -> int:
+        minutes = _TIMEFRAME_MINUTES.get(self.timeframe, 5)
+        return minutes * 60 * 1000

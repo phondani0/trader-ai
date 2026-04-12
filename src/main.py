@@ -211,12 +211,21 @@ class TradingEngine:
         for name, cls in strategy_map.items():
             params = config.get(name, {"enabled": True, "regime": ["all"]})
             strategy = cls(params=params)
-            approval = approvals.get(name)
-            if approval and not approval.get("approved", False):
+            approval = approvals.get(name, {})
+            deployable_regimes = approval.get("deployable_regimes")
+            if deployable_regimes is not None:
+                strategy.set_benchmark_approved_regimes(deployable_regimes)
+
+            if approval and not approval.get("approved", False) and not deployable_regimes:
                 strategy.enabled = False
                 logger.warning(
                     f"  ⛔ Strategy gated by benchmark approval: {name} "
                     f"({approval.get('reason', 'not approved')})"
+                )
+            elif deployable_regimes:
+                logger.info(
+                    f"  🎯 Benchmark-approved regimes for {name}: "
+                    f"{', '.join(deployable_regimes)}"
                 )
             strategies.append(strategy)
             status = "✅" if strategy.enabled else "⬜"
@@ -274,7 +283,7 @@ class TradingEngine:
         # Pre-fetch data
         bootstrap_universe = self.market_scanner.build_tradable_universe(self.watchlist)
         logger.info(f"Fetching data for {len(bootstrap_universe)} symbols...")
-        self.data_feed.refresh_all(bootstrap_universe)
+        self.data_feed.refresh_all(bootstrap_universe, strategies=self.strategies)
 
         # Account status
         buying_power = self.broker.get_buying_power()
@@ -297,7 +306,7 @@ class TradingEngine:
         """ORB window (first 30 min) has closed — set ORB levels."""
         logger.info("⏰ ORB window closed — setting Opening Range levels")
 
-        data = self.data_feed.refresh_all(self.watchlist)
+        data = self.data_feed.refresh_all(self.watchlist, strategies=self.strategies)
 
         for s in self.strategies:
             if isinstance(s, ORBStrategy):
@@ -331,7 +340,10 @@ class TradingEngine:
             )
 
             # 1. Refresh data
-            data = self.data_feed.refresh_all(tradable_universe)
+            data = self.data_feed.refresh_all(
+                tradable_universe,
+                strategies=self.strategies,
+            )
 
             if not data:
                 return

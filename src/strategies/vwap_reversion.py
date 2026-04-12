@@ -28,6 +28,13 @@ class VWAPReversionStrategy(BaseStrategy):
     def name(self) -> str:
         return "vwap_reversion"
 
+    def indicator_requirements(self) -> dict[str, object]:
+        return {
+            "rsi": [int(self.params.get("rsi_period", 14))],
+            "atr": [14],
+            "vwap": True,
+        }
+
     def generate_signal(
         self,
         symbol: str,
@@ -37,15 +44,19 @@ class VWAPReversionStrategy(BaseStrategy):
         if len(df) < 30:
             return None
 
-        required = ["close", "vwap", "rsi_14", "atr"]
+        rsi_period = int(self.params.get("rsi_period", 14))
+        rsi_col = self.rsi_col(rsi_period)
+        atr_col = self.atr_col(14)
+
+        required = ["close", "vwap", rsi_col, atr_col]
         if not all(col in df.columns for col in required):
             return None
 
         curr = df.iloc[-1]
         close = curr["close"]
         vwap = curr["vwap"]
-        rsi = curr["rsi_14"]
-        atr = curr["atr"]
+        rsi = curr[rsi_col]
+        atr = curr[atr_col]
 
         if pd.isna(vwap) or pd.isna(rsi) or pd.isna(atr) or vwap == 0 or atr == 0:
             return None

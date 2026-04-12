@@ -65,7 +65,7 @@ data:
   candle_interval: 5Min          # 1Min | 5Min | 15Min | 1Hour
   lookback_days: 60              # Historical data for indicators
   database_path: data/trader.db
-  max_bars_per_request: 10000
+  max_bars_per_request: 1000     # Keep per-request limits exchange-friendly; DataFeed paginates as needed
 
 watchlist:
   source: config

@@ -27,6 +27,15 @@ class RSIDivergenceStrategy(BaseStrategy):
     def name(self) -> str:
         return "rsi_divergence"
 
+    def indicator_requirements(self) -> dict[str, object]:
+        requirements: dict[str, object] = {
+            "rsi": [int(self.params.get("rsi_period", 14))],
+            "atr": [14],
+        }
+        if self.params.get("require_macd_confirmation", True):
+            requirements["macd"] = [(12, 26, 9)]
+        return requirements
+
     def generate_signal(
         self,
         symbol: str,
@@ -36,7 +45,12 @@ class RSIDivergenceStrategy(BaseStrategy):
         if len(df) < 50:
             return None
 
-        required = ["close", "low", "high", "rsi_14", "atr"]
+        rsi_period = int(self.params.get("rsi_period", 14))
+        rsi_col = self.rsi_col(rsi_period)
+        atr_col = self.atr_col(14)
+        macd_cols = self.macd_cols(12, 26, 9)
+
+        required = ["close", "low", "high", rsi_col, atr_col]
         if not all(col in df.columns for col in required):
             return None
 
@@ -48,8 +62,8 @@ class RSIDivergenceStrategy(BaseStrategy):
         window = df.tail(lookback)
         curr = df.iloc[-1]
         close = curr["close"]
-        rsi = curr["rsi_14"]
-        atr = curr["atr"]
+        rsi = curr[rsi_col]
+        atr = curr[atr_col]
 
         if pd.isna(rsi) or pd.isna(atr) or atr == 0:
             return None
@@ -57,7 +71,7 @@ class RSIDivergenceStrategy(BaseStrategy):
         # Find swing lows and swing highs in the lookback window
         lows = window["low"]
         highs = window["high"]
-        rsi_vals = window["rsi_14"]
+        rsi_vals = window[rsi_col]
 
         # ─── Bullish Divergence ───────────────────────────────────
         # Price: lower low, RSI: higher low
@@ -66,9 +80,9 @@ class RSIDivergenceStrategy(BaseStrategy):
         if bullish_div:
             # MACD confirmation: histogram turning positive
             macd_confirmed = True
-            if require_macd and "macd_hist" in df.columns:
-                hist = curr.get("macd_hist")
-                prev_hist = df.iloc[-2].get("macd_hist")
+            if require_macd and macd_cols["hist"] in df.columns:
+                hist = curr.get(macd_cols["hist"])
+                prev_hist = df.iloc[-2].get(macd_cols["hist"])
                 if not pd.isna(hist) and not pd.isna(prev_hist):
                     macd_confirmed = hist > prev_hist  # Histogram increasing
 
@@ -99,9 +113,9 @@ class RSIDivergenceStrategy(BaseStrategy):
 
         if bearish_div:
             macd_confirmed = True
-            if require_macd and "macd_hist" in df.columns:
-                hist = curr.get("macd_hist")
-                prev_hist = df.iloc[-2].get("macd_hist")
+            if require_macd and macd_cols["hist"] in df.columns:
+                hist = curr.get(macd_cols["hist"])
+                prev_hist = df.iloc[-2].get(macd_cols["hist"])
                 if not pd.isna(hist) and not pd.isna(prev_hist):
                     macd_confirmed = hist < prev_hist
 

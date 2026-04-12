@@ -75,8 +75,8 @@ Run commands with `uv run <command>`.
 | Command | Purpose | Example |
 |---|---|---|
 | `start` | Launch the trading engine, scanner, and journal loop | `uv run start` |
-| `benchmark` | Stress-test strategies across curated regime windows | `uv run benchmark --strategy supertrend` |
-| `backtest` | Run a single strategy or full stack on a symbol/date window | `uv run backtest --symbol BTC/USDT:USDT --days 30` |
+| `benchmark` | Stress-test strategies across curated real-market windows and generate a regime capability matrix | `uv run benchmark --strategy supertrend` |
+| `backtest` | Run a single strategy or full stack on a symbol/date window using paginated historical fetches | `uv run backtest --symbol BTC/USDT:USDT --from 2024-01-01 --to 2024-03-31` |
 | `trade` | Manual override for connectivity tests or emergency exits | `uv run trade --symbol BTC/USDT:USDT --side buy --qty 0.01` |
 
 ## Runtime Cadence
@@ -109,6 +109,13 @@ For the optional Alpaca adapter:
 | Backtest slippage baseline | 0.1% |
 
 Benchmark approvals can now block fragile strategies from live startup based on regime-aware ROI, expectancy, profit factor, trade count, and drawdown thresholds.
+
+The benchmark output now includes:
+
+- real window-level market profiles from fetched OHLCV data
+- dominant regime detection plus regime-mix percentages
+- regime-scoped strategy approvals instead of only one global score
+- deployable regime lists that the runtime can use to gate strategies
 
 ## Optional Alpaca Adapter
 
@@ -155,6 +162,7 @@ docker run -d --name trader-ai --env-file .env -p 8080:8080 trader-ai
 - This is not financial advice.
 - Start in paper or demo mode and observe behavior before considering live capital.
 - Backtests are useful for filtering bad ideas, not proving future returns.
+- `backtest --days N` now pages historical candles across multiple requests instead of silently truncating to a single 1000-bar fetch.
 - If you add a new external dependency or credential, keep `.env.example` and the README in sync.
 
 ## Project Structure

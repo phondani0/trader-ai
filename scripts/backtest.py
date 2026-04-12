@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Add project root to path
@@ -56,7 +57,14 @@ def load_strategies() -> dict:
     }
 
 
-def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: str = "5Min"):
+def run_backtest(
+    symbol: str,
+    days: int,
+    strategy_name: str = "all",
+    timeframe: str = "5Min",
+    from_date: str | None = None,
+    to_date: str | None = None,
+):
     """
     Run a backtest for a given symbol and strategy.
     """
@@ -73,32 +81,45 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
 
     settings = load_settings()
     risk_config = settings.get("risk_management", {})
+    data_config = dict(settings.get("data", {}))
+    data_config.update({"candle_interval": timeframe, "lookback_days": days})
     broker = BrokerFactory.create(
         {
             "broker": {"name": "ccxt"},
             "trading": {"asset_class": "crypto"},
-            "data": {"candle_interval": timeframe, "lookback_days": days},
+            "data": data_config,
             "risk_management": risk_config,
         },
         TradingMode.PAPER,
     )
     data_feed = DataFeed(
         broker=broker,
-        config={"data": {"candle_interval": timeframe, "lookback_days": days}},
+        config={"data": data_config},
     )
-    df = data_feed.get_data(symbol, force_refresh=True)
+    strategy_map = load_strategies()
+    if strategy_name == "all":
+        strategies = [strategy for strategy in strategy_map.values() if strategy.enabled]
+    else:
+        strategies = [strategy_map[strategy_name]]
+
+    if from_date or to_date:
+        start = _parse_datetime(from_date) if from_date else datetime.utcnow() - timedelta(days=days)
+        end = _parse_datetime(to_date) if to_date else datetime.utcnow()
+        df = data_feed.get_historical_range(
+            symbol,
+            start,
+            end,
+            strategies=strategies,
+        )
+    else:
+        df = data_feed.get_data(symbol, force_refresh=True, strategies=strategies)
 
     if df.empty:
         logger.error(f"No data for {symbol}")
         return None
 
     logger.info(f"Data: {len(df)} bars from {df.index[0]} to {df.index[-1]}")
-
-    strategy_map = load_strategies()
-    if strategy_name == "all":
-        strategies = [strategy for strategy in strategy_map.values() if strategy.enabled]
-    else:
-        strategies = [strategy_map[strategy_name]]
+    log_window_profile(data_feed.regime_detector.profile_window(df))
 
     engine = BacktestEngine(
         fee_pct=0.055,
@@ -114,6 +135,17 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
 
     log_result(result)
     return result
+
+
+def log_window_profile(profile: dict):
+    logger.info(
+        "Window Profile: "
+        f"Dominant Regime={profile.get('dominant_regime')} | "
+        f"Return={profile.get('window_return_pct', 0.0):+.2f}% | "
+        f"Realized Vol={profile.get('realized_vol_pct', 0.0):.2f}% | "
+        f"Median ADX={profile.get('median_adx', 0.0):.2f} | "
+        f"Median ATR%={profile.get('median_atr_pct', 0.0):.2f}"
+    )
 
 
 def log_result(result):
@@ -171,6 +203,13 @@ def log_result(result):
             )
 
 
+def _parse_datetime(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.strptime(value, "%Y-%m-%d")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Backtest trading strategies")
     parser.add_argument(
@@ -181,9 +220,26 @@ def main():
     parser.add_argument("--days", type=int, default=30, help="Number of days to backtest")
     parser.add_argument("--strategy", default="all", help="Strategy name or 'all'")
     parser.add_argument("--timeframe", default="5Min", help="Candle timeframe")
+    parser.add_argument(
+        "--from",
+        dest="from_date",
+        help="Explicit UTC/ISO start date, e.g. 2024-01-01 or 2024-01-01T00:00:00",
+    )
+    parser.add_argument(
+        "--to",
+        dest="to_date",
+        help="Explicit UTC/ISO end date, e.g. 2024-03-31 or 2024-03-31T00:00:00",
+    )
     args = parser.parse_args()
 
-    run_backtest(args.symbol, args.days, args.strategy, args.timeframe)
+    run_backtest(
+        args.symbol,
+        args.days,
+        args.strategy,
+        args.timeframe,
+        args.from_date,
+        args.to_date,
+    )
 
 
 if __name__ == "__main__":

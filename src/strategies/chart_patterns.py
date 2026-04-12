@@ -31,6 +31,12 @@ class ChartPatternStrategy(BaseStrategy):
     def name(self) -> str:
         return "chart_patterns"
 
+    def indicator_requirements(self) -> dict[str, object]:
+        return {
+            "atr": [14],
+            "volume_sma": [20],
+        }
+
     def generate_signal(
         self,
         symbol: str,

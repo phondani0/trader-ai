@@ -28,6 +28,19 @@ class SupertrendStrategy(BaseStrategy):
     def name(self) -> str:
         return "supertrend"
 
+    def indicator_requirements(self) -> dict[str, object]:
+        atr_period = int(self.params.get("atr_period", 14))
+        atr_multiplier = float(self.params.get("atr_multiplier", 3.0))
+        trend_ema_period = int(self.params.get("ema_period", 21))
+        long_term_ema_period = int(self.params.get("long_term_ema_period", 200))
+        return {
+            "ema": [trend_ema_period, long_term_ema_period],
+            "atr": [atr_period],
+            "adx": [14],
+            "supertrend": [(atr_period, atr_multiplier)],
+            "volume_sma": [20],
+        }
+
     def generate_signal(
         self,
         symbol: str,
@@ -37,7 +50,26 @@ class SupertrendStrategy(BaseStrategy):
         if len(df) < 30:
             return None
 
-        required = ["close", "supertrend", "supertrend_dir", "ema_21", "ema_200", "volume_ratio", "atr"]
+        atr_period = int(self.params.get("atr_period", 14))
+        atr_multiplier = float(self.params.get("atr_multiplier", 3.0))
+        trend_ema_period = int(self.params.get("ema_period", 21))
+        long_term_ema_period = int(self.params.get("long_term_ema_period", 200))
+
+        supertrend_cols = self.supertrend_cols(atr_period, atr_multiplier)
+        trend_col = self.ema_col(trend_ema_period)
+        long_term_col = self.ema_col(long_term_ema_period)
+        volume_ratio_col = self.volume_ratio_col(20)
+        atr_col = self.atr_col(atr_period)
+
+        required = [
+            "close",
+            supertrend_cols["value"],
+            supertrend_cols["direction"],
+            trend_col,
+            long_term_col,
+            volume_ratio_col,
+            atr_col,
+        ]
         if not all(col in df.columns for col in required):
             return None
 
@@ -45,15 +77,22 @@ class SupertrendStrategy(BaseStrategy):
         prev = df.iloc[-2]
 
         close = curr["close"]
-        st_val = curr["supertrend"]
-        st_dir = curr["supertrend_dir"]
-        prev_dir = prev["supertrend_dir"]
-        ema_21 = curr["ema_21"]
-        ema_200 = curr["ema_200"]
-        vol_ratio = curr["volume_ratio"]
-        atr = curr["atr"]
+        st_val = curr[supertrend_cols["value"]]
+        st_dir = curr[supertrend_cols["direction"]]
+        prev_dir = prev[supertrend_cols["direction"]]
+        trend_ema = curr[trend_col]
+        long_term_ema = curr[long_term_col]
+        vol_ratio = curr[volume_ratio_col]
+        atr = curr[atr_col]
 
-        if pd.isna(st_val) or pd.isna(st_dir) or pd.isna(prev_dir) or pd.isna(atr) or atr == 0 or pd.isna(ema_200):
+        if (
+            pd.isna(st_val)
+            or pd.isna(st_dir)
+            or pd.isna(prev_dir)
+            or pd.isna(atr)
+            or atr == 0
+            or pd.isna(long_term_ema)
+        ):
             return None
 
         volume_threshold = self.params.get("volume_multiplier", 1.2)
@@ -61,11 +100,16 @@ class SupertrendStrategy(BaseStrategy):
         # ─── BUY Signal ───────────────────────────────────────────
         # Supertrend BULLISH + price above EMA 21 + Volume + Above EMA 200
         supertrend_flip_bullish = prev_dir < 0 and st_dir > 0
-        price_above_ema21 = close > ema_21 if not pd.isna(ema_21) else True
-        above_long_term_trend = close > ema_200
+        price_above_trend_ema = close > trend_ema if not pd.isna(trend_ema) else True
+        above_long_term_trend = close > long_term_ema
         volume_confirmed = vol_ratio > volume_threshold if not pd.isna(vol_ratio) else True
 
-        if supertrend_flip_bullish and price_above_ema21 and above_long_term_trend and volume_confirmed:
+        if (
+            supertrend_flip_bullish
+            and price_above_trend_ema
+            and above_long_term_trend
+            and volume_confirmed
+        ):
             stop_loss = st_val
             risk = close - stop_loss
             if risk <= 0:
@@ -86,17 +130,27 @@ class SupertrendStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"Supertrend Long | ST BULLISH + Above EMA200",
-                metadata={"supertrend": st_val, "ema_200": ema_200, "adx": curr.get("adx")},
+                reason=f"Supertrend Long | ST BULLISH + Above EMA{long_term_ema_period}",
+                metadata={
+                    "supertrend": st_val,
+                    "trend_ema": trend_ema,
+                    "long_term_ema": long_term_ema,
+                    "adx": curr.get("adx"),
+                },
             )
 
         # ─── SELL Signal ──────────────────────────────────────────
         # Supertrend BEARISH + price below EMA 21 + Volume + Below EMA 200
         supertrend_flip_bearish = prev_dir > 0 and st_dir < 0
-        price_below_ema21 = close < ema_21 if not pd.isna(ema_21) else True
-        below_long_term_trend = close < ema_200
+        price_below_trend_ema = close < trend_ema if not pd.isna(trend_ema) else True
+        below_long_term_trend = close < long_term_ema
 
-        if supertrend_flip_bearish and price_below_ema21 and below_long_term_trend and volume_confirmed:
+        if (
+            supertrend_flip_bearish
+            and price_below_trend_ema
+            and below_long_term_trend
+            and volume_confirmed
+        ):
             stop_loss = st_val
             risk = stop_loss - close
             if risk <= 0:
@@ -117,8 +171,13 @@ class SupertrendStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"Supertrend Short | ST BEARISH + Below EMA200",
-                metadata={"supertrend": st_val, "ema_200": ema_200, "adx": curr.get("adx")},
+                reason=f"Supertrend Short | ST BEARISH + Below EMA{long_term_ema_period}",
+                metadata={
+                    "supertrend": st_val,
+                    "trend_ema": trend_ema,
+                    "long_term_ema": long_term_ema,
+                    "adx": curr.get("adx"),
+                },
             )
 
         return None

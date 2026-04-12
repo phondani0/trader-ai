@@ -13,8 +13,20 @@ from datetime import datetime
 from typing import Optional
 
 import pandas as pd
-from loguru import logger
 
+from src.core.indicator_engine import (
+    adx_cols,
+    atr_col,
+    atr_pct_col,
+    bbands_cols,
+    ema_col,
+    macd_cols,
+    rsi_col,
+    sma_col,
+    supertrend_cols,
+    volume_ratio_col,
+    volume_sma_col,
+)
 from src.core.models import Signal, SignalType, Side, MarketRegime
 
 
@@ -39,6 +51,7 @@ class BaseStrategy(ABC):
             MarketRegime(r) if r != "all" else None
             for r in params.get("regime", ["all"])
         ]
+        self._benchmark_approved_regimes: set[MarketRegime] | None = None
 
     @property
     @abstractmethod
@@ -58,8 +71,35 @@ class BaseStrategy(ABC):
         if not self.enabled:
             return False
         if None in self._supported_regimes:
-            return True  # "all" regime
-        return regime in self.supported_regimes
+            supported = True
+        else:
+            supported = regime in self.supported_regimes
+
+        if not supported:
+            return False
+
+        if self._benchmark_approved_regimes is not None:
+            return regime in self._benchmark_approved_regimes
+
+        return True
+
+    def indicator_requirements(self) -> dict[str, object]:
+        """Indicators required by this strategy."""
+        return {}
+
+    def set_benchmark_approved_regimes(self, regimes: list[str] | None):
+        """Restrict runtime execution to benchmark-approved regimes."""
+        if regimes is None:
+            self._benchmark_approved_regimes = None
+            return
+
+        approved_regimes: set[MarketRegime] = set()
+        for regime_name in regimes:
+            try:
+                approved_regimes.add(MarketRegime(regime_name))
+            except ValueError:
+                continue
+        self._benchmark_approved_regimes = approved_regimes
 
     @abstractmethod
     def generate_signal(
@@ -120,3 +160,47 @@ class BaseStrategy(ABC):
 
     def __repr__(self):
         return f"<{self.__class__.__name__}(name={self.name}, enabled={self.enabled})>"
+
+    @staticmethod
+    def ema_col(period: int) -> str:
+        return ema_col(period)
+
+    @staticmethod
+    def sma_col(period: int) -> str:
+        return sma_col(period)
+
+    @staticmethod
+    def rsi_col(period: int) -> str:
+        return rsi_col(period)
+
+    @staticmethod
+    def atr_col(period: int) -> str:
+        return atr_col(period)
+
+    @staticmethod
+    def atr_pct_col(period: int) -> str:
+        return atr_pct_col(period)
+
+    @staticmethod
+    def adx_cols(period: int) -> dict[str, str]:
+        return adx_cols(period)
+
+    @staticmethod
+    def macd_cols(fast: int, slow: int, signal: int) -> dict[str, str]:
+        return macd_cols(fast, slow, signal)
+
+    @staticmethod
+    def bbands_cols(length: int, std_dev: float) -> dict[str, str]:
+        return bbands_cols(length, std_dev)
+
+    @staticmethod
+    def supertrend_cols(length: int, multiplier: float) -> dict[str, str]:
+        return supertrend_cols(length, multiplier)
+
+    @staticmethod
+    def volume_sma_col(period: int) -> str:
+        return volume_sma_col(period)
+
+    @staticmethod
+    def volume_ratio_col(period: int) -> str:
+        return volume_ratio_col(period)

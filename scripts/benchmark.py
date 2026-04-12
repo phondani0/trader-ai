@@ -1,6 +1,5 @@
 """
-Benchmark Suite — Regime-Aware Strategy Stress Tester.
-Runs all strategies against curated historical market regimes.
+Benchmark strategies across curated real-market windows.
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.backtest.engine import BacktestEngine
@@ -79,6 +77,73 @@ def evaluate_strategy(summary, thresholds: dict) -> tuple[bool, str]:
     return True, "approved"
 
 
+def new_rollup() -> dict:
+    return {
+        "trades": [],
+        "windows": [],
+        "window_names": [],
+        "profiles": [],
+        "killed_by_drawdown": False,
+        "kill_reasons": [],
+    }
+
+
+def collect_rollup(rollup: dict, result, window_name: str, window_profile: dict):
+    rollup["trades"].extend(result.trades)
+    rollup["windows"].append((result.period_start, result.period_end))
+    rollup["window_names"].append(window_name)
+    rollup["profiles"].append(window_profile)
+    if result.killed_by_drawdown:
+        rollup["killed_by_drawdown"] = True
+        if result.kill_switch_reason:
+            rollup["kill_reasons"].append(result.kill_switch_reason)
+
+
+def summarize_rollup(engine, symbol: str, rollup: dict):
+    windows = rollup["windows"]
+    if windows:
+        period_start = min(window[0] for window in windows)
+        period_end = max(window[1] for window in windows)
+    else:
+        period_start = datetime.utcnow()
+        period_end = datetime.utcnow()
+
+    return engine.summarize(
+        symbol=symbol,
+        period_start=period_start,
+        period_end=period_end,
+        trades=rollup["trades"],
+        killed_by_drawdown=rollup["killed_by_drawdown"],
+        kill_reason=" | ".join(dict.fromkeys(rollup["kill_reasons"])),
+    )
+
+
+def result_metrics(summary) -> dict:
+    return {
+        "trades": len(summary.trades),
+        "net_roi_pct": round(summary.net_roi_pct, 4),
+        "expectancy_pct": round(summary.expectancy_pct, 4),
+        "profit_factor": (
+            "inf" if summary.profit_factor == float("inf") else round(summary.profit_factor, 4)
+        ),
+        "max_drawdown_pct": round(summary.max_drawdown_pct, 4),
+        "win_rate_pct": round(summary.win_rate_pct, 4),
+    }
+
+
+def log_window_profile(profile: dict):
+    print(
+        "  Market Profile: "
+        f"Dominant={profile['dominant_regime']} | "
+        f"Return={profile['window_return_pct']:+.2f}% | "
+        f"Realized Vol={profile['realized_vol_pct']:.2f}% | "
+        f"Median ADX={profile['median_adx']:.2f} | "
+        f"Median ATR%={profile['median_atr_pct']:.2f} | "
+        f"Trend Efficiency={profile['trend_efficiency_pct']:.2f}% | "
+        f"Breakout Rate={profile['breakout_rate_pct']:.2f}%"
+    )
+
+
 def run_benchmark(strategy_filter: str = None):
     settings = load_settings()
     regimes = load_regimes()
@@ -87,21 +152,32 @@ def run_benchmark(strategy_filter: str = None):
     risk_cfg = settings.get("risk_management", {})
 
     if strategy_filter and strategy_filter != "all":
-        strategies = [strategy for strategy in strategies if strategy.name == strategy_filter]
+        strategies = [
+            strategy for strategy in strategies if strategy.name == strategy_filter
+        ]
 
     if not strategies:
         print(f"No enabled strategies found matching filter: {strategy_filter}")
         return None
 
+    strategy_targets = {
+        strategy.name: [regime.value for regime in strategy.supported_regimes]
+        for strategy in strategies
+    }
+
     broker = BrokerFactory.create(
         {
             "broker": {"name": "ccxt"},
             "trading": {"asset_class": "crypto"},
+            "data": settings.get("data", {}),
             "risk_management": risk_cfg,
         },
         TradingMode.PAPER,
     )
-    data_feed = DataFeed(broker=broker, config={})
+    data_feed = DataFeed(
+        broker=broker,
+        config={"data": settings.get("data", {})},
+    )
     engine = BacktestEngine(
         fee_pct=0.055,
         slippage_pct=0.1,
@@ -110,15 +186,9 @@ def run_benchmark(strategy_filter: str = None):
     )
 
     results_matrix = []
-    strategy_rollups: dict[str, dict] = {
-        strategy.name: {
-            "trades": [],
-            "windows": [],
-            "killed_by_drawdown": False,
-            "kill_reasons": [],
-        }
-        for strategy in strategies
-    }
+    benchmark_windows: list[dict] = []
+    strategy_rollups = {strategy.name: new_rollup() for strategy in strategies}
+    regime_rollups = {strategy.name: {} for strategy in strategies}
 
     print("\n" + "═" * 120)
     print(f"{'STRATEGY BENCHMARK SUITE':^120}")
@@ -140,40 +210,76 @@ def run_benchmark(strategy_filter: str = None):
         print(f"  {regime['description']}")
         print("-" * 120)
 
-        df = data_feed.get_historical_range(symbol, start, end)
+        df = data_feed.get_historical_range(
+            symbol,
+            start,
+            end,
+            strategies=strategies,
+        )
         if df.empty:
             print("  ⚠️ No data found for this period. Skipping.")
             continue
 
+        window_profile = data_feed.regime_detector.profile_window(df)
+        dominant_regime = window_profile["dominant_regime"]
+        log_window_profile(window_profile)
+
+        window_record = {
+            "name": name,
+            "symbol": symbol,
+            "start": start.isoformat(timespec="seconds"),
+            "end": end.isoformat(timespec="seconds"),
+            "description": regime["description"],
+            "profile": window_profile,
+            "strategies": {},
+        }
+
         for strategy in strategies:
             result = engine.run(symbol, df, strategy)
-            rollup = strategy_rollups[strategy.name]
-            rollup["trades"].extend(result.trades)
-            rollup["windows"].append((result.period_start, result.period_end))
-            if result.killed_by_drawdown:
-                rollup["killed_by_drawdown"] = True
-                if result.kill_switch_reason:
-                    rollup["kill_reasons"].append(result.kill_switch_reason)
+            collect_rollup(
+                strategy_rollups[strategy.name],
+                result,
+                name,
+                window_profile,
+            )
+
+            regime_bucket = regime_rollups[strategy.name].setdefault(
+                dominant_regime,
+                new_rollup(),
+            )
+            collect_rollup(regime_bucket, result, name, window_profile)
+
+            approved_for_window, window_reason = evaluate_strategy(result, benchmark_cfg)
+            metrics = result_metrics(result)
+            metrics["killed_by_drawdown"] = result.killed_by_drawdown
+            metrics["reason"] = window_reason
+            metrics["approved"] = approved_for_window
+            window_record["strategies"][strategy.name] = metrics
 
             results_matrix.append(
                 {
-                    "Regime": name,
+                    "Window": name,
+                    "Dominant Regime": dominant_regime,
                     "Strategy": strategy.name,
                     "Trades": len(result.trades),
                     "Win Rate": f"{result.win_rate_pct:.1f}%",
                     "Net ROI": f"{result.net_roi_pct:+.2f}%",
                     "Expectancy": f"{result.expectancy_pct:+.2f}%",
                     "Profit Factor": (
-                        "inf" if result.profit_factor == float("inf") else f"{result.profit_factor:.2f}"
+                        "inf"
+                        if result.profit_factor == float("inf")
+                        else f"{result.profit_factor:.2f}"
                     ),
                     "MDD": f"{result.max_drawdown_pct:.1f}%",
                     "Killed": "YES" if result.killed_by_drawdown else "NO",
                 }
             )
 
-            status = "✅" if result.net_roi_pct > 0 and not result.killed_by_drawdown else "❌"
+            status = "✅" if approved_for_window else "❌"
             profit_factor = (
-                "inf" if result.profit_factor == float("inf") else f"{result.profit_factor:.2f}"
+                "inf"
+                if result.profit_factor == float("inf")
+                else f"{result.profit_factor:.2f}"
             )
             print(
                 f"  {status} {strategy.name:<15} | ROI: {result.net_roi_pct:>7.2f}% | "
@@ -182,16 +288,48 @@ def run_benchmark(strategy_filter: str = None):
                 f"PF: {profit_factor:>5} | Trades: {len(result.trades):>3}"
             )
 
+        benchmark_windows.append(window_record)
+
     print("\n" + "═" * 120)
     print(f"{'FINAL PERFORMANCE MATRIX':^120}")
     print("═" * 120)
     matrix_df = pd.DataFrame(results_matrix)
     if not matrix_df.empty:
-        pivot = matrix_df.pivot(index="Strategy", columns="Regime", values="Net ROI")
+        pivot = matrix_df.pivot(index="Strategy", columns="Window", values="Net ROI")
         print(pivot.to_string())
 
-    approvals = build_approvals_payload(engine, strategy_rollups, benchmark_cfg)
-    approvals_path = PROJECT_ROOT / benchmark_cfg.get("approvals_path", "data/strategy_approvals.json")
+    regime_capabilities: dict[str, dict] = {}
+    for strategy in strategies:
+        capabilities: dict[str, dict] = {}
+        for regime_name, rollup in regime_rollups[strategy.name].items():
+            summary = summarize_rollup(engine, strategy.name, rollup)
+            supported = regime_name in strategy_targets[strategy.name]
+            approved, reason = evaluate_strategy(summary, benchmark_cfg)
+            if not supported:
+                approved = False
+                reason = (
+                    f"regime {regime_name} is outside configured targets "
+                    f"{strategy_targets[strategy.name]}"
+                )
+            capabilities[regime_name] = {
+                "approved": approved,
+                "reason": reason,
+                "window_names": rollup["window_names"],
+                "metrics": result_metrics(summary),
+            }
+        regime_capabilities[strategy.name] = capabilities
+
+    approvals = build_approvals_payload(
+        engine,
+        strategy_rollups,
+        regime_capabilities,
+        strategy_targets,
+        benchmark_cfg,
+        benchmark_windows,
+    )
+    approvals_path = PROJECT_ROOT / benchmark_cfg.get(
+        "approvals_path", "data/strategy_approvals.json"
+    )
     approvals_path.parent.mkdir(parents=True, exist_ok=True)
     with open(approvals_path, "w") as f:
         json.dump(approvals, f, indent=2)
@@ -201,11 +339,13 @@ def run_benchmark(strategy_filter: str = None):
     print("═" * 120)
     for strategy_name, approval in approvals["strategies"].items():
         verdict = "APPROVED" if approval["approved"] else "BLOCKED"
+        deployable = ", ".join(approval["deployable_regimes"]) or "-"
         print(
             f"  {strategy_name:<15} | {verdict:<8} | ROI: {approval['metrics']['net_roi_pct']:>7.2f}% | "
             f"Expectancy: {approval['metrics']['expectancy_pct']:>6.2f}% | "
             f"PF: {approval['metrics']['profit_factor']:<6} | "
             f"MDD: {approval['metrics']['max_drawdown_pct']:>6.2f}% | "
+            f"Deployable Regimes: {deployable} | "
             f"Reason: {approval['reason']}"
         )
     print("═" * 120)
@@ -214,45 +354,49 @@ def run_benchmark(strategy_filter: str = None):
     return approvals
 
 
-def build_approvals_payload(engine, strategy_rollups, benchmark_cfg):
+def build_approvals_payload(
+    engine,
+    strategy_rollups: dict[str, dict],
+    regime_capabilities: dict[str, dict],
+    strategy_targets: dict[str, list[str]],
+    benchmark_cfg: dict,
+    benchmark_windows: list[dict],
+) -> dict:
     payload = {
         "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
         "thresholds": benchmark_cfg,
+        "benchmark_windows": benchmark_windows,
+        "regime_capabilities": regime_capabilities,
         "strategies": {},
     }
 
     for strategy_name, rollup in strategy_rollups.items():
-        trades = rollup["trades"]
-        windows = rollup["windows"]
-        if windows:
-            period_start = min(window[0] for window in windows)
-            period_end = max(window[1] for window in windows)
-        else:
-            period_start = datetime.utcnow()
-            period_end = datetime.utcnow()
-
-        summary = engine.summarize(
-            symbol=strategy_name,
-            period_start=period_start,
-            period_end=period_end,
-            trades=trades,
-            killed_by_drawdown=rollup["killed_by_drawdown"],
-            kill_reason=" | ".join(dict.fromkeys(rollup["kill_reasons"])),
+        summary = summarize_rollup(engine, strategy_name, rollup)
+        deployable_regimes = sorted(
+            [
+                regime_name
+                for regime_name, capability in regime_capabilities.get(
+                    strategy_name, {}
+                ).items()
+                if capability["approved"]
+            ]
         )
-        approved, reason = evaluate_strategy(summary, benchmark_cfg)
+        approved = bool(deployable_regimes)
+        if approved:
+            reason = f"approved for regimes: {', '.join(deployable_regimes)}"
+        else:
+            reasons = [
+                capability["reason"]
+                for capability in regime_capabilities.get(strategy_name, {}).values()
+            ]
+            reason = reasons[0] if reasons else "no approved benchmark regimes"
+
         payload["strategies"][strategy_name] = {
             "approved": approved,
             "reason": reason,
-            "metrics": {
-                "trades": len(summary.trades),
-                "net_roi_pct": round(summary.net_roi_pct, 4),
-                "expectancy_pct": round(summary.expectancy_pct, 4),
-                "profit_factor": (
-                    "inf" if summary.profit_factor == float("inf") else round(summary.profit_factor, 4)
-                ),
-                "max_drawdown_pct": round(summary.max_drawdown_pct, 4),
-                "win_rate_pct": round(summary.win_rate_pct, 4),
-            },
+            "target_regimes": strategy_targets.get(strategy_name, []),
+            "deployable_regimes": deployable_regimes,
+            "metrics": result_metrics(summary),
         }
 
     return payload

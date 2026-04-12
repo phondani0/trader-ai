@@ -43,6 +43,15 @@ class ORBStrategy(BaseStrategy):
     def name(self) -> str:
         return "orb"
 
+    def indicator_requirements(self) -> dict[str, object]:
+        requirements: dict[str, object] = {
+            "atr": [14],
+            "volume_sma": [20],
+        }
+        if self.params.get("require_vwap_alignment", True):
+            requirements["vwap"] = True
+        return requirements
+
     def reset_daily(self):
         """Reset ORB levels at start of each trading day."""
         self._orb_high.clear()

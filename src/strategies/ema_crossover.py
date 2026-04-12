@@ -27,6 +27,19 @@ class EMACrossoverStrategy(BaseStrategy):
     def name(self) -> str:
         return "ema_crossover"
 
+    def indicator_requirements(self) -> dict[str, object]:
+        requirements: dict[str, object] = {
+            "ema": [
+                int(self.params.get("fast_ema", 9)),
+                int(self.params.get("slow_ema", 21)),
+            ],
+            "atr": [14],
+            "adx": [14],
+        }
+        if self.params.get("require_vwap_alignment", True):
+            requirements["vwap"] = True
+        return requirements
+
     def generate_signal(
         self,
         symbol: str,
@@ -44,8 +57,9 @@ class EMACrossoverStrategy(BaseStrategy):
 
         fast_col = f"ema_{fast_period}"
         slow_col = f"ema_{slow_period}"
+        atr_col = self.atr_col(14)
 
-        required = [fast_col, slow_col, "close", "atr"]
+        required = [fast_col, slow_col, "close", atr_col]
         if not all(col in df.columns for col in required):
             return None
 
@@ -57,7 +71,7 @@ class EMACrossoverStrategy(BaseStrategy):
         slow_ema = curr[slow_col]
         prev_fast = prev[fast_col]
         prev_slow = prev[slow_col]
-        atr = curr["atr"]
+        atr = curr[atr_col]
         adx = curr.get("adx", 30)
         vwap = curr.get("vwap", close)
 
