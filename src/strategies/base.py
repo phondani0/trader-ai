@@ -52,6 +52,7 @@ class BaseStrategy(ABC):
             for r in params.get("regime", ["all"])
         ]
         self._benchmark_approved_regimes: set[MarketRegime] | None = None
+        self._benchmark_approved_market_profiles: set[str] | None = None
 
     @property
     @abstractmethod
@@ -100,6 +101,25 @@ class BaseStrategy(ABC):
             except ValueError:
                 continue
         self._benchmark_approved_regimes = approved_regimes
+
+    def set_benchmark_approved_market_profiles(self, profiles: list[str] | None):
+        """Restrict runtime execution to benchmark-approved macro market profiles."""
+        if profiles is None:
+            self._benchmark_approved_market_profiles = None
+            return
+        self._benchmark_approved_market_profiles = {
+            str(profile)
+            for profile in profiles
+            if str(profile)
+        }
+
+    def allows_market_profile(self, market_profile: str | None) -> bool:
+        """Check whether this strategy is approved for the current macro profile."""
+        if self._benchmark_approved_market_profiles is None:
+            return True
+        if not market_profile:
+            return False
+        return market_profile in self._benchmark_approved_market_profiles
 
     @abstractmethod
     def generate_signal(

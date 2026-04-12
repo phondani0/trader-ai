@@ -37,6 +37,33 @@ class SingleEntryStrategy(BaseStrategy):
         )
 
 
+class CompetingStrategy(SingleEntryStrategy):
+    def __init__(self, params: dict, *, name: str, confidence: float):
+        super().__init__(params, take_profit=105.0, stop_loss=95.0)
+        self._name = name
+        self.confidence = confidence
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def generate_signal(self, symbol, df, regime):
+        signal = super().generate_signal(symbol, df, regime)
+        if signal:
+            signal.strategy_name = self.name
+            signal.confidence = self.confidence
+        return signal
+
+
+class NoSignalStrategy(BaseStrategy):
+    @property
+    def name(self) -> str:
+        return "no_signal"
+
+    def generate_signal(self, symbol, df, regime):
+        return None
+
+
 class BacktestEngineTest(unittest.TestCase):
     def test_conservative_wick_logic_hits_stop_before_take_profit(self):
         base_time = datetime(2024, 1, 1)
@@ -76,6 +103,82 @@ class BacktestEngineTest(unittest.TestCase):
 
         self.assertTrue(result.killed_by_drawdown)
         self.assertIn("drawdown", result.kill_switch_reason)
+
+    def test_selector_mode_uses_one_best_signal_across_strategies(self):
+        base_time = datetime(2024, 1, 1)
+        df = build_price_frame(
+            [
+                {
+                    "timestamp": base_time + timedelta(minutes=i),
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100,
+                    "volume": 1000,
+                    "adx": 30,
+                    "atr_pct": 1,
+                }
+                for i in range(30)
+            ]
+            + [
+                {
+                    "timestamp": base_time + timedelta(minutes=30),
+                    "open": 100,
+                    "high": 106,
+                    "low": 99,
+                    "close": 105,
+                    "volume": 1000,
+                    "adx": 30,
+                    "atr_pct": 1,
+                }
+            ]
+        )
+        engine = BacktestEngine(fee_pct=0.0, slippage_pct=0.0)
+
+        result = engine.run_selector(
+            "BTC/USDT:USDT",
+            df,
+            [
+                CompetingStrategy(
+                    {"enabled": True, "regime": ["all"]},
+                    name="ema_crossover",
+                    confidence=0.55,
+                ),
+                CompetingStrategy(
+                    {"enabled": True, "regime": ["all"]},
+                    name="supertrend",
+                    confidence=0.8,
+                ),
+            ],
+            min_lookback=29,
+        )
+
+        self.assertEqual(len(result.trades), 1)
+        self.assertEqual(result.trades[0].strategy, "supertrend")
+
+    def test_no_trade_backtest_preserves_initial_equity(self):
+        base_time = datetime(2024, 1, 1)
+        df = build_price_frame(
+            [
+                {
+                    "timestamp": base_time + timedelta(minutes=i),
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100,
+                    "volume": 1000,
+                    "adx": 20,
+                    "atr_pct": 1,
+                }
+                for i in range(40)
+            ]
+        )
+        engine = BacktestEngine(fee_pct=0.0, slippage_pct=0.0, initial_capital=25000.0)
+
+        result = engine.run("BTC/USDT:USDT", df, NoSignalStrategy({"enabled": True, "regime": ["all"]}))
+
+        self.assertEqual(len(result.trades), 0)
+        self.assertEqual(result.final_equity, 25000.0)
 
 
 if __name__ == "__main__":

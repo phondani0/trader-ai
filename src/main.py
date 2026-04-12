@@ -52,6 +52,7 @@ from src.notifications.notifier import Notifier
 from src.risk.kill_switch import KillSwitch
 from src.risk.manager import RiskManager
 from src.strategies.chart_patterns import ChartPatternStrategy
+from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
 from src.strategies.orb import ORBStrategy
@@ -205,6 +206,7 @@ class TradingEngine:
             "orb": ORBStrategy,
             "rsi_divergence": RSIDivergenceStrategy,
             "ema_crossover": EMACrossoverStrategy,
+            "donchian_breakout": DonchianBreakoutStrategy,
             "chart_patterns": ChartPatternStrategy,
         }
 
@@ -213,8 +215,13 @@ class TradingEngine:
             strategy = cls(params=params)
             approval = approvals.get(name, {})
             deployable_regimes = approval.get("deployable_regimes")
+            deployable_market_profiles = approval.get("deployable_market_profiles")
             if deployable_regimes is not None:
                 strategy.set_benchmark_approved_regimes(deployable_regimes)
+            if deployable_market_profiles is not None:
+                strategy.set_benchmark_approved_market_profiles(
+                    deployable_market_profiles
+                )
 
             if approval and not approval.get("approved", False) and not deployable_regimes:
                 strategy.enabled = False
@@ -227,6 +234,10 @@ class TradingEngine:
                     f"  🎯 Benchmark-approved regimes for {name}: "
                     f"{', '.join(deployable_regimes)}"
                 )
+                if deployable_market_profiles:
+                    logger.info(
+                        f"     Macro profiles: {', '.join(deployable_market_profiles)}"
+                    )
             strategies.append(strategy)
             status = "✅" if strategy.enabled else "⬜"
             logger.info(f"  {status} Strategy: {name}")

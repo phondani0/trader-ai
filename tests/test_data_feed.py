@@ -100,6 +100,18 @@ class DataFeedTest(unittest.TestCase):
         self.assertTrue(strategy.should_run(MarketRegime.SIDEWAYS_LOW_VOL))
         self.assertFalse(strategy.should_run(MarketRegime.SIDEWAYS_HIGH_VOL))
 
+    def test_strategy_respects_benchmark_approved_market_profiles(self):
+        strategy = VWAPReversionStrategy(
+            {
+                "enabled": True,
+                "regime": ["sideways_low_vol", "sideways_high_vol"],
+            }
+        )
+        strategy.set_benchmark_approved_market_profiles(["range"])
+
+        self.assertTrue(strategy.allows_market_profile("range"))
+        self.assertFalse(strategy.allows_market_profile("breakout"))
+
 
 if __name__ == "__main__":
     unittest.main()

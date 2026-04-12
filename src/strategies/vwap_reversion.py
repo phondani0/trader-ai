@@ -53,16 +53,31 @@ class VWAPReversionStrategy(BaseStrategy):
             return None
 
         curr = df.iloc[-1]
+        prev = df.iloc[-2]
         close = curr["close"]
         vwap = curr["vwap"]
         rsi = curr[rsi_col]
         atr = curr[atr_col]
+        prev_close = prev["close"]
+        prev_vwap = prev["vwap"]
+        prev_rsi = prev[rsi_col]
 
-        if pd.isna(vwap) or pd.isna(rsi) or pd.isna(atr) or vwap == 0 or atr == 0:
+        if (
+            pd.isna(vwap)
+            or pd.isna(rsi)
+            or pd.isna(atr)
+            or pd.isna(prev_vwap)
+            or pd.isna(prev_rsi)
+            or vwap == 0
+            or atr == 0
+        ):
             return None
 
         # Calculate VWAP deviation (how many std devs from VWAP)
-        recent_vwap_diff = df["close"].tail(50) - df["vwap"].tail(50)
+        deviation_lookback = int(self.params.get("deviation_lookback", 80))
+        recent_vwap_diff = df["close"].tail(deviation_lookback) - df["vwap"].tail(
+            deviation_lookback
+        )
         vwap_std = recent_vwap_diff.std()
 
         if pd.isna(vwap_std) or vwap_std == 0:
@@ -74,11 +89,21 @@ class VWAPReversionStrategy(BaseStrategy):
         rsi_oversold = self.params.get("rsi_oversold", 30)
         rsi_overbought = self.params.get("rsi_overbought", 70)
         stop_loss_pct = self.params.get("stop_loss_pct", 0.5)
+        atr_stop_multiplier = float(self.params.get("atr_stop_multiplier", 1.2))
+        min_vwap_distance_pct = float(self.params.get("min_vwap_distance_pct", 0.2))
+
+        vwap_distance_pct = abs(close - vwap) / vwap * 100 if vwap else 0.0
+        if vwap_distance_pct < min_vwap_distance_pct:
+            return None
 
         # ─── BUY Signal ───────────────────────────────────────────
-        # Price significantly below VWAP + RSI oversold
-        if deviation < -entry_threshold and rsi < rsi_oversold:
-            stop_loss = close * (1 - stop_loss_pct / 100)
+        # Price significantly below VWAP + RSI oversold + momentum is starting to mean revert
+        bullish_reversal = close > prev_close and rsi >= prev_rsi and prev_close < prev_vwap
+        if deviation < -entry_threshold and rsi < rsi_oversold and bullish_reversal:
+            stop_loss = min(
+                close * (1 - stop_loss_pct / 100),
+                close - (atr * atr_stop_multiplier),
+            )
             take_profit = vwap  # Target: return to VWAP
 
             # Ensure minimum risk:reward
@@ -98,14 +123,27 @@ class VWAPReversionStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"VWAP reversion BUY: {deviation:.1f}σ below VWAP ({vwap:.2f}) | RSI: {rsi:.1f}",
-                metadata={"vwap": vwap, "deviation": deviation, "rsi": rsi},
+                reason=(
+                    f"VWAP reversion BUY: {deviation:.1f}σ below VWAP ({vwap:.2f}) | "
+                    f"RSI recovering {prev_rsi:.1f}->{rsi:.1f}"
+                ),
+                metadata={
+                    "vwap": vwap,
+                    "deviation": deviation,
+                    "rsi": rsi,
+                    "prev_rsi": prev_rsi,
+                    "vwap_distance_pct": vwap_distance_pct,
+                },
             )
 
         # ─── SELL Signal ──────────────────────────────────────────
-        # Price significantly above VWAP + RSI overbought
-        if deviation > entry_threshold and rsi > rsi_overbought:
-            stop_loss = close * (1 + stop_loss_pct / 100)
+        # Price significantly above VWAP + RSI overbought + momentum is starting to mean revert
+        bearish_reversal = close < prev_close and rsi <= prev_rsi and prev_close > prev_vwap
+        if deviation > entry_threshold and rsi > rsi_overbought and bearish_reversal:
+            stop_loss = max(
+                close * (1 + stop_loss_pct / 100),
+                close + (atr * atr_stop_multiplier),
+            )
             take_profit = vwap  # Target: return to VWAP
 
             risk = stop_loss - close
@@ -124,8 +162,17 @@ class VWAPReversionStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"VWAP reversion SELL: {deviation:.1f}σ above VWAP ({vwap:.2f}) | RSI: {rsi:.1f}",
-                metadata={"vwap": vwap, "deviation": deviation, "rsi": rsi},
+                reason=(
+                    f"VWAP reversion SELL: {deviation:.1f}σ above VWAP ({vwap:.2f}) | "
+                    f"RSI cooling {prev_rsi:.1f}->{rsi:.1f}"
+                ),
+                metadata={
+                    "vwap": vwap,
+                    "deviation": deviation,
+                    "rsi": rsi,
+                    "prev_rsi": prev_rsi,
+                    "vwap_distance_pct": vwap_distance_pct,
+                },
             )
 
         return None

@@ -31,6 +31,11 @@ class RSIDivergenceStrategy(BaseStrategy):
         requirements: dict[str, object] = {
             "rsi": [int(self.params.get("rsi_period", 14))],
             "atr": [14],
+            "ema": [
+                int(self.params.get("trend_ema_period", 50)),
+                int(self.params.get("long_term_ema_period", 200)),
+            ],
+            "adx": [14],
         }
         if self.params.get("require_macd_confirmation", True):
             requirements["macd"] = [(12, 26, 9)]
@@ -49,8 +54,12 @@ class RSIDivergenceStrategy(BaseStrategy):
         rsi_col = self.rsi_col(rsi_period)
         atr_col = self.atr_col(14)
         macd_cols = self.macd_cols(12, 26, 9)
+        trend_ema_period = int(self.params.get("trend_ema_period", 50))
+        long_term_ema_period = int(self.params.get("long_term_ema_period", 200))
+        trend_col = self.ema_col(trend_ema_period)
+        long_term_col = self.ema_col(long_term_ema_period)
 
-        required = ["close", "low", "high", rsi_col, atr_col]
+        required = ["close", "low", "high", rsi_col, atr_col, trend_col, long_term_col]
         if not all(col in df.columns for col in required):
             return None
 
@@ -58,26 +67,46 @@ class RSIDivergenceStrategy(BaseStrategy):
         min_swing_pct = self.params.get("min_swing_pct", 0.5)
         require_macd = self.params.get("require_macd_confirmation", True)
         rr_ratio = self.params.get("take_profit_rr_ratio", 2.0)
+        bullish_rsi_max = float(self.params.get("bullish_rsi_max", 45))
+        bearish_rsi_min = float(self.params.get("bearish_rsi_min", 55))
+        stop_loss_atr_buffer = float(self.params.get("stop_loss_atr_buffer", 1.0))
+        adx_min = float(self.params.get("adx_min", 20))
 
         window = df.tail(lookback)
         curr = df.iloc[-1]
         close = curr["close"]
         rsi = curr[rsi_col]
         atr = curr[atr_col]
+        trend_ema = curr[trend_col]
+        long_term_ema = curr[long_term_col]
+        adx = curr.get("adx")
 
-        if pd.isna(rsi) or pd.isna(atr) or atr == 0:
+        if (
+            pd.isna(rsi)
+            or pd.isna(atr)
+            or atr == 0
+            or pd.isna(trend_ema)
+            or pd.isna(long_term_ema)
+        ):
+            return None
+
+        if not pd.isna(adx) and adx < adx_min:
             return None
 
         # Find swing lows and swing highs in the lookback window
         lows = window["low"]
         highs = window["high"]
         rsi_vals = window[rsi_col]
+        bullish_trend = close > trend_ema and close > long_term_ema and trend_ema > long_term_ema
+        bearish_trend = close < trend_ema and close < long_term_ema and trend_ema < long_term_ema
 
         # ─── Bullish Divergence ───────────────────────────────────
         # Price: lower low, RSI: higher low
         bullish_div = self._detect_bullish_divergence(lows, rsi_vals, min_swing_pct)
 
-        if bullish_div:
+        if bullish_div and bullish_trend:
+            if bullish_div["second_rsi"] > bullish_rsi_max:
+                return None
             # MACD confirmation: histogram turning positive
             macd_confirmed = True
             if require_macd and macd_cols["hist"] in df.columns:
@@ -87,8 +116,8 @@ class RSIDivergenceStrategy(BaseStrategy):
                     macd_confirmed = hist > prev_hist  # Histogram increasing
 
             if macd_confirmed:
-                recent_low = float(lows.min())
-                stop_loss = recent_low - (atr * 1.5)  # Increased from 0.5 to 1.5
+                recent_low = float(bullish_div["second_price"])
+                stop_loss = recent_low - (atr * stop_loss_atr_buffer)
                 risk = close - stop_loss
                 if risk <= 0:
                     return None
@@ -103,15 +132,26 @@ class RSIDivergenceStrategy(BaseStrategy):
                     take_profit=take_profit,
                     confidence=0.65,
                     regime=regime,
-                    reason=f"Bullish RSI divergence | RSI: {rsi:.1f} | Price LL but RSI HL",
-                    metadata={"rsi": rsi, "divergence": "bullish"},
+                    reason=(
+                        f"Bullish RSI pullback divergence | RSI {bullish_div['first_rsi']:.1f}"
+                        f"->{bullish_div['second_rsi']:.1f} | Above EMA{long_term_ema_period}"
+                    ),
+                    metadata={
+                        "rsi": rsi,
+                        "divergence": "bullish",
+                        "adx": adx,
+                        "trend_ema": trend_ema,
+                        "long_term_ema": long_term_ema,
+                    },
                 )
 
         # ─── Bearish Divergence ───────────────────────────────────
         # Price: higher high, RSI: lower high
         bearish_div = self._detect_bearish_divergence(highs, rsi_vals, min_swing_pct)
 
-        if bearish_div:
+        if bearish_div and bearish_trend:
+            if bearish_div["second_rsi"] < bearish_rsi_min:
+                return None
             macd_confirmed = True
             if require_macd and macd_cols["hist"] in df.columns:
                 hist = curr.get(macd_cols["hist"])
@@ -120,8 +160,8 @@ class RSIDivergenceStrategy(BaseStrategy):
                     macd_confirmed = hist < prev_hist
 
             if macd_confirmed:
-                recent_high = float(highs.max())
-                stop_loss = recent_high + (atr * 0.5)
+                recent_high = float(bearish_div["second_price"])
+                stop_loss = recent_high + (atr * stop_loss_atr_buffer)
                 risk = stop_loss - close
                 if risk <= 0:
                     return None
@@ -136,20 +176,29 @@ class RSIDivergenceStrategy(BaseStrategy):
                     take_profit=take_profit,
                     confidence=0.65,
                     regime=regime,
-                    reason=f"Bearish RSI divergence | RSI: {rsi:.1f} | Price HH but RSI LH",
-                    metadata={"rsi": rsi, "divergence": "bearish"},
+                    reason=(
+                        f"Bearish RSI pullback divergence | RSI {bearish_div['first_rsi']:.1f}"
+                        f"->{bearish_div['second_rsi']:.1f} | Below EMA{long_term_ema_period}"
+                    ),
+                    metadata={
+                        "rsi": rsi,
+                        "divergence": "bearish",
+                        "adx": adx,
+                        "trend_ema": trend_ema,
+                        "long_term_ema": long_term_ema,
+                    },
                 )
 
         return None
 
     def _detect_bullish_divergence(
         self, lows: pd.Series, rsi: pd.Series, min_swing_pct: float
-    ) -> bool:
+    ) -> dict | None:
         """
         Detect bullish divergence: price makes lower low, RSI makes higher low.
         """
         if len(lows) < 10:
-            return False
+            return None
 
         # Split into two halves and find the swing lows
         mid = len(lows) // 2
@@ -163,7 +212,7 @@ class RSIDivergenceStrategy(BaseStrategy):
         second_rsi_low = rsi[second_half_low_idx]
 
         if pd.isna(first_rsi_low) or pd.isna(second_rsi_low):
-            return False
+            return None
 
         # Price makes lower low
         price_lower_low = second_price_low < first_price_low
@@ -173,16 +222,24 @@ class RSIDivergenceStrategy(BaseStrategy):
         # RSI makes higher low
         rsi_higher_low = second_rsi_low > first_rsi_low
 
-        return price_lower_low and rsi_higher_low and significant_swing
+        if not (price_lower_low and rsi_higher_low and significant_swing):
+            return None
+
+        return {
+            "first_price": float(first_price_low),
+            "second_price": float(second_price_low),
+            "first_rsi": float(first_rsi_low),
+            "second_rsi": float(second_rsi_low),
+        }
 
     def _detect_bearish_divergence(
         self, highs: pd.Series, rsi: pd.Series, min_swing_pct: float
-    ) -> bool:
+    ) -> dict | None:
         """
         Detect bearish divergence: price makes higher high, RSI makes lower high.
         """
         if len(highs) < 10:
-            return False
+            return None
 
         mid = len(highs) // 2
         first_half_high_idx = highs.iloc[:mid].idxmax()
@@ -195,7 +252,7 @@ class RSIDivergenceStrategy(BaseStrategy):
         second_rsi_high = rsi[second_half_high_idx]
 
         if pd.isna(first_rsi_high) or pd.isna(second_rsi_high):
-            return False
+            return None
 
         price_higher_high = second_price_high > first_price_high
         swing_pct = abs(second_price_high - first_price_high) / first_price_high * 100
@@ -203,4 +260,12 @@ class RSIDivergenceStrategy(BaseStrategy):
 
         rsi_lower_high = second_rsi_high < first_rsi_high
 
-        return price_higher_high and rsi_lower_high and significant_swing
+        if not (price_higher_high and rsi_lower_high and significant_swing):
+            return None
+
+        return {
+            "first_price": float(first_price_high),
+            "second_price": float(second_price_high),
+            "first_rsi": float(first_rsi_high),
+            "second_rsi": float(second_rsi_high),
+        }

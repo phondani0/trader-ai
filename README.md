@@ -75,8 +75,8 @@ Run commands with `uv run <command>`.
 | Command | Purpose | Example |
 |---|---|---|
 | `start` | Launch the trading engine, scanner, and journal loop | `uv run start` |
-| `benchmark` | Stress-test strategies across curated real-market windows and generate a regime capability matrix | `uv run benchmark --strategy supertrend` |
-| `backtest` | Run a single strategy or full stack on a symbol/date window using paginated historical fetches | `uv run backtest --symbol BTC/USDT:USDT --from 2024-01-01 --to 2024-03-31` |
+| `benchmark` | Stress-test strategies across curated real-market windows and generate a regime capability matrix with curated macro profiles plus expected execution regimes | `uv run benchmark --strategy supertrend` |
+| `backtest` | Run a single strategy or the live-style multi-strategy selector on a symbol/date window using paginated historical fetches | `uv run backtest --symbol BTC/USDT:USDT --from 2024-01-01 --to 2024-03-31` |
 | `trade` | Manual override for connectivity tests or emergency exits | `uv run trade --symbol BTC/USDT:USDT --side buy --qty 0.01` |
 
 ## Runtime Cadence
@@ -113,8 +113,9 @@ Benchmark approvals can now block fragile strategies from live startup based on 
 The benchmark output now includes:
 
 - real window-level market profiles from fetched OHLCV data
-- dominant regime detection plus regime-mix percentages
-- regime-scoped strategy approvals instead of only one global score
+- detected macro profile plus dominant execution regime
+- curated benchmark intent for market profile and expected execution regimes
+- market-profile capability summaries instead of only one global score
 - deployable regime lists that the runtime can use to gate strategies
 
 ## Optional Alpaca Adapter
@@ -163,6 +164,7 @@ docker run -d --name trader-ai --env-file .env -p 8080:8080 trader-ai
 - Start in paper or demo mode and observe behavior before considering live capital.
 - Backtests are useful for filtering bad ideas, not proving future returns.
 - `backtest --days N` now pages historical candles across multiple requests instead of silently truncating to a single 1000-bar fetch.
+- `backtest --strategy all` now uses the same one-best-signal selector shape as live trading instead of opening parallel positions per strategy on the same symbol.
 - If you add a new external dependency or credential, keep `.env.example` and the README in sync.
 
 ## Project Structure

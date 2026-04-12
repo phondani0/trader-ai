@@ -37,6 +37,7 @@ class SignalAggregator:
         self.strategies = strategies
         self.regime_detector = regime_detector
         self._active_strategies: list[str] = [s.name for s in strategies if s.enabled]
+        self._market_profile_lookback_bars = 576
 
         logger.info(
             f"Signal aggregator initialized with {len(self._active_strategies)} strategies: "
@@ -46,6 +47,9 @@ class SignalAggregator:
     def generate_signals(
         self,
         data: dict[str, pd.DataFrame],
+        *,
+        log_signals: bool = True,
+        market_profiles: dict[str, str] | None = None,
     ) -> list[Signal]:
         """
         Generate signals for all symbols using all eligible strategies.
@@ -64,6 +68,16 @@ class SignalAggregator:
 
             # 1. Detect regime for this symbol
             regime = self.regime_detector.detect(df)
+            market_profile = (market_profiles or {}).get(symbol)
+            if market_profile is None:
+                profile_df = (
+                    df.tail(self._market_profile_lookback_bars)
+                    if len(df) > self._market_profile_lookback_bars
+                    else df
+                )
+                market_profile = self.regime_detector.profile_window(profile_df).get(
+                    "detected_market_profile"
+                )
             allowed = self.regime_detector.get_allowed_strategies(regime)
 
             # 2. Run eligible strategies
@@ -73,6 +87,8 @@ class SignalAggregator:
                     continue
                 if not strategy.should_run(regime):
                     continue
+                if not strategy.allows_market_profile(market_profile):
+                    continue
                 if strategy.name not in allowed:
                     continue
 
@@ -80,17 +96,18 @@ class SignalAggregator:
                     signal = strategy.generate_signal(symbol, df, regime)
                     if signal:
                         symbol_signals.append(signal)
-                        logger.info(
-                            f"📊 Signal: {signal.strategy_name} → {signal.side.value} "
-                            f"{symbol} @ {signal.entry_price:.2f} | "
-                            f"Conf: {signal.confidence:.0%} | {signal.reason}"
-                        )
+                        if log_signals:
+                            logger.info(
+                                f"📊 Signal: {signal.strategy_name} → {signal.side.value} "
+                                f"{symbol} @ {signal.entry_price:.2f} | "
+                                f"Conf: {signal.confidence:.0%} | {signal.reason}"
+                            )
                 except Exception as e:
                     logger.error(f"Strategy {strategy.name} error on {symbol}: {e}")
 
             # 3. Resolve conflicts — if multiple strategies agree, boost confidence
             if len(symbol_signals) > 1:
-                best = self._resolve_conflicts(symbol_signals)
+                best = self._resolve_conflicts(symbol_signals, log_signals=log_signals)
                 if best:
                     all_signals.append(best)
             elif len(symbol_signals) == 1:
@@ -99,12 +116,17 @@ class SignalAggregator:
         # Sort by confidence (highest first)
         all_signals.sort(key=lambda s: s.confidence, reverse=True)
 
-        if all_signals:
+        if all_signals and log_signals:
             logger.info(f"Generated {len(all_signals)} signals across all symbols")
 
         return all_signals
 
-    def _resolve_conflicts(self, signals: list[Signal]) -> Optional[Signal]:
+    def _resolve_conflicts(
+        self,
+        signals: list[Signal],
+        *,
+        log_signals: bool = True,
+    ) -> Optional[Signal]:
         """
         When multiple strategies generate signals for the same symbol:
         - If they agree on direction → boost confidence (confluence!)
@@ -123,11 +145,12 @@ class SignalAggregator:
                 best = max(buy_signals, key=lambda s: s.confidence)
             else:
                 best = max(sell_signals, key=lambda s: s.confidence)
-            logger.warning(
-                f"⚠️ Conflicting signals for {best.symbol}: "
-                f"{len(buy_signals)} BUY vs {len(sell_signals)} SELL — "
-                f"going with {best.side.value} (conf: {best.confidence:.0%})"
-            )
+            if log_signals:
+                logger.warning(
+                    f"⚠️ Conflicting signals for {best.symbol}: "
+                    f"{len(buy_signals)} BUY vs {len(sell_signals)} SELL — "
+                    f"going with {best.side.value} (conf: {best.confidence:.0%})"
+                )
             return best
 
         # All agree on direction — CONFLUENCE! Boost confidence
@@ -141,10 +164,11 @@ class SignalAggregator:
         best.metadata["confluence_count"] = len(all_same_dir)
         best.metadata["confirming_strategies"] = [s.strategy_name for s in all_same_dir]
 
-        logger.info(
-            f"🎯 Confluence detected for {best.symbol}: "
-            f"{len(all_same_dir)} strategies agree on {best.side.value} "
-            f"(boosted conf: {best.confidence:.0%})"
-        )
+        if log_signals:
+            logger.info(
+                f"🎯 Confluence detected for {best.symbol}: "
+                f"{len(all_same_dir)} strategies agree on {best.side.value} "
+                f"(boosted conf: {best.confidence:.0%})"
+            )
 
         return best

@@ -26,13 +26,16 @@ vwap_reversion:
   regime: ["sideways_low_vol"]
   timeframe: 5Min
   # VWAP deviation threshold
-  vwap_std_entry: 1.5             # Loosened from 2.0 to increase frequency
+  vwap_std_entry: 1.2
   vwap_std_exit: 0.5              # Exit when price returns near VWAP
-  rsi_oversold: 30
-  rsi_overbought: 70
+  deviation_lookback: 80
+  rsi_oversold: 35
+  rsi_overbought: 65
   rsi_period: 14
   # Risk
-  stop_loss_pct: 1.5
+  stop_loss_pct: 1.0
+  atr_stop_multiplier: 1.2
+  min_vwap_distance_pct: 0.25
   max_position_pct: 10
 
 supertrend:
@@ -41,12 +44,19 @@ supertrend:
   timeframe: 5Min
   # Supertrend parameters
   atr_period: 14
-  atr_multiplier: 3.0
+  atr_multiplier: 2.5
   # Confirmation
   ema_period: 20
-  volume_multiplier: 1.2          # Volume must be 1.2x average
+  long_term_ema_period: 200
+  adx_min: 22
+  slope_lookback: 12
+  pullback_lookback: 8
+  volume_multiplier: 1.0
+  pullback_touch_atr: 0.6
   # Risk
   trailing_stop: true
+  stop_buffer_atr: 0.8
+  take_profit_rr_ratio: 2.2
   max_position_pct: 15
 
 orb:
@@ -72,10 +82,16 @@ rsi_divergence:
   rsi_period: 14
   lookback_bars: 30               # Bars to look back for divergence
   min_swing_pct: 0.3              # Min price swing to qualify
+  trend_ema_period: 50
+  long_term_ema_period: 200
+  bullish_rsi_max: 45
+  bearish_rsi_min: 55
+  adx_min: 20
   # Confirmation
   require_macd_confirmation: true
   # Risk
   stop_loss_swing: true           # Stop at recent swing
+  stop_loss_atr_buffer: 1.0
   take_profit_rr_ratio: 2.0
   max_position_pct: 10
 
@@ -85,11 +101,33 @@ ema_crossover:
   timeframe: 5Min
   fast_ema: 20
   slow_ema: 50
+  long_term_ema: 200
   # Filters
-  require_vwap_alignment: true
-  adx_min: 25                    # Only trade when ADX > 25 (strong trend)
+  require_vwap_alignment: false
+  adx_min: 22
+  slope_lookback: 12
+  pullback_lookback: 8
+  volume_multiplier: 1.0
+  ema_touch_atr: 0.6
   # Risk
-  trailing_stop_atr: 2.0
+  stop_buffer_atr: 0.8
+  take_profit_rr_ratio: 2.4
+  max_position_pct: 15
+
+donchian_breakout:
+  enabled: false
+  regime: ["trending_low_vol", "trending_high_vol"]
+  timeframe: 5Min
+  channel_period: 20
+  trend_ema_period: 200
+  atr_period: 14
+  adx_period: 14
+  volume_period: 20
+  adx_min: 22
+  volume_multiplier: 1.1
+  breakout_buffer_atr: 0.15
+  stop_loss_atr: 2.0
+  take_profit_rr_ratio: 2.5
   max_position_pct: 15
 
 chart_patterns:

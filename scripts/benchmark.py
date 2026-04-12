@@ -20,6 +20,7 @@ from src.core.broker_factory import BrokerFactory
 from src.core.data_feed import DataFeed
 from src.core.models import TradingMode
 from src.strategies.chart_patterns import ChartPatternStrategy
+from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
 from src.strategies.orb import ORBStrategy
@@ -51,6 +52,7 @@ def init_strategies() -> list:
         "orb": ORBStrategy,
         "rsi_divergence": RSIDivergenceStrategy,
         "ema_crossover": EMACrossoverStrategy,
+        "donchian_breakout": DonchianBreakoutStrategy,
         "chart_patterns": ChartPatternStrategy,
     }
 
@@ -131,10 +133,79 @@ def result_metrics(summary) -> dict:
     }
 
 
+def resolve_window_market_profile(regime_cfg: dict, window_profile: dict) -> str:
+    return regime_cfg.get("market_profile") or window_profile.get(
+        "detected_market_profile",
+        "mixed",
+    )
+
+
+def resolve_expected_execution_regimes(
+    regime_cfg: dict,
+    window_profile: dict,
+) -> list[str]:
+    configured = regime_cfg.get("expected_execution_regimes")
+    if configured:
+        return list(dict.fromkeys(configured))
+
+    dominant = window_profile.get("dominant_execution_regime") or window_profile.get(
+        "dominant_regime"
+    )
+    return [dominant] if dominant else []
+
+
+def derive_strategy_deployment(
+    strategy_name: str,
+    strategy_targets: dict[str, list[str]],
+    benchmark_windows: list[dict],
+) -> dict:
+    target_regimes = set(strategy_targets.get(strategy_name, []))
+    deployable_regimes: set[str] = set()
+    deployable_market_profiles: set[str] = set()
+    approved_windows: list[str] = []
+    reasons: list[str] = []
+
+    for window in benchmark_windows:
+        strategy_metrics = window["strategies"].get(strategy_name)
+        if not strategy_metrics:
+            continue
+
+        overlap = sorted(
+            target_regimes.intersection(window.get("expected_execution_regimes", []))
+        )
+        if strategy_metrics.get("approved") and overlap:
+            deployable_regimes.update(overlap)
+            deployable_market_profiles.add(window.get("market_profile", "mixed"))
+            approved_windows.append(window["name"])
+            continue
+
+        if strategy_metrics.get("approved") and not overlap:
+            reasons.append(
+                "approved in benchmark window but no overlap with target execution regimes"
+            )
+        else:
+            reasons.append(strategy_metrics.get("reason", "window not approved"))
+
+    approved = bool(deployable_regimes)
+    if approved:
+        reason = f"approved via windows: {', '.join(approved_windows)}"
+    else:
+        reason = reasons[0] if reasons else "no approved benchmark windows"
+
+    return {
+        "approved": approved,
+        "reason": reason,
+        "deployable_regimes": sorted(deployable_regimes),
+        "deployable_market_profiles": sorted(deployable_market_profiles),
+        "approved_windows": approved_windows,
+    }
+
+
 def log_window_profile(profile: dict):
     print(
         "  Market Profile: "
-        f"Dominant={profile['dominant_regime']} | "
+        f"Detected={profile['detected_market_profile']} ({profile['market_bias']}) | "
+        f"Dominant Execution={profile['dominant_execution_regime']} | "
         f"Return={profile['window_return_pct']:+.2f}% | "
         f"Realized Vol={profile['realized_vol_pct']:.2f}% | "
         f"Median ADX={profile['median_adx']:.2f} | "
@@ -188,7 +259,7 @@ def run_benchmark(strategy_filter: str = None):
     results_matrix = []
     benchmark_windows: list[dict] = []
     strategy_rollups = {strategy.name: new_rollup() for strategy in strategies}
-    regime_rollups = {strategy.name: {} for strategy in strategies}
+    market_profile_rollups = {strategy.name: {} for strategy in strategies}
 
     print("\n" + "═" * 120)
     print(f"{'STRATEGY BENCHMARK SUITE':^120}")
@@ -221,8 +292,17 @@ def run_benchmark(strategy_filter: str = None):
             continue
 
         window_profile = data_feed.regime_detector.profile_window(df)
-        dominant_regime = window_profile["dominant_regime"]
+        market_profile = resolve_window_market_profile(regime, window_profile)
+        expected_execution_regimes = resolve_expected_execution_regimes(
+            regime,
+            window_profile,
+        )
         log_window_profile(window_profile)
+        print(
+            "  Curated Benchmark Intent: "
+            f"Market={market_profile} | "
+            f"Expected Execution={', '.join(expected_execution_regimes) or '-'}"
+        )
 
         window_record = {
             "name": name,
@@ -230,6 +310,8 @@ def run_benchmark(strategy_filter: str = None):
             "start": start.isoformat(timespec="seconds"),
             "end": end.isoformat(timespec="seconds"),
             "description": regime["description"],
+            "market_profile": market_profile,
+            "expected_execution_regimes": expected_execution_regimes,
             "profile": window_profile,
             "strategies": {},
         }
@@ -243,11 +325,11 @@ def run_benchmark(strategy_filter: str = None):
                 window_profile,
             )
 
-            regime_bucket = regime_rollups[strategy.name].setdefault(
-                dominant_regime,
+            profile_bucket = market_profile_rollups[strategy.name].setdefault(
+                market_profile,
                 new_rollup(),
             )
-            collect_rollup(regime_bucket, result, name, window_profile)
+            collect_rollup(profile_bucket, result, name, window_profile)
 
             approved_for_window, window_reason = evaluate_strategy(result, benchmark_cfg)
             metrics = result_metrics(result)
@@ -259,7 +341,8 @@ def run_benchmark(strategy_filter: str = None):
             results_matrix.append(
                 {
                     "Window": name,
-                    "Dominant Regime": dominant_regime,
+                    "Market Profile": market_profile,
+                    "Dominant Execution": window_profile["dominant_execution_regime"],
                     "Strategy": strategy.name,
                     "Trades": len(result.trades),
                     "Win Rate": f"{result.win_rate_pct:.1f}%",
@@ -298,31 +381,24 @@ def run_benchmark(strategy_filter: str = None):
         pivot = matrix_df.pivot(index="Strategy", columns="Window", values="Net ROI")
         print(pivot.to_string())
 
-    regime_capabilities: dict[str, dict] = {}
+    market_profile_capabilities: dict[str, dict] = {}
     for strategy in strategies:
         capabilities: dict[str, dict] = {}
-        for regime_name, rollup in regime_rollups[strategy.name].items():
+        for profile_name, rollup in market_profile_rollups[strategy.name].items():
             summary = summarize_rollup(engine, strategy.name, rollup)
-            supported = regime_name in strategy_targets[strategy.name]
             approved, reason = evaluate_strategy(summary, benchmark_cfg)
-            if not supported:
-                approved = False
-                reason = (
-                    f"regime {regime_name} is outside configured targets "
-                    f"{strategy_targets[strategy.name]}"
-                )
-            capabilities[regime_name] = {
+            capabilities[profile_name] = {
                 "approved": approved,
                 "reason": reason,
                 "window_names": rollup["window_names"],
                 "metrics": result_metrics(summary),
             }
-        regime_capabilities[strategy.name] = capabilities
+        market_profile_capabilities[strategy.name] = capabilities
 
     approvals = build_approvals_payload(
         engine,
         strategy_rollups,
-        regime_capabilities,
+        market_profile_capabilities,
         strategy_targets,
         benchmark_cfg,
         benchmark_windows,
@@ -357,7 +433,7 @@ def run_benchmark(strategy_filter: str = None):
 def build_approvals_payload(
     engine,
     strategy_rollups: dict[str, dict],
-    regime_capabilities: dict[str, dict],
+    market_profile_capabilities: dict[str, dict],
     strategy_targets: dict[str, list[str]],
     benchmark_cfg: dict,
     benchmark_windows: list[dict],
@@ -366,36 +442,25 @@ def build_approvals_payload(
         "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
         "thresholds": benchmark_cfg,
         "benchmark_windows": benchmark_windows,
-        "regime_capabilities": regime_capabilities,
+        "market_profile_capabilities": market_profile_capabilities,
         "strategies": {},
     }
 
     for strategy_name, rollup in strategy_rollups.items():
         summary = summarize_rollup(engine, strategy_name, rollup)
-        deployable_regimes = sorted(
-            [
-                regime_name
-                for regime_name, capability in regime_capabilities.get(
-                    strategy_name, {}
-                ).items()
-                if capability["approved"]
-            ]
+        deployment = derive_strategy_deployment(
+            strategy_name,
+            strategy_targets,
+            benchmark_windows,
         )
-        approved = bool(deployable_regimes)
-        if approved:
-            reason = f"approved for regimes: {', '.join(deployable_regimes)}"
-        else:
-            reasons = [
-                capability["reason"]
-                for capability in regime_capabilities.get(strategy_name, {}).values()
-            ]
-            reason = reasons[0] if reasons else "no approved benchmark regimes"
 
         payload["strategies"][strategy_name] = {
-            "approved": approved,
-            "reason": reason,
+            "approved": deployment["approved"],
+            "reason": deployment["reason"],
             "target_regimes": strategy_targets.get(strategy_name, []),
-            "deployable_regimes": deployable_regimes,
+            "deployable_regimes": deployment["deployable_regimes"],
+            "deployable_market_profiles": deployment["deployable_market_profiles"],
+            "approved_windows": deployment["approved_windows"],
             "metrics": result_metrics(summary),
         }
 

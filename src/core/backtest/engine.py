@@ -14,6 +14,7 @@ from loguru import logger
 from src.core.backtest.models import BacktestResult, BacktestTrade
 from src.core.models import Side
 from src.intelligence.regime_detector import RegimeDetector
+from src.intelligence.signal_aggregator import SignalAggregator
 
 
 class BacktestEngine:
@@ -55,7 +56,10 @@ class BacktestEngine:
         min_lookback: int = 50,
     ) -> BacktestResult:
         """
-        Execute a walk-forward simulation for one or more strategies.
+        Execute a walk-forward simulation for one or more independent strategies.
+
+        Each strategy may hold its own position on the same symbol. This mode is
+        useful for research, but not for simulating the live one-best-signal flow.
         """
         strategy_label = ", ".join(strategy.name for strategy in strategies)
         logger.debug(f"Starting simulation core for {strategy_label} on {symbol}")
@@ -82,13 +86,11 @@ class BacktestEngine:
                     if strategy.should_run(regime):
                         signal = strategy.generate_signal(symbol, window, regime)
                         if signal:
-                            effective_entry = signal.entry_price * (
-                                1 + self.total_friction
-                                if signal.side == Side.BUY
-                                else 1 - self.total_friction
-                            )
                             current_positions[strategy.name] = {
-                                "entry_price": effective_entry,
+                                "entry_price": self._apply_entry_friction(
+                                    signal.side,
+                                    signal.entry_price,
+                                ),
                                 "stop_loss": signal.stop_loss,
                                 "take_profit": signal.take_profit,
                                 "side": signal.side,
@@ -102,24 +104,21 @@ class BacktestEngine:
                     if exit_price is None:
                         continue
 
-                    effective_exit = exit_price * (
-                        1 - self.total_friction
-                        if current_pos["side"] == Side.BUY
-                        else 1 + self.total_friction
-                    )
                     trade = self._create_trade_record(
                         symbol,
                         current_pos,
-                        effective_exit,
+                        self._apply_exit_friction(current_pos["side"], exit_price),
                         window.index[-1],
                         strategy.name,
                     )
                     trades.append(trade)
                     current_positions[strategy.name] = None
 
-                    running_equity *= 1 + trade.pnl_pct / 100
-                    peak_equity = max(peak_equity, running_equity)
-                    drawdown_pct = ((running_equity - peak_equity) / peak_equity) * 100
+                    running_equity, peak_equity, drawdown_pct = self._update_equity(
+                        running_equity,
+                        peak_equity,
+                        trade.pnl_pct,
+                    )
                     if drawdown_pct <= -self.max_drawdown_pct:
                         killed_by_drawdown = True
                         kill_reason = (
@@ -143,9 +142,126 @@ class BacktestEngine:
                 self._create_trade_record(
                     symbol,
                     current_pos,
-                    last_close,
+                    self._apply_exit_friction(current_pos["side"], last_close),
                     last_time,
                     strategy_name,
+                    "EOD Close",
+                )
+            )
+
+        return self.summarize(
+            symbol=symbol,
+            period_start=df.index[0],
+            period_end=df.index[-1],
+            trades=trades,
+            killed_by_drawdown=killed_by_drawdown,
+            kill_reason=kill_reason,
+        )
+
+    def run_selector(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        strategies: list,
+        min_lookback: int = 50,
+    ) -> BacktestResult:
+        """
+        Execute a live-style walk-forward simulation.
+
+        This mode keeps a single shared position for the symbol and lets the
+        signal aggregator pick the best available signal at each bar.
+        """
+        strategy_label = ", ".join(strategy.name for strategy in strategies)
+        logger.debug(f"Starting selector simulation for {strategy_label} on {symbol}")
+
+        trades: List[BacktestTrade] = []
+        current_position: dict | None = None
+        running_equity = self.initial_capital
+        peak_equity = self.initial_capital
+        killed_by_drawdown = False
+        kill_reason = ""
+        aggregator = SignalAggregator(
+            strategies=strategies,
+            regime_detector=self.regime_detector,
+        )
+        market_profile_refresh_bars = 12
+        cached_market_profile: str | None = None
+
+        for i in range(min_lookback, len(df)):
+            window = df.iloc[: i + 1]
+            current_bar = df.iloc[i]
+
+            if current_position is not None:
+                exit_price = self._resolve_exit_price(current_position, current_bar)
+                if exit_price is not None:
+                    trade = self._create_trade_record(
+                        symbol,
+                        current_position,
+                        self._apply_exit_friction(current_position["side"], exit_price),
+                        window.index[-1],
+                        current_position["strategy"],
+                    )
+                    trades.append(trade)
+                    current_position = None
+
+                    running_equity, peak_equity, drawdown_pct = self._update_equity(
+                        running_equity,
+                        peak_equity,
+                        trade.pnl_pct,
+                    )
+                    if drawdown_pct <= -self.max_drawdown_pct:
+                        killed_by_drawdown = True
+                        kill_reason = (
+                            f"max drawdown {abs(drawdown_pct):.2f}% exceeded "
+                            f"{self.max_drawdown_pct:.1f}%"
+                        )
+                        logger.warning(
+                            f"Backtest drawdown kill-switch triggered for selector on {symbol}: {kill_reason}"
+                        )
+                        break
+
+            if current_position is not None or killed_by_drawdown:
+                continue
+
+            if cached_market_profile is None or (i - min_lookback) % market_profile_refresh_bars == 0:
+                profile_window = window.tail(aggregator._market_profile_lookback_bars)
+                cached_market_profile = self.regime_detector.profile_window(
+                    profile_window
+                ).get("detected_market_profile")
+
+            signals = aggregator.generate_signals(
+                {symbol: window},
+                log_signals=False,
+                market_profiles={symbol: cached_market_profile} if cached_market_profile else None,
+            )
+            if not signals:
+                continue
+
+            signal = signals[0]
+            current_position = {
+                "entry_price": self._apply_entry_friction(
+                    signal.side,
+                    signal.entry_price,
+                ),
+                "stop_loss": signal.stop_loss,
+                "take_profit": signal.take_profit,
+                "side": signal.side,
+                "entry_time": window.index[-1],
+                "regime": signal.regime.value,
+                "reason": signal.reason,
+                "strategy": signal.strategy_name,
+            }
+
+        if current_position is not None:
+            last_close = float(df.iloc[-1]["close"])
+            last_time = df.index[-1]
+            trades.append(
+                self._create_trade_record(
+                    symbol,
+                    current_position,
+                    self._apply_exit_friction(current_position["side"], last_close),
+                    last_time,
+                    current_position["strategy"],
                     "EOD Close",
                 )
             )
@@ -183,6 +299,7 @@ class BacktestEngine:
         )
 
         if not trades:
+            result.final_equity = self.initial_capital
             return result
 
         equity = self.initial_capital
@@ -223,7 +340,9 @@ class BacktestEngine:
         return result
 
     def _resolve_exit_price(
-        self, current_pos: dict, current_bar: pd.Series
+        self,
+        current_pos: dict,
+        current_bar: pd.Series,
     ) -> float | None:
         """
         Resolve an exit using conservative wick logic.
@@ -292,3 +411,24 @@ class BacktestEngine:
             }
 
         return breakdown
+
+    def _apply_entry_friction(self, side: Side, entry_price: float) -> float:
+        if side == Side.BUY:
+            return entry_price * (1 + self.total_friction)
+        return entry_price * (1 - self.total_friction)
+
+    def _apply_exit_friction(self, side: Side, exit_price: float) -> float:
+        if side == Side.BUY:
+            return exit_price * (1 - self.total_friction)
+        return exit_price * (1 + self.total_friction)
+
+    @staticmethod
+    def _update_equity(
+        running_equity: float,
+        peak_equity: float,
+        pnl_pct: float,
+    ) -> tuple[float, float, float]:
+        running_equity *= 1 + pnl_pct / 100
+        peak_equity = max(peak_equity, running_equity)
+        drawdown_pct = ((running_equity - peak_equity) / peak_equity) * 100
+        return running_equity, peak_equity, drawdown_pct

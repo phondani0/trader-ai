@@ -90,7 +90,11 @@ class RegimeDetector:
             return {
                 "bars": 0,
                 "dominant_regime": MarketRegime.UNKNOWN.value,
+                "dominant_execution_regime": MarketRegime.UNKNOWN.value,
                 "regime_mix_pct": {},
+                "execution_regime_mix_pct": {},
+                "detected_market_profile": "unknown",
+                "market_bias": "flat",
             }
 
         closes = df["close"].dropna()
@@ -161,6 +165,20 @@ class RegimeDetector:
         if close_start > 0:
             window_return_pct = ((close_end / close_start) - 1) * 100
 
+        detected_market_profile = self.classify_market_profile(
+            window_return_pct=window_return_pct,
+            realized_vol_pct=realized_vol_pct,
+            trend_efficiency_pct=trend_efficiency_pct,
+            breakout_rate_pct=breakout_rate_pct,
+            median_adx=float(adx_series.median()) if not adx_series.empty else 0.0,
+        )
+
+        market_bias = "flat"
+        if window_return_pct > 5:
+            market_bias = "bullish"
+        elif window_return_pct < -5:
+            market_bias = "bearish"
+
         return {
             "bars": int(len(df)),
             "window_return_pct": float(window_return_pct),
@@ -175,8 +193,39 @@ class RegimeDetector:
             "breakout_rate_pct": breakout_rate_pct,
             "trend_efficiency_pct": trend_efficiency_pct,
             "dominant_regime": dominant_regime,
+            "dominant_execution_regime": dominant_regime,
             "regime_mix_pct": regime_mix_pct,
+            "execution_regime_mix_pct": regime_mix_pct,
+            "detected_market_profile": detected_market_profile,
+            "market_bias": market_bias,
         }
+
+    def classify_market_profile(
+        self,
+        *,
+        window_return_pct: float,
+        realized_vol_pct: float,
+        trend_efficiency_pct: float,
+        breakout_rate_pct: float,
+        median_adx: float,
+    ) -> str:
+        """Classify a whole benchmark window into a macro market profile."""
+        abs_return = abs(window_return_pct)
+
+        if (
+            abs_return >= 20
+            and trend_efficiency_pct >= 1.0
+            and (breakout_rate_pct >= 9.0 or realized_vol_pct >= 18.0)
+        ):
+            return "breakout"
+
+        if abs_return >= 12 and (trend_efficiency_pct >= 0.9 or median_adx >= 24):
+            return "trend"
+
+        if abs_return <= 10 and median_adx < self.adx_trending_threshold:
+            return "range"
+
+        return "mixed"
 
     def detect_multi(self, data: dict[str, pd.DataFrame]) -> dict[str, MarketRegime]:
         """Detect regime for multiple symbols."""
@@ -191,10 +240,10 @@ class RegimeDetector:
         """
         strategy_map = {
             MarketRegime.TRENDING_LOW_VOL: [
-                "supertrend", "ema_crossover", "rsi_divergence", "chart_patterns", "orb",
+                "supertrend", "ema_crossover", "rsi_divergence", "donchian_breakout", "chart_patterns", "orb",
             ],
             MarketRegime.TRENDING_HIGH_VOL: [
-                "supertrend", "chart_patterns", "orb",  # Fewer strategies, wider stops
+                "supertrend", "rsi_divergence", "donchian_breakout", "chart_patterns", "orb",  # Fewer strategies, wider stops
             ],
             MarketRegime.SIDEWAYS_LOW_VOL: [
                 "macd_bollinger", "vwap_reversion", "chart_patterns", "orb",

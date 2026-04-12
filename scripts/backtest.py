@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -27,6 +28,7 @@ from src.core.broker_factory import BrokerFactory
 from src.core.data_feed import DataFeed
 from src.core.models import TradingMode
 from src.strategies.chart_patterns import ChartPatternStrategy
+from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
 from src.strategies.orb import ORBStrategy
@@ -53,8 +55,60 @@ def load_strategies() -> dict:
         "orb": ORBStrategy(strat_config.get("orb", {})),
         "rsi_divergence": RSIDivergenceStrategy(strat_config.get("rsi_divergence", {})),
         "ema_crossover": EMACrossoverStrategy(strat_config.get("ema_crossover", {})),
+        "donchian_breakout": DonchianBreakoutStrategy(strat_config.get("donchian_breakout", {})),
         "chart_patterns": ChartPatternStrategy(strat_config.get("chart_patterns", {})),
     }
+
+
+def load_strategy_approvals(settings: dict) -> dict:
+    benchmark_cfg = settings.get("benchmarking", {})
+    if not benchmark_cfg.get("enforce_approvals", True):
+        return {}
+
+    approvals_rel = benchmark_cfg.get("approvals_path", "data/strategy_approvals.json")
+    approvals_path = PROJECT_ROOT / approvals_rel
+    if not approvals_path.exists():
+        logger.warning(
+            f"Benchmark approvals file not found at {approvals_path}. "
+            "Falling back to config-level strategy enablement."
+        )
+        return {}
+
+    try:
+        with open(approvals_path, "r") as f:
+            payload = json.load(f)
+        return payload.get("strategies", {})
+    except Exception as exc:
+        logger.error(f"Failed to load strategy approvals: {exc}")
+        return {}
+
+
+def apply_strategy_approvals(
+    strategies: list,
+    approvals: dict,
+) -> list:
+    approved_strategies = []
+    for strategy in strategies:
+        approval = approvals.get(strategy.name, {})
+        deployable_regimes = approval.get("deployable_regimes")
+        deployable_market_profiles = approval.get("deployable_market_profiles")
+        if deployable_regimes is not None:
+            strategy.set_benchmark_approved_regimes(deployable_regimes)
+        if deployable_market_profiles is not None:
+            strategy.set_benchmark_approved_market_profiles(
+                deployable_market_profiles
+            )
+
+        if approval and not approval.get("approved", False) and not deployable_regimes:
+            logger.info(
+                f"Skipping blocked strategy in live-style backtest: {strategy.name} "
+                f"({approval.get('reason', 'not approved')})"
+            )
+            continue
+
+        approved_strategies.append(strategy)
+
+    return approved_strategies
 
 
 def run_backtest(
@@ -99,6 +153,17 @@ def run_backtest(
     strategy_map = load_strategies()
     if strategy_name == "all":
         strategies = [strategy for strategy in strategy_map.values() if strategy.enabled]
+        strategies = apply_strategy_approvals(
+            strategies,
+            load_strategy_approvals(settings),
+        )
+        if not strategies:
+            logger.error("No benchmark-approved strategies available for live-style backtest")
+            return None
+        logger.info(
+            "Live-style stack: "
+            + ", ".join(strategy.name for strategy in strategies)
+        )
     else:
         strategies = [strategy_map[strategy_name]]
 
@@ -129,7 +194,7 @@ def run_backtest(
     )
 
     if strategy_name == "all":
-        result = engine.run_portfolio(symbol, df, strategies)
+        result = engine.run_selector(symbol, df, strategies)
     else:
         result = engine.run(symbol, df, strategies[0])
 
@@ -140,7 +205,8 @@ def run_backtest(
 def log_window_profile(profile: dict):
     logger.info(
         "Window Profile: "
-        f"Dominant Regime={profile.get('dominant_regime')} | "
+        f"Market={profile.get('detected_market_profile')} ({profile.get('market_bias')}) | "
+        f"Dominant Execution={profile.get('dominant_execution_regime')} | "
         f"Return={profile.get('window_return_pct', 0.0):+.2f}% | "
         f"Realized Vol={profile.get('realized_vol_pct', 0.0):.2f}% | "
         f"Median ADX={profile.get('median_adx', 0.0):.2f} | "
