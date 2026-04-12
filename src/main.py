@@ -7,7 +7,7 @@ Main entry point. This is the "always-on worker" that:
     2. Fetches data and detects market regime
     3. Runs strategies and generates signals
     4. Validates signals through risk management
-    5. Executes trades via Alpaca
+    5. Executes trades via the configured broker
     6. Monitors positions and manages exits
     7. Squares off at end of day
     8. Generates daily report
@@ -33,7 +33,7 @@ import yaml
 from dotenv import load_dotenv
 from loguru import logger
 
-from src.core.broker import AlpacaBroker
+from src.core.broker_factory import BrokerFactory
 from src.core.data_feed import DataFeed
 from src.core.scheduler import MarketScheduler
 from src.core.models import (
@@ -119,7 +119,7 @@ class TradingEngine:
             logger.warning("⚠️  LIVE TRADING MODE — Real money is at risk!")
 
         # ─── Initialize Components ────────────────────────────────
-        self.broker = AlpacaBroker(mode=mode)
+        self.broker = BrokerFactory.create(config, mode)
         self.data_feed = DataFeed(broker=self.broker, config=config)
         self.regime_detector = RegimeDetector(config=config)
         self.kill_switch = KillSwitch(broker=self.broker)
@@ -333,31 +333,13 @@ class TradingEngine:
             return
 
         try:
-            from src.core.models import Order as OrderModel, OrderType
-
             sl_side = Side.SELL if order.side == Side.BUY else Side.BUY
 
-            asset_class = self.config.get("trading", {}).get("asset_class", "equity").lower()
-            
-            # Alpaca Crypto does not support standard STOP orders; must use STOP_LIMIT
-            if asset_class == "crypto":
-                order_type = OrderType.STOP_LIMIT
-                # 1% slippage buffer for the limit price to ensure standard market-like execution
-                if sl_side == Side.SELL:
-                    limit_price = order.signal.stop_loss * 0.99
-                else:
-                    limit_price = order.signal.stop_loss * 1.01
-            else:
-                order_type = OrderType.STOP
-                limit_price = None
-
-            sl_order = OrderModel(
+            sl_order = self.broker.create_stop_loss_order(
                 symbol=order.symbol,
                 side=sl_side,
                 quantity=order.quantity,
-                order_type=order_type,
                 stop_price=order.signal.stop_loss,
-                limit_price=limit_price,
                 strategy_name=f"{order.strategy_name}_stoploss",
             )
 

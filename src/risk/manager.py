@@ -28,7 +28,6 @@ class RiskManager:
 
     def __init__(self, config: dict, initial_capital: float):
         risk_config = config.get("risk_management", {})
-        self.asset_class = config.get("trading", {}).get("asset_class", "equity").lower()
 
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
@@ -79,10 +78,6 @@ class RiskManager:
         for pos in current_positions:
             if pos.symbol == signal.symbol:
                 return False, f"Already in position for {signal.symbol}", None
-
-        # Block short selling for Crypto
-        if self.asset_class == "crypto" and signal.side == Side.SELL:
-            return False, "Short selling crypto is not supported by Alpaca", None
 
         # Mandatory stop-loss
         if self.mandatory_stop_loss and signal.stop_loss == 0:

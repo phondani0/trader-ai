@@ -1,312 +1,238 @@
 """
-Alpaca Broker Abstraction Layer.
+CCXT Broker Implementation.
 
-Handles all communication with Alpaca's Trading and Market Data APIs.
-Supports both paper and live trading modes.
+Connects to global crypto exchanges (Bybit, Binance, Kraken, etc.) via the
+CCXT unified standard. Enables Perpetual Futures, short selling, and leverage.
+
+All exchange-specific quirks are handled HERE — never leaked to consumers.
 """
 
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
 from typing import Optional
 
+import yaml
 import pandas as pd
+from pathlib import Path
 from loguru import logger
+import ccxt
 
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import (
-    MarketOrderRequest,
-    LimitOrderRequest,
-    StopOrderRequest,
-    StopLimitOrderRequest,
-    TrailingStopOrderRequest,
-    GetOrdersRequest,
-    ClosePositionRequest,
-)
-from alpaca.trading.enums import (
-    OrderSide,
-    TimeInForce,
-    OrderType as AlpacaOrderType,
-    OrderStatus as AlpacaOrderStatus,
-    QueryOrderStatus,
-)
-from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
-from alpaca.data.requests import (
-    StockBarsRequest,
-    StockLatestQuoteRequest,
-    StockSnapshotRequest,
-    CryptoBarsRequest,
-    CryptoLatestQuoteRequest,
-    CryptoSnapshotRequest,
-)
-from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.data.live import StockDataStream, CryptoDataStream
-
+from src.core.base_broker import BaseBroker
 from src.core.models import (
-    Order, Position, Side, OrderType, OrderStatus, TradingMode,
+    Order,
+    Position,
+    Side,
+    OrderType,
+    OrderStatus,
+    TradingMode,
 )
 
 
-# ─── Timeframe Mapping ───────────────────────────────────────────────
+# ─── Timeframe Mapping (internal → CCXT) ─────────────────────────────
 
 TIMEFRAME_MAP = {
-    "1Min": TimeFrame(1, TimeFrameUnit.Minute),
-    "5Min": TimeFrame(5, TimeFrameUnit.Minute),
-    "15Min": TimeFrame(15, TimeFrameUnit.Minute),
-    "30Min": TimeFrame(30, TimeFrameUnit.Minute),
-    "1Hour": TimeFrame(1, TimeFrameUnit.Hour),
-    "1Day": TimeFrame(1, TimeFrameUnit.Day),
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "1d": "1d",
 }
 
 
-class AlpacaBroker:
+class CCXTBroker(BaseBroker):
     """
-    Alpaca broker wrapper for trading and data operations.
-
-    Provides a clean interface for:
-    - Placing/canceling/modifying orders
-    - Fetching account info, positions, and orders
-    - Getting historical and real-time market data
+    CCXT broker for crypto perpetual futures.
+    Supports short selling, leverage, and 24/7 operation.
     """
 
-    def __init__(self, mode: TradingMode = TradingMode.PAPER):
-        api_key = os.getenv("ALPACA_API_KEY")
-        secret_key = os.getenv("ALPACA_SECRET_KEY")
-
-        if not api_key or not secret_key:
-            raise ValueError(
-                "ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment. "
-                "Get your keys from https://app.alpaca.markets"
-            )
+    def __init__(
+        self, mode: TradingMode = TradingMode.PAPER, config: Optional[dict] = None
+    ):
+        api_key = os.getenv("EXCHANGE_API_KEY")
+        secret_key = os.getenv("EXCHANGE_SECRET_KEY")
+        exchange_id = os.getenv("EXCHANGE_ID", "bybit")
 
         self.mode = mode
         is_paper = mode == TradingMode.PAPER
 
-        import yaml
-        from pathlib import Path
-        config_path = Path(__file__).parent.parent.parent / "config" / "settings.yaml"
-        try:
-            with open(config_path, "r") as f:
-                settings = yaml.safe_load(f)
-            self.asset_class = settings.get("trading", {}).get("asset_class", "equity").lower()
-        except Exception:
-            self.asset_class = "equity"
+        exchange_class = getattr(ccxt, exchange_id)
 
-        # Trading client
-        self.trading_client = TradingClient(
-            api_key=api_key,
-            secret_key=secret_key,
-            paper=is_paper,
+        # Simplified config: pass keys if they exist, regardless of content
+        exchange_opts: dict = {
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "swap",
+            },
+        }
+        if api_key and secret_key:
+            exchange_opts["apiKey"] = api_key
+            exchange_opts["secret"] = secret_key
+
+        self.exchange = exchange_class(exchange_opts)
+
+        if is_paper:
+            if exchange_id == "bybit":
+                self.exchange.enable_demo_trading(True)
+            elif hasattr(self.exchange, "set_sandbox_mode"):
+                self.exchange.set_sandbox_mode(True)
+
+        self.exchange.load_markets()
+
+        if config:
+            risk = config.get("risk_management", {})
+            self._leverage = risk.get("leverage", 1)
+        else:
+            config_path = (
+                Path(__file__).parent.parent.parent / "config" / "settings.yaml"
+            )
+            try:
+                with open(config_path, "r") as f:
+                    settings = yaml.safe_load(f)
+                self._leverage = settings.get("risk_management", {}).get("leverage", 1)
+            except Exception:
+                self._leverage = 1
+
+        logger.info(
+            f"CCXT Broker initialized on {exchange_id.upper()} in "
+            f"{'PAPER' if is_paper else '🔴 LIVE'} mode (Leverage: {self._leverage}x)"
         )
 
-        # Data client (no auth needed for free tier, but auth gives more data)
-        if self.asset_class == "crypto":
-            self.data_client = CryptoHistoricalDataClient(
-                api_key=api_key,
-                secret_key=secret_key,
-            )
-            self._stream: Optional[CryptoDataStream] = None
-        else:
-            self.data_client = StockHistoricalDataClient(
-                api_key=api_key,
-                secret_key=secret_key,
-            )
-            self._stream: Optional[StockDataStream] = None
+    # ─── Capability Properties ────────────────────────────────────
 
-        logger.info(f"Alpaca broker initialized in {'PAPER' if is_paper else '🔴 LIVE'} mode (Asset Class: {self.asset_class})")
+    @property
+    def supports_short_selling(self) -> bool:
+        return True  # Perpetual futures natively support shorts
+
+    @property
+    def is_24_7_market(self) -> bool:
+        return True  # Crypto never sleeps
+
+    @property
+    def supported_order_types(self) -> list[OrderType]:
+        return [OrderType.MARKET, OrderType.LIMIT, OrderType.STOP_LIMIT]
 
     # ─── Account ──────────────────────────────────────────────────
 
-    def get_account(self) -> dict:
-        """Get account information including buying power, equity, etc."""
-        account = self.trading_client.get_account()
-        return {
-            "id": account.id,
-            "status": account.status,
-            "equity": float(account.equity),
-            "cash": float(account.cash),
-            "buying_power": float(account.buying_power),
-            "portfolio_value": float(account.portfolio_value),
-            "day_trade_count": account.daytrade_count,
-            "pattern_day_trader": account.pattern_day_trader,
-            "trading_blocked": account.trading_blocked,
-            "account_blocked": account.account_blocked,
-        }
-
     def get_buying_power(self) -> float:
-        """Get current buying power."""
-        account = self.trading_client.get_account()
-        return float(account.buying_power)
+        balance = self.exchange.fetch_balance()
+        usdt_free = float(balance.get("USDT", {}).get("free", 0.0) or 0.0)
+        return usdt_free * self._leverage
 
     def get_equity(self) -> float:
-        """Get current account equity."""
-        account = self.trading_client.get_account()
-        return float(account.equity)
+        balance = self.exchange.fetch_balance()
+        return float(balance.get("USDT", {}).get("total", 0.0) or 0.0)
 
     # ─── Orders ───────────────────────────────────────────────────
 
     def place_order(self, order: Order) -> Order:
-        """
-        Place an order with Alpaca.
-        Returns the order with updated ID and status.
-        """
-        side = OrderSide.BUY if order.side == Side.BUY else OrderSide.SELL
-        tif = TimeInForce.GTC if self.asset_class == "crypto" else TimeInForce.DAY
+        symbol = order.symbol
+        side = "buy" if order.side == Side.BUY else "sell"
+
+        if order.order_type in (OrderType.STOP_LIMIT, OrderType.LIMIT):
+            order_type = "limit"
+        else:
+            order_type = "market"
+
+        params = {}
+        if order.stop_price:
+            params["stopLoss"] = order.stop_price
 
         try:
-            if order.order_type == OrderType.MARKET:
-                request = MarketOrderRequest(
-                    symbol=order.symbol,
-                    qty=order.quantity,
-                    side=side,
-                    time_in_force=tif,
-                )
-            elif order.order_type == OrderType.LIMIT:
-                request = LimitOrderRequest(
-                    symbol=order.symbol,
-                    qty=order.quantity,
-                    side=side,
-                    time_in_force=tif,
-                    limit_price=order.limit_price,
-                )
-            elif order.order_type == OrderType.STOP:
-                request = StopOrderRequest(
-                    symbol=order.symbol,
-                    qty=order.quantity,
-                    side=side,
-                    time_in_force=tif,
-                    stop_price=order.stop_price,
-                )
-            elif order.order_type == OrderType.STOP_LIMIT:
-                request = StopLimitOrderRequest(
-                    symbol=order.symbol,
-                    qty=order.quantity,
-                    side=side,
-                    time_in_force=tif,
-                    stop_price=order.stop_price,
-                    limit_price=order.limit_price,
-                )
-            elif order.order_type == OrderType.TRAILING_STOP:
-                request = TrailingStopOrderRequest(
-                    symbol=order.symbol,
-                    qty=order.quantity,
-                    side=side,
-                    time_in_force=tif,
-                    trail_percent=order.stop_price,  # Using stop_price field for trail %
-                )
-            else:
-                raise ValueError(f"Unsupported order type: {order.order_type}")
+            try:
+                self.exchange.set_leverage(self._leverage, symbol)
+            except Exception:
+                pass  # Already set or unsupported
 
-            result = self.trading_client.submit_order(request)
-
-            order.id = str(result.id)
-            order.status = self._map_order_status(result.status)
-            if result.filled_avg_price:
-                order.filled_price = float(result.filled_avg_price)
-            if result.filled_qty:
-                order.filled_quantity = int(float(result.filled_qty))
-
+            res = self.exchange.create_order(
+                symbol=symbol,
+                type=order_type,
+                side=side,
+                amount=order.quantity,
+                price=order.limit_price,
+                params=params,
+            )
+            order.id = str(res["id"])
+            order.status = self._map_status(res.get("status", "open"))
+            order.filled_quantity = float(res.get("filled", 0.0) or 0.0)
+            order.filled_price = float(res.get("average", 0.0) or 0.0)
             logger.info(
-                f"Order placed: {order.side.value} {order.quantity}x {order.symbol} "
-                f"@ {order.order_type.value} | ID: {order.id} | Status: {order.status.value}"
+                f"Order placed: {side.upper()} {order.quantity}x {symbol} "
+                f"@ {order_type} | ID: {order.id}"
             )
             return order
-
         except Exception as e:
             order.status = OrderStatus.REJECTED
-            logger.error(f"Order REJECTED for {order.symbol}: {e}")
+            logger.error(f"Order REJECTED for {symbol}: {e}")
             raise
 
     def cancel_order(self, order_id: str) -> bool:
-        """Cancel an open order by ID."""
         try:
-            self.trading_client.cancel_order_by_id(order_id)
-            logger.info(f"Order cancelled: {order_id}")
+            self.exchange.cancel_order(order_id)
             return True
-        except Exception as e:
-            logger.error(f"Failed to cancel order {order_id}: {e}")
+        except Exception:
             return False
 
     def cancel_all_orders(self) -> bool:
-        """Cancel all open orders."""
         try:
-            self.trading_client.cancel_orders()
-            logger.info("All open orders cancelled")
+            self.exchange.cancel_all_orders()
             return True
-        except Exception as e:
-            logger.error(f"Failed to cancel all orders: {e}")
+        except Exception:
             return False
 
-    def get_order(self, order_id: str) -> dict:
-        """Get order status by ID."""
-        order = self.trading_client.get_order_by_id(order_id)
-        return {
-            "id": str(order.id),
-            "symbol": order.symbol,
-            "side": order.side.value,
-            "qty": float(order.qty),
-            "filled_qty": float(order.filled_qty) if order.filled_qty else 0,
-            "filled_price": float(order.filled_avg_price) if order.filled_avg_price else None,
-            "status": order.status.value,
-            "created_at": order.created_at,
-        }
-
-    def get_open_orders(self) -> list[dict]:
-        """Get all open orders."""
-        request = GetOrdersRequest(status=QueryOrderStatus.OPEN)
-        orders = self.trading_client.get_orders(request)
-        return [
-            {
-                "id": str(o.id),
-                "symbol": o.symbol,
-                "side": o.side.value,
-                "qty": float(o.qty),
-                "status": o.status.value,
-                "type": o.type.value,
-            }
-            for o in orders
-        ]
-
-    # ─── Positions ───────────────────────────────────────────────
+    # ─── Positions ────────────────────────────────────────────────
 
     def get_positions(self) -> list[Position]:
-        """Get all open positions as Position models."""
-        raw_positions = self.trading_client.get_all_positions()
-        positions = []
-        for p in raw_positions:
-            pos = Position(
-                symbol=p.symbol,
-                side=Side.BUY if float(p.qty) > 0 else Side.SELL,
-                quantity=abs(int(float(p.qty))),
-                entry_price=float(p.avg_entry_price),
-                current_price=float(p.current_price),
-                unrealized_pnl=float(p.unrealized_pl),
-                unrealized_pnl_pct=float(p.unrealized_plpc) * 100,
-            )
-            positions.append(pos)
-        return positions
+        try:
+            pos_data = self.exchange.fetch_positions()
+            positions = []
+            for p in pos_data:
+                qty = float(
+                    p.get("contracts", 0.0) or p.get("info", {}).get("size", 0.0) or 0.0
+                )
+                if qty == 0.0:
+                    continue
+
+                side_str = str(p.get("side", "")).lower()
+                side = Side.BUY if side_str == "long" else Side.SELL
+
+                pos = Position(
+                    symbol=p["symbol"],
+                    side=side,
+                    quantity=qty,
+                    entry_price=float(p.get("entryPrice", 0.0) or 0.0),
+                    current_price=float(p.get("markPrice", 0.0) or 0.0),
+                    unrealized_pnl=float(p.get("unrealizedPnl", 0.0) or 0.0),
+                    unrealized_pnl_pct=float(p.get("percentage", 0.0) or 0.0),
+                )
+                positions.append(pos)
+            return positions
+        except Exception as e:
+            logger.error(f"Failed to fetch positions: {e}")
+            return []
 
     def get_position(self, symbol: str) -> Optional[Position]:
-        """Get position for a specific symbol."""
-        try:
-            p = self.trading_client.get_open_position(symbol)
-            return Position(
-                symbol=p.symbol,
-                side=Side.BUY if float(p.qty) > 0 else Side.SELL,
-                quantity=abs(int(float(p.qty))),
-                entry_price=float(p.avg_entry_price),
-                current_price=float(p.current_price),
-                unrealized_pnl=float(p.unrealized_pl),
-                unrealized_pnl_pct=float(p.unrealized_plpc) * 100,
-            )
-        except Exception:
-            return None
+        for p in self.get_positions():
+            if p.symbol == symbol:
+                return p
+        return None
 
     def close_position(self, symbol: str) -> bool:
-        """Close an open position entirely."""
+        pos = self.get_position(symbol)
+        if not pos:
+            return False
+
+        closing_side = Side.SELL if pos.side == Side.BUY else Side.BUY
+        closing_order = Order(
+            symbol=symbol,
+            side=closing_side,
+            quantity=pos.quantity,
+            order_type=OrderType.MARKET,
+            strategy_name="liquidation_override",
+        )
         try:
-            self.trading_client.close_position(symbol_or_asset_id=symbol)
+            self.place_order(closing_order)
             logger.info(f"Position closed: {symbol}")
             return True
         except Exception as e:
@@ -314,220 +240,56 @@ class AlpacaBroker:
             return False
 
     def close_all_positions(self) -> bool:
-        """Close all open positions (end-of-day square-off)."""
-        try:
-            self.trading_client.close_all_positions(cancel_orders=True)
-            logger.info("All positions closed (end-of-day square-off)")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to close all positions: {e}")
-            return False
+        positions = self.get_positions()
+        success = True
+        for p in positions:
+            if not self.close_position(p.symbol):
+                success = False
+        return success
 
     # ─── Market Data ──────────────────────────────────────────────
 
-    def get_bars(
-        self,
-        symbol: str,
-        timeframe: str = "5Min",
-        lookback_days: int = 5,
-        limit: Optional[int] = None,
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, limit: int = 1000
     ) -> pd.DataFrame:
-        """
-        Get historical OHLCV bars as a DataFrame.
+        tf = TIMEFRAME_MAP.get(timeframe, timeframe)
+        ohlcv = self.exchange.fetch_ohlcv(symbol, tf, limit=limit)
 
-        Args:
-            symbol: Stock ticker (e.g., "AAPL")
-            timeframe: Candle interval ("1Min", "5Min", "15Min", "1Hour", "1Day")
-            lookback_days: Number of calendar days to look back
-            limit: Max number of bars to return
-
-        Returns:
-            DataFrame with columns: open, high, low, close, volume, vwap, trade_count
-        """
-        tf = TIMEFRAME_MAP.get(timeframe)
-        if not tf:
-            raise ValueError(f"Unsupported timeframe: {timeframe}. Options: {list(TIMEFRAME_MAP.keys())}")
-
-        start = datetime.utcnow() - timedelta(days=lookback_days)
-
-        if self.asset_class == "crypto":
-            request_params = CryptoBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=tf,
-                start=start,
-                limit=limit,
-            )
-            bars = self.data_client.get_crypto_bars(request_params)
-        else:
-            request_params = StockBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=tf,
-                start=start,
-                limit=limit,
-            )
-            bars = self.data_client.get_stock_bars(request_params)
-            
-        df = bars.df
-
-        if isinstance(df.index, pd.MultiIndex):
-            df = df.droplevel("symbol")
-
-        df.index = pd.to_datetime(df.index)
-        df.index = df.index.tz_localize(None) if df.index.tz else df.index
-
+        df = pd.DataFrame(
+            ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
         return df
 
-    def get_bars_multi(
-        self,
-        symbols: list[str],
-        timeframe: str = "5Min",
-        lookback_days: int = 5,
-    ) -> dict[str, pd.DataFrame]:
-        """
-        Get historical bars for multiple symbols.
-
-        Returns:
-            Dict mapping symbol -> DataFrame
-        """
-        tf = TIMEFRAME_MAP.get(timeframe)
-        if not tf:
-            raise ValueError(f"Unsupported timeframe: {timeframe}")
-
-        start = datetime.utcnow() - timedelta(days=lookback_days)
-
-        if self.asset_class == "crypto":
-            request_params = CryptoBarsRequest(
-                symbol_or_symbols=symbols,
-                timeframe=tf,
-                start=start,
-            )
-            bars = self.data_client.get_crypto_bars(request_params)
-        else:
-            request_params = StockBarsRequest(
-                symbol_or_symbols=symbols,
-                timeframe=tf,
-                start=start,
-            )
-            bars = self.data_client.get_stock_bars(request_params)
-            
-        df = bars.df
-
-        result = {}
-        if isinstance(df.index, pd.MultiIndex):
-            for symbol in symbols:
-                try:
-                    symbol_df = df.loc[symbol].copy()
-                    symbol_df.index = pd.to_datetime(symbol_df.index)
-                    symbol_df.index = symbol_df.index.tz_localize(None) if symbol_df.index.tz else symbol_df.index
-                    result[symbol] = symbol_df
-                except KeyError:
-                    logger.warning(f"No data for {symbol}")
-        else:
-            # Single symbol case
-            if symbols:
-                df.index = pd.to_datetime(df.index)
-                df.index = df.index.tz_localize(None) if df.index.tz else df.index
-                result[symbols[0]] = df
-
-        return result
-
-    def get_latest_quote(self, symbol: str) -> dict:
-        """Get the latest quote (bid/ask) for a symbol."""
-        if self.asset_class == "crypto":
-            request = CryptoLatestQuoteRequest(symbol_or_symbols=symbol)
-            quotes = self.data_client.get_crypto_latest_quote(request)
-        else:
-            request = StockLatestQuoteRequest(symbol_or_symbols=symbol)
-            quotes = self.data_client.get_stock_latest_quote(request)
-            
-        quote = quotes[symbol]
+    def fetch_ticker(self, symbol: str) -> dict:
+        ticker = self.exchange.fetch_ticker(symbol)
         return {
-            "symbol": symbol,
-            "bid": float(quote.bid_price),
-            "ask": float(quote.ask_price),
-            "bid_size": quote.bid_size,
-            "ask_size": quote.ask_size,
-            "mid": (float(quote.bid_price) + float(quote.ask_price)) / 2,
-            "spread": float(quote.ask_price) - float(quote.bid_price),
+            "bid": float(ticker.get("bid", 0.0) or 0.0),
+            "ask": float(ticker.get("ask", 0.0) or 0.0),
+            "last": float(ticker.get("last", 0.0) or 0.0),
         }
 
-    def get_snapshot(self, symbol: str) -> dict:
-        """Get a complete snapshot for a symbol (quote + latest bar + prev close)."""
-        if self.asset_class == "crypto":
-            request = CryptoSnapshotRequest(symbol_or_symbols=symbol)
-            snapshots = self.data_client.get_crypto_snapshot(request)
-        else:
-            request = StockSnapshotRequest(symbol_or_symbols=symbol)
-            snapshots = self.data_client.get_stock_snapshot(request)
-        snap = snapshots[symbol]
-        return {
-            "symbol": symbol,
-            "latest_trade_price": float(snap.latest_trade.price) if snap.latest_trade else None,
-            "latest_trade_size": snap.latest_trade.size if snap.latest_trade else None,
-            "bid": float(snap.latest_quote.bid_price) if snap.latest_quote else None,
-            "ask": float(snap.latest_quote.ask_price) if snap.latest_quote else None,
-            "minute_bar": {
-                "open": float(snap.minute_bar.open),
-                "high": float(snap.minute_bar.high),
-                "low": float(snap.minute_bar.low),
-                "close": float(snap.minute_bar.close),
-                "volume": float(snap.minute_bar.volume),
-            } if snap.minute_bar else None,
-            "daily_bar": {
-                "open": float(snap.daily_bar.open),
-                "high": float(snap.daily_bar.high),
-                "low": float(snap.daily_bar.low),
-                "close": float(snap.daily_bar.close),
-                "volume": float(snap.daily_bar.volume),
-            } if snap.daily_bar else None,
-            "prev_daily_bar": {
-                "close": float(snap.previous_daily_bar.close),
-                "volume": float(snap.previous_daily_bar.volume),
-            } if snap.previous_daily_bar else None,
-        }
-
-    # ─── Clock & Calendar ─────────────────────────────────────────
+    # ─── Clock ────────────────────────────────────────────────────
 
     def is_market_open(self) -> bool:
-        """Check if the US stock market is currently open."""
-        if self.asset_class == "crypto":
-            return True
-        clock = self.trading_client.get_clock()
-        return clock.is_open
+        return True  # Crypto is 24/7
 
-    def get_clock(self) -> dict:
-        """Get market clock info."""
-        clock = self.trading_client.get_clock()
-        return {
-            "is_open": clock.is_open,
-            "next_open": clock.next_open,
-            "next_close": clock.next_close,
-            "timestamp": clock.timestamp,
-        }
+    # ─── Stop-Loss Factory ────────────────────────────────────────
+    # CCXT perpetuals handle stop-loss via exchange params, not separate orders.
+    # Default BaseBroker implementation (STOP order) works fine here.
 
-    def get_next_market_open(self) -> datetime:
-        """Get the next market open time."""
-        clock = self.trading_client.get_clock()
-        return clock.next_open
-
-    def get_next_market_close(self) -> datetime:
-        """Get the next market close time."""
-        clock = self.trading_client.get_clock()
-        return clock.next_close
-
-    # ─── Helpers ──────────────────────────────────────────────────
+    # ─── Internal ─────────────────────────────────────────────────
 
     @staticmethod
-    def _map_order_status(alpaca_status) -> OrderStatus:
-        """Map Alpaca order status to our internal OrderStatus."""
-        mapping = {
-            AlpacaOrderStatus.NEW: OrderStatus.PENDING,
-            AlpacaOrderStatus.ACCEPTED: OrderStatus.PENDING,
-            AlpacaOrderStatus.PENDING_NEW: OrderStatus.PENDING,
-            AlpacaOrderStatus.PARTIALLY_FILLED: OrderStatus.PARTIALLY_FILLED,
-            AlpacaOrderStatus.FILLED: OrderStatus.FILLED,
-            AlpacaOrderStatus.CANCELED: OrderStatus.CANCELLED,
-            AlpacaOrderStatus.REJECTED: OrderStatus.REJECTED,
-            AlpacaOrderStatus.EXPIRED: OrderStatus.EXPIRED,
-        }
-        return mapping.get(alpaca_status, OrderStatus.PENDING)
+    def _map_status(stat: str) -> OrderStatus:
+        stat = stat.lower()
+        if stat in ("open", "pending"):
+            return OrderStatus.PENDING
+        elif stat in ("closed", "filled", "settled"):
+            return OrderStatus.FILLED
+        elif stat == "canceled":
+            return OrderStatus.CANCELLED
+        elif stat == "rejected":
+            return OrderStatus.REJECTED
+        return OrderStatus.PENDING

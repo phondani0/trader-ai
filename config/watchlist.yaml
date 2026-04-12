@@ -39,9 +39,12 @@ consumer:
   - NKE      # Nike
 
 # Default active watchlist (what the bot monitors daily)
+# For CCXT perpetuals (Bybit): use SYMBOL/USDT:USDT format
+# For Alpaca equities: use plain tickers (AAPL, SPY)
+# For Alpaca crypto: use SYMBOL/USD format (BTC/USD)
 active_watchlist:
-  - BTC/USD
-  - ETH/USD
-  - SOL/USD
-  - DOGE/USD
-  - LTC/USD
+  - BTC/USDT:USDT
+  - ETH/USDT:USDT
+  - SOL/USDT:USDT
+  - DOGE/USDT:USDT
+  - LTC/USDT:USDT

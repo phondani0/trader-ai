@@ -1,14 +1,16 @@
 """
 Market-Hours-Aware Scheduler.
 
-Manages the bot's daily lifecycle — wakes up before market open,
-runs strategies during market hours, and shuts down after close.
-Handles US market holidays and timezone conversions.
+Manages the bot's daily lifecycle based on broker capabilities:
+    - 24/7 markets (crypto): continuous scanning
+    - Session-based markets (equities): NYSE/NASDAQ hours
+
+Uses broker.is_24_7_market to decide — never checks asset_class directly.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Callable, Optional
 
 import pytz
@@ -16,7 +18,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
-from src.core.broker import AlpacaBroker
+from src.core.base_broker import BaseBroker
 
 
 ET = pytz.timezone("US/Eastern")
@@ -24,19 +26,14 @@ ET = pytz.timezone("US/Eastern")
 
 class MarketScheduler:
     """
-    Schedules bot tasks around US market hours.
+    Schedules bot tasks around market hours.
 
-    Lifecycle:
-        08:00 ET  → Pre-market prep (fetch data, news)
-        09:30 ET  → Market opens → start scanning
-        09:30-10:00 ET → ORB window active
-        10:00-15:30 ET → Prime trading hours
-        15:30 ET  → Stop new entries
-        15:50 ET  → Auto square-off all positions
-        16:00 ET  → Market close → generate daily report
+    Automatically adapts based on broker capabilities:
+        - 24/7 broker → continuous 1-minute scan loop
+        - Session broker → NYSE market hours lifecycle
     """
 
-    def __init__(self, broker: AlpacaBroker, config: dict):
+    def __init__(self, broker: BaseBroker, config: dict):
         self.broker = broker
         self.config = config
         self.scheduler = BackgroundScheduler(timezone=ET)
@@ -67,14 +64,14 @@ class MarketScheduler:
     def start(self):
         """Start the scheduler with all registered callbacks."""
 
-        if self.broker.asset_class == "crypto":
+        if self.broker.is_24_7_market:
             # 24/7 continuous scan
             if "scan_tick" in self._callbacks:
                 self.scheduler.add_job(
                     self._safe_run("scan_tick"),
                     CronTrigger(minute="*/1", timezone=pytz.UTC),
                     id="scan_tick",
-                    name="Strategy Scan Tick (Crypto 24/7)",
+                    name="Strategy Scan Tick (24/7)",
                 )
             # Daily report at midnight UTC
             if "market_close" in self._callbacks:
@@ -82,14 +79,14 @@ class MarketScheduler:
                     self._safe_run("market_close"),
                     CronTrigger(hour=0, minute=5, timezone=pytz.UTC),
                     id="market_close",
-                    name="Daily Crypto Close Report (Midnight UTC)",
+                    name="Daily Report (Midnight UTC)",
                 )
             self.scheduler.start()
-            logger.info("📅 Market scheduler started — running continuously for CRYPTO")
+            logger.info("📅 Scheduler started — running continuously (24/7 market)")
             self._log_schedule()
             return
 
-        # Pre-market preparation
+        # Session-based market hours
         if "pre_market" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("pre_market"),
@@ -99,7 +96,6 @@ class MarketScheduler:
                 name="Pre-Market Preparation",
             )
 
-        # Market open
         if "market_open" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("market_open"),
@@ -109,7 +105,6 @@ class MarketScheduler:
                 name="Market Open",
             )
 
-        # Periodic scan during market hours (every 1 minute during 9:30-15:30)
         if "scan_tick" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("scan_tick"),
@@ -120,7 +115,6 @@ class MarketScheduler:
                 name="Strategy Scan Tick",
             )
 
-        # ORB window end
         if "orb_end" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("orb_end"),
@@ -130,7 +124,6 @@ class MarketScheduler:
                 name="ORB Window End",
             )
 
-        # Stop new entries
         if "stop_entries" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("stop_entries"),
@@ -140,7 +133,6 @@ class MarketScheduler:
                 name="Stop New Entries",
             )
 
-        # Auto square-off (close all positions)
         if "square_off" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("square_off"),
@@ -150,7 +142,6 @@ class MarketScheduler:
                 name="Auto Square-Off",
             )
 
-        # End-of-day report
         if "market_close" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("market_close"),
@@ -161,7 +152,7 @@ class MarketScheduler:
             )
 
         self.scheduler.start()
-        logger.info("📅 Market scheduler started — waiting for market events")
+        logger.info("📅 Scheduler started — session-based market hours")
         self._log_schedule()
 
     def stop(self):
@@ -171,40 +162,41 @@ class MarketScheduler:
 
     def is_market_hours(self) -> bool:
         """Check if we're currently within trading hours."""
-        if self.broker.asset_class == "crypto":
+        if self.broker.is_24_7_market:
             return True
         now_et = datetime.now(ET).time()
         return self.market_open <= now_et <= time(self.stop_entries.hour, self.stop_entries.minute)
 
     def is_orb_window(self) -> bool:
         """Check if we're in the Opening Range Breakout window."""
-        if self.broker.asset_class == "crypto":
+        if self.broker.is_24_7_market:
             return False
         now_et = datetime.now(ET).time()
         return self.market_open <= now_et <= self.orb_end
 
     def can_open_new_positions(self) -> bool:
         """Check if we can still open new positions."""
-        if self.broker.asset_class == "crypto":
+        if self.broker.is_24_7_market:
             return True
         now_et = datetime.now(ET).time()
         return self.market_open <= now_et <= time(self.stop_entries.hour, self.stop_entries.minute)
 
     def is_square_off_time(self) -> bool:
         """Check if it's time to close all positions."""
-        if self.broker.asset_class == "crypto":
+        if self.broker.is_24_7_market:
             return False
         now_et = datetime.now(ET).time()
         return now_et >= time(self.auto_square_off.hour, self.auto_square_off.minute)
 
     def time_to_close_minutes(self) -> float:
         """Minutes remaining until market close."""
-        if self.broker.asset_class == "crypto":
-            from datetime import timedelta
+        if self.broker.is_24_7_market:
             now_utc = datetime.now(pytz.UTC)
-            next_midnight = (now_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            next_midnight = (now_utc + timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
             return (next_midnight - now_utc).total_seconds() / 60
-            
+
         now_et = datetime.now(ET)
         close_time = now_et.replace(
             hour=self.market_close.hour,
@@ -218,10 +210,9 @@ class MarketScheduler:
         """Wrap callback in error handling."""
         def wrapper():
             try:
-                # Skip if market is closed (holiday handling via Alpaca clock)
                 if event_name != "pre_market" and not self.broker.is_market_open():
                     if event_name == "scan_tick":
-                        return  # Silent skip for ticks on holidays
+                        return
                     logger.info(f"Market closed (holiday?) — skipping {event_name}")
                     return
 

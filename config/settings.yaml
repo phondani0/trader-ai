@@ -1,39 +1,39 @@
 # ═══════════════════════════════════════════════════
-# Trader AI — Main Configuration (US Markets / Alpaca)
+# Trader AI — Main Configuration
 # ═══════════════════════════════════════════════════
 
 trading:
-  mode: paper                    # paper | live (NEVER change to live without extensive testing)
-  capital: 25000                 # Starting capital in USD (PDT rule: need $25k for unlimited day trades)
-  market: US                     # US stock market
+  mode: paper                    # paper | live
+  capital: 25000                 # Starting capital in USD
   asset_class: crypto            # equity | crypto
+
+# Broker Selection
+# Change this to switch the entire execution engine.
+# Supported: "ccxt" (Bybit/Binance perpetuals) | "alpaca" (US equities/crypto spot)
+broker:
+  name: ccxt
+  time_in_force: gtc
 
 market_hours:
   timezone: "US/Eastern"
-  pre_market_start: "08:00"      # Wake up and prepare (ET)
-  market_open: "09:30"           # NYSE/NASDAQ opens
-  orb_window_end: "10:00"        # Opening Range Breakout window (first 30 min)
-  prime_start: "10:00"           # Prime trading hours
-  stop_new_entries: "15:30"      # No new positions after 3:30 PM ET
-  auto_square_off: "15:50"       # Force close all positions by 3:50 PM ET
-  market_close: "16:00"          # Market closes 4:00 PM ET
+  pre_market_start: "08:00"
+  market_open: "09:30"
+  orb_window_end: "10:00"
+  prime_start: "10:00"
+  stop_new_entries: "15:30"
+  auto_square_off: "15:50"
+  market_close: "16:00"
 
 risk_management:
   max_risk_per_trade_pct: 2.0    # Max 2% capital risk per trade
   max_daily_loss_pct: 3.0        # Kill switch: stop if daily loss > 3%
   max_open_positions: 5          # Max simultaneous positions
-  max_exposure_per_stock_pct: 20 # Max 20% capital in one stock
+  max_exposure_per_stock_pct: 20 # Max 20% capital in one asset
   mandatory_stop_loss: true      # Every trade MUST have a stop-loss
   trailing_stop_enabled: true
   trailing_stop_atr_multiplier: 2.0
   min_risk_reward_ratio: 1.5     # Minimum risk:reward ratio
-
-broker:
-  name: alpaca
-  base_url: "https://paper-api.alpaca.markets"   # Paper trading URL
-  data_url: "https://data.alpaca.markets"
-  order_type: market             # market | limit
-  time_in_force: day             # day | gtc | ioc
+  leverage: 5                    # Leverage (only used by brokers that support it)
 
 data:
   candle_interval: 5Min          # 1Min | 5Min | 15Min | 1Hour
@@ -42,22 +42,22 @@ data:
   max_bars_per_request: 10000
 
 watchlist:
-  source: config                 # config | dynamic (auto-select based on volume/volatility)
-  max_stocks: 20                 # Max stocks to monitor simultaneously
-  min_price: 10.0                # Min stock price (avoid penny stocks)
-  max_price: 500.0               # Max stock price
-  min_avg_volume: 1000000        # Min average daily volume
+  source: config
+  max_stocks: 20
+  min_price: 10.0
+  max_price: 500.0
+  min_avg_volume: 1000000
 
 notifications:
   enabled: true
   telegram: true
-  on_trade: true                 # Alert on every trade execution
-  on_signal: false               # Alert on every signal (can be noisy)
-  daily_summary: true            # End-of-day P&L report
-  on_error: true                 # Alert on errors/kill switch
+  on_trade: true
+  on_signal: false
+  daily_summary: true
+  on_error: true
 
 logging:
-  level: INFO                    # DEBUG | INFO | WARNING | ERROR
+  level: INFO
   file: logs/trader.log
   console: true
   max_size_mb: 50

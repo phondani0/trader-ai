@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from loguru import logger
 
-from src.core.broker import AlpacaBroker
+from src.core.base_broker import BaseBroker
 
 
 class KillSwitch:
@@ -22,7 +22,7 @@ class KillSwitch:
     Emergency stop — closes all positions and cancels all orders.
     """
 
-    def __init__(self, broker: AlpacaBroker):
+    def __init__(self, broker: BaseBroker):
         self.broker = broker
         self._activated = False
         self._activation_time: datetime | None = None

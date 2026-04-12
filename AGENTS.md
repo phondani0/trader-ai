@@ -16,6 +16,8 @@ When interacting with this codebase, you must adhere strictly to the following m
 ## 3. Code Standards
 - **Typing:** Enforce strict type hunting (`-> dict`, `-> list`, etc.) using the core `typing` modules and `pydantic` everywhere applicable.
 - **Architecture:** Keep financial math separate from network IO. Ensure strategy modules (`src/strategies/`) remain purely stateless and configuration-driven.
+- **Robust Validation:** Never rely on hardcoded magic string checks (e.g., `if "your_" in key`). Prefer attempting the operation and handling resulting exceptions (e.g., `AuthenticationError`) or using structural validation.
+- **Minimalist Documentation:** Avoid "noisy" comments that explain the obvious, narrate development history, or restate conversation context. Use comments only for complex algorithmic logic or necessary technical workarounds.
 
 ## 4. Proactivity
 - **Anticipate Production Needs:** Do not merely execute instructions. Evaluate the implications. If asked to add a new asset class natively (like Crypto), proactively override any existing stock-specific limiters (like US Market Hours, or `TimeInForce.DAY` orders) to support the 24/7 architecture. 

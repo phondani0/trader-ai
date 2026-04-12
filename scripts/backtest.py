@@ -23,7 +23,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from loguru import logger
 
-from src.core.broker import AlpacaBroker
+from src.core.broker_factory import BrokerFactory
 from src.core.data_feed import DataFeed
 from src.core.models import TradingMode, MarketRegime, Side
 from src.intelligence.regime_detector import RegimeDetector
@@ -48,7 +48,11 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
     logger.info(f"═══ Backtesting {symbol} — {days} days — {strategy_name} ═══")
 
     # Get data
-    broker = AlpacaBroker(mode=TradingMode.PAPER)
+    broker = BrokerFactory.create({
+        "broker": {"name": "ccxt"},
+        "trading": {"asset_class": "crypto"},
+        "data": {"candle_interval": timeframe, "lookback_days": days},
+    }, TradingMode.PAPER)
     config = {
         "data": {"candle_interval": timeframe, "lookback_days": days},
     }
@@ -234,7 +238,7 @@ def main():
         asset_class = "equity"
         
     if args.symbol is None:
-        args.symbol = "BTC/USD" if asset_class == "crypto" else "SPY"
+        args.symbol = "BTC/USDT:USDT" if asset_class == "crypto" else "SPY"
 
     run_backtest(args.symbol, args.days, args.strategy, args.timeframe)
 
