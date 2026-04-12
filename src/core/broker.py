@@ -271,6 +271,24 @@ class CCXTBroker(BaseBroker):
             "last": float(ticker.get("last", 0.0) or 0.0),
         }
 
+    def fetch_tickers(self, symbols: Optional[list[str]] = None) -> dict[str, dict]:
+        try:
+            tickers = self.exchange.fetch_tickers(symbols)
+            return {
+                sym: {
+                    "bid": float(t.get("bid", 0.0) or 0.0),
+                    "ask": float(t.get("ask", 0.0) or 0.0),
+                    "last": float(t.get("last", 0.0) or 0.0),
+                    "change": float(t.get("percentage", 0.0) or 0.0),
+                    "baseVolume": float(t.get("baseVolume", 0.0) or 0.0),
+                    "quoteVolume": float(t.get("quoteVolume", 0.0) or 0.0),
+                }
+                for sym, t in tickers.items()
+            }
+        except Exception as e:
+            logger.error(f"Failed to fetch bulk tickers: {e}")
+            return {}
+
     # ─── Clock ────────────────────────────────────────────────────
 
     def is_market_open(self) -> bool:

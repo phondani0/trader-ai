@@ -54,7 +54,7 @@ class MarketScheduler:
         Register a callback for a lifecycle event.
 
         Events:
-            pre_market, market_open, orb_end, scan_tick,
+            pre_market, market_open, orb_end, scan_tick, discovery_scan,
             stop_entries, square_off, market_close
         """
         self._callbacks[event] = callback
@@ -81,6 +81,20 @@ class MarketScheduler:
                     name="Daily Report (Midnight UTC)",
                 )
             self.scheduler.start()
+
+            # Discovery Scan
+            discovery_cfg = self.config.get("discovery", {})
+            if (
+                discovery_cfg.get("enabled", True)
+                and "discovery_scan" in self._callbacks
+            ):
+                interval = discovery_cfg.get("interval_minutes", 10)
+                self.scheduler.add_job(
+                    self._safe_run("discovery_scan"),
+                    CronTrigger(minute=f"*/{interval}", timezone=pytz.UTC),
+                    id="discovery_scan",
+                    name="Market Discovery Scanner",
+                )
             logger.info("📅 Scheduler started — running continuously (24/7 market)")
             self._log_schedule()
             return
@@ -179,6 +193,22 @@ class MarketScheduler:
 
         self.scheduler.start()
         logger.info("📅 Scheduler started — session-based market hours")
+
+        # Discovery Scan for Session Markets
+        discovery_cfg = self.config.get("discovery", {})
+        if discovery_cfg.get("enabled", True) and "discovery_scan" in self._callbacks:
+            interval = discovery_cfg.get("interval_minutes", 10)
+            self.scheduler.add_job(
+                self._safe_run("discovery_scan"),
+                CronTrigger(
+                    minute=f"*/{interval}",
+                    hour=f"{self.market_open.hour}-{self.stop_entries.hour}",
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
+                id="discovery_scan",
+                name="Market Discovery Scanner",
+            )
         self._log_schedule()
 
     def stop(self):

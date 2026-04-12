@@ -43,6 +43,7 @@ from src.core.models import (
 )
 from src.core.scheduler import MarketScheduler
 from src.intelligence.regime_detector import RegimeDetector
+from src.intelligence.scanner import MarketScanner
 from src.intelligence.signal_aggregator import SignalAggregator
 from src.notifications.notifier import Notifier
 from src.risk.kill_switch import KillSwitch
@@ -157,6 +158,9 @@ class TradingEngine:
 
         # Notifications
         self.notifier = Notifier(config=config)
+
+        # Discovery Scanner
+        self.market_scanner = MarketScanner(broker=self.broker, config=config)
 
         # Initialize Strategies
         strategy_configs = config
@@ -514,6 +518,7 @@ class TradingEngine:
         self.scheduler.register("market_open", self.on_market_open)
         self.scheduler.register("orb_end", self.on_orb_end)
         self.scheduler.register("scan_tick", self.on_scan_tick)
+        self.scheduler.register("discovery_scan", self.market_scanner.scan_for_momentum)
         self.scheduler.register("stop_entries", self.on_stop_entries)
         self.scheduler.register("square_off", self.on_square_off)
         self.scheduler.register("market_close", self.on_market_close)

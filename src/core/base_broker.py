@@ -140,6 +140,19 @@ class BaseBroker(ABC):
         """
         ...
 
+    @abstractmethod
+    def fetch_tickers(self, symbols: Optional[list[str]] = None) -> dict[str, dict]:
+        """
+        Get latest tickers for multiple symbols in bulk.
+
+        Args:
+            symbols: Optional list of symbols. If None, fetches all available.
+
+        Returns:
+            dict mapping symbol -> ticker dict
+        """
+        ...
+
     # ─── Clock ────────────────────────────────────────────────────
 
     @abstractmethod
