@@ -19,7 +19,10 @@ from typing import Optional
 import pandas as pd
 
 from src.core.models import (
-    Order, Position, Side, OrderType, OrderStatus, TradingMode,
+    Order,
+    OrderType,
+    Position,
+    Side,
 )
 
 
@@ -110,7 +113,9 @@ class BaseBroker(ABC):
     # ─── Market Data ──────────────────────────────────────────────
 
     @abstractmethod
-    def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 1000) -> pd.DataFrame:
+    def fetch_ohlcv(
+        self, symbol: str, timeframe: str, limit: int = 1000
+    ) -> pd.DataFrame:
         """
         Fetch historical OHLCV data.
 

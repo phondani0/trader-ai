@@ -18,13 +18,16 @@ from loguru import logger
 
 from src.core.base_broker import BaseBroker
 
-
 # ─── Internal Timeframe Mapping ───────────────────────────────────────
 # Config uses "5Min" style, brokers use "5m" style. Translate here once.
 
 _TIMEFRAME_MAP = {
-    "1Min": "1m", "5Min": "5m", "15Min": "15m",
-    "30Min": "30m", "1Hour": "1h", "1Day": "1d",
+    "1Min": "1m",
+    "5Min": "5m",
+    "15Min": "15m",
+    "30Min": "30m",
+    "1Hour": "1h",
+    "1Day": "1d",
 }
 
 
@@ -125,6 +128,7 @@ class DataFeed:
         # ─── Moving Averages ──────────────────────────────────────
         df["ema_9"] = ta.ema(df["close"], length=9)
         df["ema_21"] = ta.ema(df["close"], length=21)
+        df["ema_200"] = ta.ema(df["close"], length=200)
         df["sma_20"] = ta.sma(df["close"], length=20)
         df["sma_50"] = ta.sma(df["close"], length=50)
 
@@ -159,7 +163,9 @@ class DataFeed:
         df["atr_pct"] = (df["atr"] / df["close"]) * 100
 
         # ─── Supertrend ───────────────────────────────────────────
-        supertrend = ta.supertrend(df["high"], df["low"], df["close"], length=10, multiplier=3.0)
+        supertrend = ta.supertrend(
+            df["high"], df["low"], df["close"], length=10, multiplier=3.0
+        )
         if supertrend is not None and not supertrend.empty:
             df["supertrend"] = supertrend.iloc[:, 0]
             df["supertrend_dir"] = supertrend.iloc[:, 1]

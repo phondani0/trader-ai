@@ -37,7 +37,7 @@ class SupertrendStrategy(BaseStrategy):
         if len(df) < 30:
             return None
 
-        required = ["close", "supertrend", "supertrend_dir", "ema_21", "volume_ratio", "atr"]
+        required = ["close", "supertrend", "supertrend_dir", "ema_21", "ema_200", "volume_ratio", "atr"]
         if not all(col in df.columns for col in required):
             return None
 
@@ -49,34 +49,33 @@ class SupertrendStrategy(BaseStrategy):
         st_dir = curr["supertrend_dir"]
         prev_dir = prev["supertrend_dir"]
         ema_21 = curr["ema_21"]
+        ema_200 = curr["ema_200"]
         vol_ratio = curr["volume_ratio"]
         atr = curr["atr"]
 
-        if pd.isna(st_val) or pd.isna(st_dir) or pd.isna(prev_dir) or pd.isna(atr) or atr == 0:
+        if pd.isna(st_val) or pd.isna(st_dir) or pd.isna(prev_dir) or pd.isna(atr) or atr == 0 or pd.isna(ema_200):
             return None
 
         volume_threshold = self.params.get("volume_multiplier", 1.2)
 
         # ─── BUY Signal ───────────────────────────────────────────
-        # Supertrend flips to bullish + price above EMA + volume confirmation
+        # Supertrend BULLISH + price above EMA 21 + Volume + Above EMA 200
         supertrend_flip_bullish = prev_dir < 0 and st_dir > 0
-        price_above_ema = close > ema_21 if not pd.isna(ema_21) else True
+        price_above_ema21 = close > ema_21 if not pd.isna(ema_21) else True
+        above_long_term_trend = close > ema_200
         volume_confirmed = vol_ratio > volume_threshold if not pd.isna(vol_ratio) else True
 
-        if supertrend_flip_bullish and price_above_ema and volume_confirmed:
-            stop_loss = st_val  # Supertrend value acts as stop
+        if supertrend_flip_bullish and price_above_ema21 and above_long_term_trend and volume_confirmed:
+            stop_loss = st_val
             risk = close - stop_loss
             if risk <= 0:
                 return None
-            take_profit = close + (risk * 2.5)  # 1:2.5 R:R for momentum trades
+            take_profit = close + (risk * 2.0)  # Tighter R:R for higher win rate
 
-            confidence = 0.65
-            # Boost if ADX is strong
+            confidence = 0.7
             if "adx" in df.columns and not pd.isna(curr.get("adx")):
                 if curr["adx"] > 30:
-                    confidence = 0.75
-                if curr["adx"] > 40:
-                    confidence = 0.85
+                    confidence = 0.8
 
             return self._create_signal(
                 symbol=symbol,
@@ -87,25 +86,27 @@ class SupertrendStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"Supertrend BULLISH flip | ST: {st_val:.2f} | EMA21: {ema_21:.2f} | Vol: {vol_ratio:.1f}x",
-                metadata={"supertrend": st_val, "adx": curr.get("adx"), "vol_ratio": vol_ratio},
+                reason=f"Supertrend Long | ST BULLISH + Above EMA200",
+                metadata={"supertrend": st_val, "ema_200": ema_200, "adx": curr.get("adx")},
             )
 
         # ─── SELL Signal ──────────────────────────────────────────
+        # Supertrend BEARISH + price below EMA 21 + Volume + Below EMA 200
         supertrend_flip_bearish = prev_dir > 0 and st_dir < 0
-        price_below_ema = close < ema_21 if not pd.isna(ema_21) else True
+        price_below_ema21 = close < ema_21 if not pd.isna(ema_21) else True
+        below_long_term_trend = close < ema_200
 
-        if supertrend_flip_bearish and price_below_ema and volume_confirmed:
+        if supertrend_flip_bearish and price_below_ema21 and below_long_term_trend and volume_confirmed:
             stop_loss = st_val
             risk = stop_loss - close
             if risk <= 0:
                 return None
-            take_profit = close - (risk * 2.5)
+            take_profit = close - (risk * 2.0)
 
-            confidence = 0.65
+            confidence = 0.7
             if "adx" in df.columns and not pd.isna(curr.get("adx")):
                 if curr["adx"] > 30:
-                    confidence = 0.75
+                    confidence = 0.8
 
             return self._create_signal(
                 symbol=symbol,
@@ -116,8 +117,8 @@ class SupertrendStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"Supertrend BEARISH flip | ST: {st_val:.2f} | EMA21: {ema_21:.2f} | Vol: {vol_ratio:.1f}x",
-                metadata={"supertrend": st_val, "adx": curr.get("adx"), "vol_ratio": vol_ratio},
+                reason=f"Supertrend Short | ST BEARISH + Below EMA200",
+                metadata={"supertrend": st_val, "ema_200": ema_200, "adx": curr.get("adx")},
             )
 
         return None

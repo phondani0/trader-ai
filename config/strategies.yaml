@@ -15,9 +15,9 @@ macd_bollinger:
   macd_signal: 9
   # Bollinger Bands parameters
   bb_period: 20
-  bb_std_dev: 2.0
+  bb_std_dev: 2.2
   # Risk
-  stop_loss_atr_multiplier: 1.5
+  stop_loss_atr_multiplier: 2.0
   take_profit_rr_ratio: 2.0       # Risk:Reward 1:2
   max_position_pct: 15
 
@@ -26,7 +26,7 @@ vwap_reversion:
   regime: ["sideways_low_vol"]
   timeframe: 5Min
   # VWAP deviation threshold
-  vwap_std_entry: 2.0             # Enter when price is 2 std devs from VWAP
+  vwap_std_entry: 1.5             # Loosened from 2.0 to increase frequency
   vwap_std_exit: 0.5              # Exit when price returns near VWAP
   rsi_oversold: 30
   rsi_overbought: 70
@@ -41,7 +41,7 @@ supertrend:
   timeframe: 5Min
   # Supertrend parameters
   atr_period: 14
-  atr_multiplier: 4.5
+  atr_multiplier: 3.0
   # Confirmation
   ema_period: 20
   volume_multiplier: 1.2          # Volume must be 1.2x average
@@ -71,7 +71,7 @@ rsi_divergence:
   timeframe: 5Min
   rsi_period: 14
   lookback_bars: 30               # Bars to look back for divergence
-  min_swing_pct: 0.5              # Min price swing to qualify
+  min_swing_pct: 0.3              # Min price swing to qualify
   # Confirmation
   require_macd_confirmation: true
   # Risk

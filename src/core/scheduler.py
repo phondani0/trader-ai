@@ -11,7 +11,7 @@ Uses broker.is_24_7_market to decide — never checks asset_class directly.
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta
-from typing import Callable, Optional
+from typing import Callable
 
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -19,7 +19,6 @@ from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
 from src.core.base_broker import BaseBroker
-
 
 ET = pytz.timezone("US/Eastern")
 
@@ -90,8 +89,12 @@ class MarketScheduler:
         if "pre_market" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("pre_market"),
-                CronTrigger(hour=self.pre_market_start.hour, minute=self.pre_market_start.minute,
-                            day_of_week="mon-fri", timezone=ET),
+                CronTrigger(
+                    hour=self.pre_market_start.hour,
+                    minute=self.pre_market_start.minute,
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
                 id="pre_market",
                 name="Pre-Market Preparation",
             )
@@ -99,8 +102,12 @@ class MarketScheduler:
         if "market_open" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("market_open"),
-                CronTrigger(hour=self.market_open.hour, minute=self.market_open.minute,
-                            day_of_week="mon-fri", timezone=ET),
+                CronTrigger(
+                    hour=self.market_open.hour,
+                    minute=self.market_open.minute,
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
                 id="market_open",
                 name="Market Open",
             )
@@ -108,9 +115,12 @@ class MarketScheduler:
         if "scan_tick" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("scan_tick"),
-                CronTrigger(minute="*/1",
-                            hour=f"{self.market_open.hour}-{self.stop_entries.hour}",
-                            day_of_week="mon-fri", timezone=ET),
+                CronTrigger(
+                    minute="*/1",
+                    hour=f"{self.market_open.hour}-{self.stop_entries.hour}",
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
                 id="scan_tick",
                 name="Strategy Scan Tick",
             )
@@ -118,8 +128,12 @@ class MarketScheduler:
         if "orb_end" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("orb_end"),
-                CronTrigger(hour=self.orb_end.hour, minute=self.orb_end.minute,
-                            day_of_week="mon-fri", timezone=ET),
+                CronTrigger(
+                    hour=self.orb_end.hour,
+                    minute=self.orb_end.minute,
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
                 id="orb_end",
                 name="ORB Window End",
             )
@@ -127,8 +141,12 @@ class MarketScheduler:
         if "stop_entries" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("stop_entries"),
-                CronTrigger(hour=self.stop_entries.hour, minute=self.stop_entries.minute,
-                            day_of_week="mon-fri", timezone=ET),
+                CronTrigger(
+                    hour=self.stop_entries.hour,
+                    minute=self.stop_entries.minute,
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
                 id="stop_entries",
                 name="Stop New Entries",
             )
@@ -136,8 +154,12 @@ class MarketScheduler:
         if "square_off" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("square_off"),
-                CronTrigger(hour=self.auto_square_off.hour, minute=self.auto_square_off.minute,
-                            day_of_week="mon-fri", timezone=ET),
+                CronTrigger(
+                    hour=self.auto_square_off.hour,
+                    minute=self.auto_square_off.minute,
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
                 id="square_off",
                 name="Auto Square-Off",
             )
@@ -145,8 +167,12 @@ class MarketScheduler:
         if "market_close" in self._callbacks:
             self.scheduler.add_job(
                 self._safe_run("market_close"),
-                CronTrigger(hour=self.market_close.hour, minute=self.market_close.minute + 5,
-                            day_of_week="mon-fri", timezone=ET),
+                CronTrigger(
+                    hour=self.market_close.hour,
+                    minute=self.market_close.minute + 5,
+                    day_of_week="mon-fri",
+                    timezone=ET,
+                ),
                 id="market_close",
                 name="Market Close Report",
             )
@@ -165,7 +191,11 @@ class MarketScheduler:
         if self.broker.is_24_7_market:
             return True
         now_et = datetime.now(ET).time()
-        return self.market_open <= now_et <= time(self.stop_entries.hour, self.stop_entries.minute)
+        return (
+            self.market_open
+            <= now_et
+            <= time(self.stop_entries.hour, self.stop_entries.minute)
+        )
 
     def is_orb_window(self) -> bool:
         """Check if we're in the Opening Range Breakout window."""
@@ -179,7 +209,11 @@ class MarketScheduler:
         if self.broker.is_24_7_market:
             return True
         now_et = datetime.now(ET).time()
-        return self.market_open <= now_et <= time(self.stop_entries.hour, self.stop_entries.minute)
+        return (
+            self.market_open
+            <= now_et
+            <= time(self.stop_entries.hour, self.stop_entries.minute)
+        )
 
     def is_square_off_time(self) -> bool:
         """Check if it's time to close all positions."""
@@ -208,6 +242,7 @@ class MarketScheduler:
 
     def _safe_run(self, event_name: str) -> Callable:
         """Wrap callback in error handling."""
+
         def wrapper():
             try:
                 if event_name != "pre_market" and not self.broker.is_market_open():
@@ -220,6 +255,7 @@ class MarketScheduler:
                 self._callbacks[event_name]()
             except Exception as e:
                 logger.error(f"Error in {event_name}: {e}")
+
         return wrapper
 
     def _log_schedule(self):

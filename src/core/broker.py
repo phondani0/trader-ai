@@ -10,24 +10,23 @@ All exchange-specific quirks are handled HERE — never leaked to consumers.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional
 
-import yaml
-import pandas as pd
-from pathlib import Path
-from loguru import logger
 import ccxt
+import pandas as pd
+import yaml
+from loguru import logger
 
 from src.core.base_broker import BaseBroker
 from src.core.models import (
     Order,
+    OrderStatus,
+    OrderType,
     Position,
     Side,
-    OrderType,
-    OrderStatus,
     TradingMode,
 )
-
 
 # ─── Timeframe Mapping (internal → CCXT) ─────────────────────────────
 
@@ -153,6 +152,8 @@ class CCXTBroker(BaseBroker):
                 price=order.limit_price,
                 params=params,
             )
+
+            logger.info(f"Order response: {res}")
             order.id = str(res["id"])
             order.status = self._map_status(res.get("status", "open"))
             order.filled_quantity = float(res.get("filled", 0.0) or 0.0)
@@ -282,7 +283,10 @@ class CCXTBroker(BaseBroker):
     # ─── Internal ─────────────────────────────────────────────────
 
     @staticmethod
-    def _map_status(stat: str) -> OrderStatus:
+    def _map_status(stat: Optional[str]) -> OrderStatus:
+        if not stat:
+            return OrderStatus.PENDING
+
         stat = stat.lower()
         if stat in ("open", "pending"):
             return OrderStatus.PENDING

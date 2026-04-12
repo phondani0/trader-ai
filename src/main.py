@@ -21,11 +21,11 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import os
+import signal
 import sys
 import time
-import signal
-import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -35,23 +35,25 @@ from loguru import logger
 
 from src.core.broker_factory import BrokerFactory
 from src.core.data_feed import DataFeed
-from src.core.scheduler import MarketScheduler
 from src.core.models import (
-    TradingMode, Side, Trade, MarketRegime, OrderStatus,
+    OrderStatus,
+    Side,
+    Trade,
+    TradingMode,
 )
-from src.strategies.macd_bollinger import MACDBollingerStrategy
-from src.strategies.vwap_reversion import VWAPReversionStrategy
-from src.strategies.supertrend import SupertrendStrategy
-from src.strategies.orb import ORBStrategy
-from src.strategies.rsi_divergence import RSIDivergenceStrategy
-from src.strategies.ema_crossover import EMACrossoverStrategy
-from src.strategies.chart_patterns import ChartPatternStrategy
+from src.core.scheduler import MarketScheduler
 from src.intelligence.regime_detector import RegimeDetector
 from src.intelligence.signal_aggregator import SignalAggregator
-from src.risk.manager import RiskManager
-from src.risk.kill_switch import KillSwitch
 from src.notifications.notifier import Notifier
-
+from src.risk.kill_switch import KillSwitch
+from src.risk.manager import RiskManager
+from src.strategies.chart_patterns import ChartPatternStrategy
+from src.strategies.ema_crossover import EMACrossoverStrategy
+from src.strategies.macd_bollinger import MACDBollingerStrategy
+from src.strategies.orb import ORBStrategy
+from src.strategies.rsi_divergence import RSIDivergenceStrategy
+from src.strategies.supertrend import SupertrendStrategy
+from src.strategies.vwap_reversion import VWAPReversionStrategy
 
 # ─── Configuration ────────────────────────────────────────────────────
 
@@ -99,6 +101,7 @@ def setup_logging(config: dict):
 
 # ─── Trading Engine ──────────────────────────────────────────────────
 
+
 class TradingEngine:
     """
     The autonomous trading engine that orchestrates everything.
@@ -111,8 +114,10 @@ class TradingEngine:
         self._orb_set = False
 
         logger.info("═" * 60)
-        logger.info(f"🤖 TRADER AI — Autonomous Intraday Trading Bot")
-        logger.info(f"   Mode: {'📄 PAPER' if mode == TradingMode.PAPER else '🔴 LIVE TRADING'}")
+        logger.info("🤖 TRADER AI — Autonomous Intraday Trading Bot")
+        logger.info(
+            f"   Mode: {'📄 PAPER' if mode == TradingMode.PAPER else '🔴 LIVE TRADING'}"
+        )
         logger.info("═" * 60)
 
         if mode == TradingMode.LIVE:
@@ -125,14 +130,27 @@ class TradingEngine:
         self.kill_switch = KillSwitch(broker=self.broker)
 
         # Load watchlist
-        self.watchlist = config.get("active_watchlist", [
-            "AAPL", "MSFT", "NVDA", "TSLA", "AMD",
-            "META", "SPY", "QQQ", "AMZN", "GOOGL",
-        ])
+        self.watchlist = config.get(
+            "active_watchlist",
+            [
+                "AAPL",
+                "MSFT",
+                "NVDA",
+                "TSLA",
+                "AMD",
+                "META",
+                "SPY",
+                "QQQ",
+                "AMZN",
+                "GOOGL",
+            ],
+        )
 
         # Initialize capital
         account = self.broker.get_account()
-        capital = float(account.get("equity", config.get("trading", {}).get("capital", 25000)))
+        capital = float(
+            account.get("equity", config.get("trading", {}).get("capital", 25000))
+        )
 
         # Risk Manager
         self.risk_manager = RiskManager(config=config, initial_capital=capital)
@@ -154,11 +172,15 @@ class TradingEngine:
         self.scheduler = MarketScheduler(broker=self.broker, config=config)
 
         # Track active positions managed by us
-        self._managed_positions: dict[str, dict] = {}  # symbol → {signal, order_id, ...}
+        self._managed_positions: dict[
+            str, dict
+        ] = {}  # symbol → {signal, order_id, ...}
 
         logger.info(f"Capital: ${capital:,.2f}")
         logger.info(f"Watchlist: {', '.join(self.watchlist)}")
-        logger.info(f"Strategies: {', '.join(s.name for s in self.strategies if s.enabled)}")
+        logger.info(
+            f"Strategies: {', '.join(s.name for s in self.strategies if s.enabled)}"
+        )
 
     def _init_strategies(self, config: dict) -> list:
         """Initialize all strategy instances from config."""
@@ -207,7 +229,9 @@ class TradingEngine:
 
         # Account status
         account = self.broker.get_account()
-        logger.info(f"Account equity: ${account['equity']:,.2f} | Buying power: ${account['buying_power']:,.2f}")
+        logger.info(
+            f"Account equity: ${account['equity']:,.2f} | Buying power: ${account['buying_power']:,.2f}"
+        )
 
         # Notify
         self.notifier.notify_startup(
@@ -344,7 +368,9 @@ class TradingEngine:
             )
 
             self.broker.place_order(sl_order)
-            logger.info(f"🛡️ Stop-loss placed for {order.symbol} at ${order.signal.stop_loss:.2f}")
+            logger.info(
+                f"🛡️ Stop-loss placed for {order.symbol} at ${order.signal.stop_loss:.2f}"
+            )
 
         except Exception as e:
             logger.error(f"Failed to place stop-loss for {order.symbol}: {e}")
@@ -378,12 +404,13 @@ class TradingEngine:
             # Take-profit check
             if signal.take_profit:
                 hit_tp = (
-                    (pos.side == Side.BUY and current_price >= signal.take_profit) or
-                    (pos.side == Side.SELL and current_price <= signal.take_profit)
-                )
+                    pos.side == Side.BUY and current_price >= signal.take_profit
+                ) or (pos.side == Side.SELL and current_price <= signal.take_profit)
 
                 if hit_tp:
-                    logger.info(f"🎯 Take-profit hit for {pos.symbol} at ${current_price:.2f}")
+                    logger.info(
+                        f"🎯 Take-profit hit for {pos.symbol} at ${current_price:.2f}"
+                    )
                     self._close_position(pos, "Take-profit target reached")
 
     def _close_position(self, position, reason: str):
@@ -397,9 +424,15 @@ class TradingEngine:
                 quantity=position.quantity,
                 entry_price=position.entry_price,
                 exit_price=position.current_price,
-                entry_time=self._managed_positions.get(position.symbol, {}).get("entry_time", datetime.utcnow()),
+                entry_time=self._managed_positions.get(position.symbol, {}).get(
+                    "entry_time", datetime.utcnow()
+                ),
                 exit_time=datetime.utcnow(),
-                strategy_name=self._managed_positions.get(position.symbol, {}).get("signal", {}).strategy_name if self._managed_positions.get(position.symbol, {}).get("signal") else "unknown",
+                strategy_name=self._managed_positions.get(position.symbol, {})
+                .get("signal", {})
+                .strategy_name
+                if self._managed_positions.get(position.symbol, {}).get("signal")
+                else "unknown",
                 reason_exit=reason,
             )
             trade.calculate_pnl()
@@ -460,7 +493,9 @@ class TradingEngine:
 
         logger.info(f"  Total Trades: {summary['total_trades']}")
         logger.info(f"  Win Rate: {summary['win_rate']:.0f}%")
-        logger.info(f"  Daily P&L: ${summary['daily_pnl']:+.2f} ({summary['daily_pnl_pct']:+.1f}%)")
+        logger.info(
+            f"  Daily P&L: ${summary['daily_pnl']:+.2f} ({summary['daily_pnl_pct']:+.1f}%)"
+        )
         logger.info(f"  Capital: ${summary['current_capital']:,.2f}")
 
         self.notifier.notify_daily_summary(summary)
@@ -487,8 +522,8 @@ class TradingEngine:
         self.scheduler.start()
 
         logger.info("🤖 Bot is running — press Ctrl+C to stop")
-        logger.info(f"Market hours: 9:30 AM - 4:00 PM ET")
-        logger.info(f"Scanning every 1 minute during market hours")
+        logger.info("Market hours: 9:30 AM - 4:00 PM ET")
+        logger.info("Scanning every 1 minute during market hours")
 
         # Keep the main thread alive
         try:
@@ -522,15 +557,21 @@ class TradingEngine:
 
 # ─── Entry Point ──────────────────────────────────────────────────────
 
+
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Trader AI — Autonomous Intraday Trading Bot")
+    parser = argparse.ArgumentParser(
+        description="Trader AI — Autonomous Intraday Trading Bot"
+    )
     parser.add_argument(
-        "--mode", choices=["paper", "live"], default="paper",
+        "--mode",
+        choices=["paper", "live"],
+        default="paper",
         help="Trading mode (default: paper)",
     )
     parser.add_argument(
-        "--once", action="store_true",
+        "--once",
+        action="store_true",
         help="Run a single scan cycle and exit",
     )
     args = parser.parse_args()

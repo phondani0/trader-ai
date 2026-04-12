@@ -36,7 +36,7 @@ class MACDBollingerStrategy(BaseStrategy):
         if len(df) < 30:
             return None
 
-        required = ["close", "bb_lower", "bb_upper", "bb_mid", "macd", "macd_signal", "macd_hist", "atr"]
+        required = ["close", "bb_lower", "bb_upper", "bb_mid", "macd", "macd_signal", "macd_hist", "atr", "ema_200"]
         if not all(col in df.columns for col in required):
             return None
 
@@ -48,33 +48,34 @@ class MACDBollingerStrategy(BaseStrategy):
         bb_lower = curr["bb_lower"]
         bb_upper = curr["bb_upper"]
         bb_mid = curr["bb_mid"]
+        ema_50 = curr["sma_50"]  # SMA 50 or EMA 50
         macd_val = curr["macd"]
         macd_sig = curr["macd_signal"]
         prev_macd = prev["macd"]
         prev_sig = prev["macd_signal"]
         atr = curr["atr"]
 
-        if pd.isna(bb_lower) or pd.isna(macd_val) or pd.isna(atr) or atr == 0:
+        if pd.isna(bb_lower) or pd.isna(macd_val) or pd.isna(atr) or atr == 0 or pd.isna(ema_50):
             return None
 
-        stop_atr_mult = self.params.get("stop_loss_atr_multiplier", 1.5)
+        stop_atr_mult = self.params.get("stop_loss_atr_multiplier", 2.0)
         rr_ratio = self.params.get("take_profit_rr_ratio", 2.0)
 
         # ─── BUY Signal ───────────────────────────────────────────
-        # Price at or below lower BB + MACD bullish crossover
+        # Price at or below lower BB + MACD bullish crossover + Above SMA 50
         macd_bullish_cross = prev_macd <= prev_sig and macd_val > macd_sig
-        price_at_lower_bb = close <= bb_lower * 1.005  # Within 0.5% of lower band
+        price_at_lower_bb = close <= bb_lower * 1.002
+        above_trend = close > ema_50
 
-        if price_at_lower_bb and macd_bullish_cross:
+        if price_at_lower_bb and macd_bullish_cross and above_trend:
             stop_loss = close - (atr * stop_atr_mult)
-            risk = close - stop_loss
-            take_profit = close + (risk * rr_ratio)
+            # Exit at mid-band for higher win rate in mean reversion
+            take_profit = bb_mid 
 
-            confidence = 0.6
-            # Higher confidence if RSI is also oversold
+            confidence = 0.65
             if "rsi_14" in df.columns and not pd.isna(curr.get("rsi_14")):
                 if curr["rsi_14"] < 35:
-                    confidence = 0.75
+                    confidence = 0.8
 
             return self._create_signal(
                 symbol=symbol,
@@ -85,24 +86,25 @@ class MACDBollingerStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"Price at lower BB ({bb_lower:.2f}) + MACD bullish cross | RSI: {curr.get('rsi_14', 'N/A'):.1f}",
-                metadata={"bb_lower": bb_lower, "macd": macd_val, "atr": atr},
+                reason=f"Mean Reversion BUY | Price at lower BB ({bb_lower:.2f}) + Trend UP (Price > SMA50)",
+                metadata={"bb_lower": bb_lower, "ema_50": ema_50, "atr": atr},
             )
 
         # ─── SELL Signal ──────────────────────────────────────────
-        # Price at or above upper BB + MACD bearish crossover
+        # Price at or above upper BB + MACD bearish crossover + Below SMA 50
         macd_bearish_cross = prev_macd >= prev_sig and macd_val < macd_sig
-        price_at_upper_bb = close >= bb_upper * 0.995  # Within 0.5% of upper band
+        price_at_upper_bb = close >= bb_upper * 0.998
+        below_trend = close < ema_50
 
-        if price_at_upper_bb and macd_bearish_cross:
+        if price_at_upper_bb and macd_bearish_cross and below_trend:
             stop_loss = close + (atr * stop_atr_mult)
-            risk = stop_loss - close
-            take_profit = close - (risk * rr_ratio)
+            # Exit at mid-band
+            take_profit = bb_mid
 
-            confidence = 0.6
+            confidence = 0.65
             if "rsi_14" in df.columns and not pd.isna(curr.get("rsi_14")):
                 if curr["rsi_14"] > 65:
-                    confidence = 0.75
+                    confidence = 0.8
 
             return self._create_signal(
                 symbol=symbol,
@@ -113,8 +115,8 @@ class MACDBollingerStrategy(BaseStrategy):
                 take_profit=take_profit,
                 confidence=confidence,
                 regime=regime,
-                reason=f"Price at upper BB ({bb_upper:.2f}) + MACD bearish cross | RSI: {curr.get('rsi_14', 'N/A'):.1f}",
-                metadata={"bb_upper": bb_upper, "macd": macd_val, "atr": atr},
+                reason=f"Mean Reversion SELL | Price at upper BB ({bb_upper:.2f}) + Trend DOWN (Price < SMA50)",
+                metadata={"bb_upper": bb_upper, "ema_50": ema_50, "atr": atr},
             )
 
         return None

@@ -74,7 +74,7 @@ class RSIDivergenceStrategy(BaseStrategy):
 
             if macd_confirmed:
                 recent_low = float(lows.min())
-                stop_loss = recent_low - (atr * 0.5)
+                stop_loss = recent_low - (atr * 1.5)  # Increased from 0.5 to 1.5
                 risk = close - stop_loss
                 if risk <= 0:
                     return None
