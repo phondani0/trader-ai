@@ -251,10 +251,10 @@ class CCXTBroker(BaseBroker):
     # ─── Market Data ──────────────────────────────────────────────
 
     def fetch_ohlcv(
-        self, symbol: str, timeframe: str, limit: int = 1000
+        self, symbol: str, timeframe: str, limit: int = 1000, since: Optional[int] = None
     ) -> pd.DataFrame:
         tf = TIMEFRAME_MAP.get(timeframe, timeframe)
-        ohlcv = self.exchange.fetch_ohlcv(symbol, tf, limit=limit)
+        ohlcv = self.exchange.fetch_ohlcv(symbol, tf, limit=limit, since=since)
 
         df = pd.DataFrame(
             ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]

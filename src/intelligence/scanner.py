@@ -10,6 +10,7 @@ from typing import Dict, List
 from loguru import logger
 
 from src.core.base_broker import BaseBroker
+from src.intelligence.journal import DiscoveryJournal
 
 
 class MarketScanner:
@@ -18,9 +19,15 @@ class MarketScanner:
     Focuses on Volume-Weighted Breakouts (VWBC) to ensure quality.
     """
 
-    def __init__(self, broker: BaseBroker, config: dict):
+    def __init__(
+        self,
+        broker: BaseBroker,
+        config: dict,
+        journal: DiscoveryJournal | None = None,
+    ):
         self.broker = broker
         self.config = config
+        self.journal = journal
 
         # Scanner settings
         scan_cfg = config.get("discovery", {})
@@ -71,6 +78,17 @@ class MarketScanner:
                     }
                 )
 
+                # Record in Journal (Feedback Loop)
+                if self.journal:
+                    self.journal.record(
+                        {
+                            "symbol": symbol,
+                            "last_price": t.get("last"),
+                            "volume_24h": volume,
+                            "score": score,
+                        }
+                    )
+
             # Sort by score descending
             movers = sorted(movers, key=lambda x: x["score"], reverse=True)
             subset = movers[: self.top_n]
@@ -96,7 +114,7 @@ class MarketScanner:
 
         for m in movers:
             change_str = f"{m['change']:+.2f}%"
-            vol_str = f"${m['volume_24h']/1_000_000:.1f}M"
+            vol_str = f"${m['volume_24h'] / 1_000_000:.1f}M"
             print(
                 f"{m['symbol']:<15} | {change_str:<10} | {vol_str:<12} | {m['last_price']}"
             )

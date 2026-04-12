@@ -51,16 +51,66 @@ class DataFeed:
 
     def get_data(self, symbol: str, force_refresh: bool = False) -> pd.DataFrame:
         """
-        Get enriched OHLCV data with all technical indicators pre-computed.
+        Get enriched OHLCV data for the default lookback period.
+        """
+        if not force_refresh and symbol in self._cache:
+            return self._cache[symbol]
 
-        Returns DataFrame with columns:
-            open, high, low, close, volume, vwap,
-            ema_9, ema_21, sma_20,
-            rsi_14, macd, macd_signal, macd_hist,
-            bb_upper, bb_mid, bb_lower,
-            adx, atr, atr_pct,
-            supertrend, supertrend_direction,
-            volume_sma_20
+        df = self.broker.fetch_ohlcv(symbol, timeframe=self.timeframe, days=self.lookback_days)
+        if not df.empty:
+            df = self._add_indicators(df)
+            self._cache[symbol] = df
+            self._last_update[symbol] = datetime.utcnow()
+
+        return df
+
+    def get_historical_range(
+        self, symbol: str, start_date: datetime, end_date: datetime
+    ) -> pd.DataFrame:
+        """
+        Fetch and enrich data for a specific historical date range.
+        Uses pagination to handle exchange limits.
+        """
+        logger.info(f"Fetching historical range for {symbol}: {start_date} to {end_date}")
+
+        all_df = pd.DataFrame()
+        current_since = int(start_date.timestamp() * 1000)
+        end_timestamp = int(end_date.timestamp() * 1000)
+
+        while True:
+            df = self.broker.fetch_ohlcv(
+                symbol, timeframe=self.timeframe, limit=1000, since=current_since
+            )
+            if df.empty:
+                break
+
+            all_df = pd.concat([all_df, df])
+            
+            # Use the last timestamp + 1 interval as the next 'since'
+            # (Timeframe mapping needed here, but CCXT handles it well enough if we just increment)
+            last_ts = int(df.index[-1].timestamp() * 1000)
+            if last_ts >= end_timestamp or len(df) < 100:
+                break
+            
+            # Add 1ms to avoid duplicates
+            current_since = last_ts + 1
+
+        if all_df.empty:
+            return all_df
+
+        # Filter to exact range and deduplicate
+        all_df = all_df[~all_df.index.duplicated(keep="first")]
+        mask = (all_df.index >= start_date) & (all_df.index <= end_date)
+        df_range = all_df.loc[mask].copy()
+
+        if not df_range.empty:
+            df_range = self._add_indicators(df_range)
+
+        return df_range
+
+    def get_data(self, symbol: str, force_refresh: bool = False) -> pd.DataFrame:
+        """
+        Get enriched OHLCV data for the default lookback period.
         """
         if not force_refresh and symbol in self._cache:
             return self._cache[symbol]

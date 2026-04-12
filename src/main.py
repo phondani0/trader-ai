@@ -34,6 +34,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from src.core.broker_factory import BrokerFactory
+from src.core.database import DatabaseManager
 from src.core.data_feed import DataFeed
 from src.core.models import (
     OrderStatus,
@@ -42,6 +43,7 @@ from src.core.models import (
     TradingMode,
 )
 from src.core.scheduler import MarketScheduler
+from src.intelligence.journal import DiscoveryJournal
 from src.intelligence.regime_detector import RegimeDetector
 from src.intelligence.scanner import MarketScanner
 from src.intelligence.signal_aggregator import SignalAggregator
@@ -130,6 +132,12 @@ class TradingEngine:
         self.regime_detector = RegimeDetector(config=config)
         self.kill_switch = KillSwitch(broker=self.broker)
 
+        # Database & Journal (L1 Feedback Loop)
+        self.db = DatabaseManager(
+            db_path=config.get("data", {}).get("database_path", "data/trader.db")
+        )
+        self.journal = DiscoveryJournal(broker=self.broker, db=self.db)
+
         # Load watchlist
         self.watchlist = config.get(
             "active_watchlist",
@@ -160,7 +168,9 @@ class TradingEngine:
         self.notifier = Notifier(config=config)
 
         # Discovery Scanner
-        self.market_scanner = MarketScanner(broker=self.broker, config=config)
+        self.market_scanner = MarketScanner(
+            broker=self.broker, config=config, journal=self.journal
+        )
 
         # Initialize Strategies
         strategy_configs = config
@@ -519,6 +529,7 @@ class TradingEngine:
         self.scheduler.register("orb_end", self.on_orb_end)
         self.scheduler.register("scan_tick", self.on_scan_tick)
         self.scheduler.register("discovery_scan", self.market_scanner.scan_for_momentum)
+        self.scheduler.register("journal_review", self.journal.update_performance)
         self.scheduler.register("stop_entries", self.on_stop_entries)
         self.scheduler.register("square_off", self.on_square_off)
         self.scheduler.register("market_close", self.on_market_close)

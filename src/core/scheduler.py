@@ -55,7 +55,7 @@ class MarketScheduler:
 
         Events:
             pre_market, market_open, orb_end, scan_tick, discovery_scan,
-            stop_entries, square_off, market_close
+            journal_review, stop_entries, square_off, market_close
         """
         self._callbacks[event] = callback
         logger.debug(f"Registered callback for event: {event}")
@@ -81,6 +81,15 @@ class MarketScheduler:
                     name="Daily Report (Midnight UTC)",
                 )
             self.scheduler.start()
+
+            # Journal Review (Performance Follow-up) - Global
+            if "journal_review" in self._callbacks:
+                self.scheduler.add_job(
+                    self._safe_run("journal_review"),
+                    CronTrigger(minute="*/30", timezone=pytz.UTC),
+                    id="journal_review",
+                    name="Discovery Journal Review",
+                )
 
             # Discovery Scan
             discovery_cfg = self.config.get("discovery", {})
@@ -210,6 +219,15 @@ class MarketScheduler:
                 name="Market Discovery Scanner",
             )
         self._log_schedule()
+
+        # Journal Review (Performance Follow-up) - Global
+        if "journal_review" in self._callbacks:
+            self.scheduler.add_job(
+                self._safe_run("journal_review"),
+                CronTrigger(minute="*/30", timezone=ET),
+                id="journal_review",
+                name="Discovery Journal Review",
+            )
 
     def stop(self):
         """Stop the scheduler."""

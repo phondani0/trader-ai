@@ -114,7 +114,7 @@ class BaseBroker(ABC):
 
     @abstractmethod
     def fetch_ohlcv(
-        self, symbol: str, timeframe: str, limit: int = 1000
+        self, symbol: str, timeframe: str, limit: int = 1000, since: Optional[int] = None
     ) -> pd.DataFrame:
         """
         Fetch historical OHLCV data.

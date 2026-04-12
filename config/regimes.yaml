@@ -1,0 +1,29 @@
+# ═══════════════════════════════════════════════════
+# Backtest Regime Catalog
+# ═══════════════════════════════════════════════════
+# Pre-defined historical periods for stress-testing.
+
+regimes:
+  - name: "Bullish Trend (Early 2024)"
+    symbol: "BTC/USDT:USDT"
+    start_date: "2024-01-01"
+    end_date: "2024-03-31"
+    description: "Strong institutional trending phase (ETF approval)."
+
+  - name: "Choppy Sideways (Mid 2024)"
+    symbol: "BTC/USDT:USDT"
+    start_date: "2024-04-15"
+    end_date: "2024-07-15"
+    description: "Post-halving exhaustion and ranging market."
+
+  - name: "Volatile Breakout (Nov 2024)"
+    symbol: "BTC/USDT:USDT"
+    start_date: "2024-11-01"
+    end_date: "2024-12-01"
+    description: "High momentum post-election breakout."
+
+  - name: "Recent Performance (30 Days)"
+    symbol: "BTC/USDT:USDT"
+    start_date: "trailing_30"
+    end_date: "now"
+    description: "Standard most recent window."
