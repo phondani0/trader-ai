@@ -87,14 +87,17 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
     strategies = list(all_strategies.values()) if strategy_name == "all" else [all_strategies[strategy_name]]
 
     # Walk-forward simulation
-    min_lookback = 50  # Need at least 50 bars for indicators
+    min_lookback = 50
     trades = []
-    
-    # State tracking per strategy to ensure we don't exit instantaneously
     current_positions = {strat.name: None for strat in strategies}
 
+    # Friction settings
+    FEE_PCT = 0.055 / 100  # Bybit Taker Fee (0.055%)
+    SLIPPAGE_PCT = 0.1 / 100  # Momentum Slippage (0.1%)
+    TOTAL_FRICTION = FEE_PCT + SLIPPAGE_PCT
+
     for i in range(min_lookback, len(df)):
-        window = df.iloc[:i + 1]
+        window = df.iloc[: i + 1]
         current_bar = df.iloc[i]
         regime = regime_detector.detect(window)
 
@@ -102,26 +105,31 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
             pos = current_positions[strategy.name]
 
             if pos is None:
-                # Look for new entry
                 if strategy.should_run(regime):
                     signal = strategy.generate_signal(symbol, window, regime)
                     if signal:
+                        # Add Entry Friction
+                        effective_entry = signal.entry_price * (
+                            1 + TOTAL_FRICTION if signal.side == Side.BUY else 1 - TOTAL_FRICTION
+                        )
                         current_positions[strategy.name] = {
-                        "entry_price": signal.entry_price,
-                        "stop_loss": signal.stop_loss,
-                        "take_profit": signal.take_profit,
-                        "side": signal.side,
-                        "entry_time": window.index[-1],
-                        "regime": regime.value,
-                        "reason": signal.reason,
-                        "strategy": signal.strategy_name
-                    }
+                            "entry_price": effective_entry,
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
+                            "side": signal.side,
+                            "entry_time": window.index[-1],
+                            "regime": regime.value,
+                            "reason": signal.reason,
+                            "strategy": signal.strategy_name,
+                        }
             else:
                 # Check for exit on current bar
                 high = float(current_bar["high"])
                 low = float(current_bar["low"])
                 exit_price = None
 
+                # CONSERVATIVE WICK LOGIC:
+                # If a candle hits both SL and TP, assume SL hit first.
                 if pos["side"] == Side.BUY:
                     if low <= pos["stop_loss"]:
                         exit_price = pos["stop_loss"]  # Stopped out
@@ -134,24 +142,34 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
                         exit_price = pos["take_profit"]
 
                 if exit_price is not None:
+                    # Apply Exit Friction
+                    effective_exit = exit_price * (
+                        1 - TOTAL_FRICTION if pos["side"] == Side.BUY else 1 + TOTAL_FRICTION
+                    )
+
                     # Calculate P&L
                     if pos["side"] == Side.BUY:
-                        pnl_pct = ((exit_price - pos["entry_price"]) / pos["entry_price"]) * 100
+                        pnl_pct = (
+                            (effective_exit - pos["entry_price"]) / pos["entry_price"]
+                        ) * 100
                     else:
-                        pnl_pct = ((pos["entry_price"] - exit_price) / pos["entry_price"]) * 100
+                        pnl_pct = (
+                            (pos["entry_price"] - effective_exit) / pos["entry_price"]
+                        ) * 100
 
-                    trades.append({
-                        "timestamp": pos["entry_time"],
-                        "exit_time": window.index[-1],
-                        "strategy": pos["strategy"],
-                        "side": pos["side"].value,
-                        "entry": pos["entry_price"],
-                        "exit": exit_price,
-                        "pnl_pct": pnl_pct,
-                        "regime": pos["regime"],
-                        "reason": pos["reason"],
-                    })
-                    # Clear position
+                    trades.append(
+                        {
+                            "timestamp": pos["entry_time"],
+                            "exit_time": window.index[-1],
+                            "strategy": pos["strategy"],
+                            "side": pos["side"].value,
+                            "entry": pos["entry_price"],
+                            "exit": effective_exit,
+                            "pnl_pct": pnl_pct,
+                            "regime": pos["regime"],
+                            "reason": pos["reason"],
+                        }
+                    )
                     current_positions[strategy.name] = None
                     
     # Force close any remaining open positions at the end of backtest
@@ -181,6 +199,25 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
         return
 
     trades_df = pd.DataFrame(trades)
+
+    # 1. Equity Curve (Compounding)
+    initial_capital = 10000.0  # Normalized starting capital
+    equity_curve = [initial_capital]
+    for pnl in trades_df["pnl_pct"]:
+        next_val = equity_curve[-1] * (1 + pnl / 100)
+        equity_curve.append(next_val)
+
+    trades_df["equity"] = equity_curve[1:]
+    final_equity = equity_curve[-1]
+    total_net_roi = ((final_equity / initial_capital) - 1) * 100
+
+    # 2. Max Drawdown (MDD)
+    equity_series = pd.Series(equity_curve)
+    rolling_max = equity_series.cummax()
+    drawdowns = (equity_series - rolling_max) / rolling_max
+    max_drawdown = drawdowns.min() * 100
+
+    # 3. Report Generation
     logger.info(f"\n{'═' * 60}")
     logger.info(f"BACKTEST RESULTS: {symbol}")
     logger.info(f"{'═' * 60}")
@@ -192,19 +229,38 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
 
     logger.info(f"Winning: {len(winning)} | Losing: {len(losing)}")
     logger.info(f"Win Rate: {len(winning) / len(trades_df) * 100:.1f}%")
-    logger.info(f"Avg Win: {winning['pnl_pct'].mean():.2f}%" if len(winning) > 0 else "Avg Win: N/A")
-    logger.info(f"Avg Loss: {losing['pnl_pct'].mean():.2f}%" if len(losing) > 0 else "Avg Loss: N/A")
-    logger.info(f"Total Return: {trades_df['pnl_pct'].sum():.2f}%")
-    logger.info(f"Max Drawdown: {trades_df['pnl_pct'].min():.2f}%")
+    logger.info(
+        f"Avg Win: {winning['pnl_pct'].mean():.2f}%"
+        if len(winning) > 0
+        else "Avg Win: N/A"
+    )
+    logger.info(
+        f"Avg Loss: {losing['pnl_pct'].mean():.2f}%"
+        if len(losing) > 0
+        else "Avg Loss: N/A"
+    )
+
+    logger.info(f"{'-' * 60}")
+    logger.info(f"GROSS Return (sum): {trades_df['pnl_pct'].sum():.2f}%")
+    logger.info(f"NET Return (compounded): {total_net_roi:.2f}%")
+    logger.info(f"Max Drawdown: {max_drawdown:.2f}%")
+    logger.info(f"Final Equity: ${final_equity:,.2f}")
+    logger.info(f"{'═' * 60}")
 
     # Per-strategy breakdown
-    logger.info(f"\nPer-Strategy Breakdown:")
+    logger.info(f"\nPer-Strategy Breakdown (Net ROI %):")
     for strat_name, group in trades_df.groupby("strategy"):
         w = group[group["pnl_pct"] > 0]
+        # Calculate strat-specific net ROI
+        strat_final = 1.0
+        for p in group["pnl_pct"]:
+            strat_final *= 1 + p / 100
+        strat_roi = (strat_final - 1) * 100
+
         logger.info(
-            f"  {strat_name}: {len(group)} trades | "
-            f"Win Rate: {len(w) / len(group) * 100:.0f}% | "
-            f"Total: {group['pnl_pct'].sum():.2f}%"
+            f"  {strat_name:<15}: {len(group):>3} trades | "
+            f"Win Rate: {len(w) / len(group) * 100:>2.0f}% | "
+            f"Net ROI: {strat_roi:>7.2f}%"
         )
 
     # Per-regime breakdown

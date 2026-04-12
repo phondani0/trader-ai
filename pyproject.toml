@@ -32,6 +32,7 @@ dependencies = [
 [project.scripts]
 start = "src.main:main"
 backtest = "scripts.backtest:main"
+benchmark = "scripts.benchmark:run_benchmark"
 trade = "scripts.trade:main"
 
 [build-system]

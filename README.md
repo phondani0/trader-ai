@@ -65,30 +65,19 @@ cp .env.example .env
 - **`config/strategies.yaml`** — Strategy parameters (tune without code changes)
 - **`config/watchlist.yaml`** — Stocks to monitor
 
-### 4. Run
+### 4. Commands Reference
 
-```bash
-# Start bot in Paper trading mode (default, safe)
-uv run start
+We use `uv` for environment management. Always run commands using `uv run <command>`.
 
-# Run a single scan cycle (testing)
-uv run start --once
+| Command | Purpose | Usage Example |
+| :--- | :--- | :--- |
+| **`start`** | **The Main Bot.** Launches the autonomous trading engine, market scanner, and discovery journal. | `uv run start` |
+| **`benchmark`**| **Stress Tester.** Runs strategies across historical regimes (Bull Trends, Sideways, etc.). | `uv run benchmark --strategy supertrend` |
+| **`backtest`** | **Single Test.** Run a strategy against a fixed date range with realistic friction. | `uv run backtest --symbol BTC/USDT --days 30` |
+| **`trade`** | **Admin Tool.** Manual trade injector for connectivity tests or emergency liquidations. | `uv run trade --close-all` |
+| **`test`** | **Quality Control.** Runs the project unit tests via Pytest. | `uv run test` |
 
-# Backtest strategies
-uv run backtest --symbol BTC/USD --days 30
-
-# Manual CLI Trading Override (Injects live trades to Alpaca bypassing strategies)
-uv run trade --symbol BTC/USD --side buy --qty 0.01
-
-# Manual CLI Trading (Full Round-Trip Buy then Sell Test)
-uv run trade --symbol BTC/USD --side buy --qty 0.01 --round-trip
-
-# Manual CLI Trading (Emergency Liquidation)
-uv run trade --close-all
-
-# Execute Live Trading Bot (requires explicit terminal confirmation)
-uv run start --mode live
-```
+---
 
 ## 🛡️ Risk Management
 
@@ -156,8 +145,13 @@ docker run -d \
 - **Past performance ≠ future results.** Backtest results may not replicate live.
 - **You are responsible** for all trades placed by this bot.
 - **PDT Rule:** US pattern day trader rule requires $25,000+ for unlimited day trades.
+- **Environment Parity:** If introducing a new API or key, gracefully handle missing keys by utilizing `.env.example` and providing clear error traces.
 
-## 📁 Project Structure
+---
+
+---
+
+## 🛠 Project Structure
 
 ```
 trader-ai/
