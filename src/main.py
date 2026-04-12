@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
 import sys
@@ -136,7 +137,7 @@ class TradingEngine:
         self.db = DatabaseManager(
             db_path=config.get("data", {}).get("database_path", "data/trader.db")
         )
-        self.journal = DiscoveryJournal(broker=self.broker, db=self.db)
+        self.journal = DiscoveryJournal(broker=self.broker, db=self.db, config=config)
 
         # Load watchlist
         self.watchlist = config.get(
@@ -184,6 +185,7 @@ class TradingEngine:
         self._managed_positions: dict[
             str, dict
         ] = {}  # symbol → {signal, order_id, ...}
+        self._bootstrapped = False
 
         logger.info(f"Capital: ${capital:,.2f}")
         logger.info(f"Watchlist: {', '.join(self.watchlist)}")
@@ -194,6 +196,7 @@ class TradingEngine:
     def _init_strategies(self, config: dict) -> list:
         """Initialize all strategy instances from config."""
         strategies = []
+        approvals = self._load_strategy_approvals()
 
         strategy_map = {
             "macd_bollinger": MACDBollingerStrategy,
@@ -208,11 +211,41 @@ class TradingEngine:
         for name, cls in strategy_map.items():
             params = config.get(name, {"enabled": True, "regime": ["all"]})
             strategy = cls(params=params)
+            approval = approvals.get(name)
+            if approval and not approval.get("approved", False):
+                strategy.enabled = False
+                logger.warning(
+                    f"  ⛔ Strategy gated by benchmark approval: {name} "
+                    f"({approval.get('reason', 'not approved')})"
+                )
             strategies.append(strategy)
             status = "✅" if strategy.enabled else "⬜"
             logger.info(f"  {status} Strategy: {name}")
 
         return strategies
+
+    def _load_strategy_approvals(self) -> dict:
+        """Load benchmark-derived strategy approvals when enabled."""
+        benchmark_cfg = self.config.get("benchmarking", {})
+        if not benchmark_cfg.get("enforce_approvals", True):
+            return {}
+
+        approvals_rel = benchmark_cfg.get("approvals_path", "data/strategy_approvals.json")
+        approvals_path = PROJECT_ROOT / approvals_rel
+        if not approvals_path.exists():
+            logger.warning(
+                f"Benchmark approvals file not found at {approvals_path}. "
+                "Using config-level strategy enablement only."
+            )
+            return {}
+
+        try:
+            with open(approvals_path, "r") as f:
+                payload = json.load(f)
+            return payload.get("strategies", {})
+        except Exception as e:
+            logger.error(f"Failed to load strategy approvals: {e}")
+            return {}
 
     # ─── Lifecycle Events ─────────────────────────────────────────
 
@@ -227,9 +260,11 @@ class TradingEngine:
         logger.info("═" * 40)
 
         # Reset daily state
-        self.risk_manager.reset_daily()
+        equity = self.broker.get_equity()
+        self.risk_manager.reset_daily(current_equity=equity)
         self._orb_set = False
-        self._managed_positions.clear()
+        if not self.broker.is_24_7_market:
+            self._managed_positions.clear()
 
         # Reset ORB strategy
         for s in self.strategies:
@@ -237,11 +272,11 @@ class TradingEngine:
                 s.reset_daily()
 
         # Pre-fetch data
-        logger.info(f"Fetching data for {len(self.watchlist)} symbols...")
-        self.data_feed.refresh_all(self.watchlist)
+        bootstrap_universe = self.market_scanner.build_tradable_universe(self.watchlist)
+        logger.info(f"Fetching data for {len(bootstrap_universe)} symbols...")
+        self.data_feed.refresh_all(bootstrap_universe)
 
         # Account status
-        equity = self.broker.get_equity()
         buying_power = self.broker.get_buying_power()
         logger.info(
             f"Account equity: ${equity:,.2f} | Buying power: ${buying_power:,.2f}"
@@ -284,37 +319,60 @@ class TradingEngine:
         Main scan loop — runs every minute during market hours.
         This is where the magic happens.
         """
-        if self.kill_switch.is_active:
-            return
-
-        if self.risk_manager.is_kill_switch_active:
+        if not self._enforce_risk_guards():
             return
 
         try:
+            positions = self.broker.get_positions()
+            position_symbols = [position.symbol for position in positions]
+            tradable_universe = self.market_scanner.build_tradable_universe(
+                self.watchlist,
+                persistent_symbols=[*position_symbols, *self._managed_positions.keys()],
+            )
+
             # 1. Refresh data
-            data = self.data_feed.refresh_all(self.watchlist)
+            data = self.data_feed.refresh_all(tradable_universe)
 
             if not data:
                 return
 
             # 2. Check existing positions for exit conditions
-            self._manage_positions(data)
+            self._manage_positions(data, positions)
+
+            if not self._enforce_risk_guards():
+                return
 
             # 3. Check if we can open new positions
             if not self.scheduler.can_open_new_positions():
                 return
 
-            # 4. Generate signals from all strategies
-            signals = self.signal_aggregator.generate_signals(data)
+            active_candidates = {
+                candidate["symbol"]: candidate
+                for candidate in self.market_scanner.get_active_candidates()
+            }
+            signal_data = {
+                symbol: symbol_data
+                for symbol, symbol_data in data.items()
+                if symbol in self.watchlist or symbol in active_candidates
+            }
+
+            # 4. Generate signals from the core watchlist plus approved discoveries
+            signals = self.signal_aggregator.generate_signals(signal_data)
 
             if not signals:
                 return
 
             # 5. Validate and execute signals through risk manager
-            positions = self.broker.get_positions()
             buying_power = self.broker.get_buying_power()
 
             for signal in signals:
+                candidate_context = active_candidates.get(signal.symbol)
+                if candidate_context:
+                    signal.metadata["discovery_score"] = candidate_context["score"]
+                    signal.metadata["discovery_change_pct"] = candidate_context["change"]
+                elif signal.symbol in self.watchlist:
+                    signal.metadata["core_watchlist"] = True
+
                 approved, reason, order = self.risk_manager.validate_signal(
                     signal=signal,
                     current_positions=positions,
@@ -326,6 +384,8 @@ class TradingEngine:
                     # Update positions list so we don't exceed limits
                     positions = self.broker.get_positions()
                     buying_power = self.broker.get_buying_power()
+                    if not self._enforce_risk_guards():
+                        return
                 else:
                     logger.debug(f"Signal rejected for {signal.symbol}: {reason}")
 
@@ -389,14 +449,15 @@ class TradingEngine:
         except Exception as e:
             logger.error(f"Failed to place stop-loss for {order.symbol}: {e}")
 
-    def _manage_positions(self, data: dict):
+    def _manage_positions(self, data: dict, positions=None):
         """
         Check existing positions for:
             - Take-profit targets
             - Trailing stops
             - Time-based exits
         """
-        positions = self.broker.get_positions()
+        if positions is None:
+            positions = self.broker.get_positions()
 
         for pos in positions:
             if pos.symbol not in self._managed_positions:
@@ -452,6 +513,7 @@ class TradingEngine:
             trade.calculate_pnl()
 
             self.risk_manager.record_trade(trade)
+            self.db.record_trade(trade)
 
             self.notifier.notify_trade_closed(
                 symbol=trade.symbol,
@@ -463,6 +525,7 @@ class TradingEngine:
 
             # Remove from managed
             self._managed_positions.pop(position.symbol, None)
+            self._enforce_risk_guards()
 
         except Exception as e:
             logger.error(f"Failed to close position {position.symbol}: {e}")
@@ -511,8 +574,12 @@ class TradingEngine:
             f"  Daily P&L: ${summary['daily_pnl']:+.2f} ({summary['daily_pnl_pct']:+.1f}%)"
         )
         logger.info(f"  Capital: ${summary['current_capital']:,.2f}")
+        logger.info(f"  Drawdown: {summary['drawdown_pct']:+.2f}%")
 
         self.notifier.notify_daily_summary(summary)
+        logger.info(self.journal.generate_short_report())
+        suggestions = self.journal.generate_parameter_suggestions()
+        logger.info(self.journal.format_parameter_suggestions(suggestions))
 
         # Clear data cache
         self.data_feed.clear_cache()
@@ -533,6 +600,8 @@ class TradingEngine:
         self.scheduler.register("stop_entries", self.on_stop_entries)
         self.scheduler.register("square_off", self.on_square_off)
         self.scheduler.register("market_close", self.on_market_close)
+
+        self._bootstrap_runtime()
 
         # Start scheduler
         self.scheduler.start()
@@ -556,11 +625,9 @@ class TradingEngine:
         """Run a single scan cycle (useful for testing / debugging)."""
         logger.info("Running single scan cycle...")
 
-        self.on_pre_market()
+        self._bootstrap_runtime()
         self.on_scan_tick()
-
-        summary = self.risk_manager.get_daily_summary()
-        logger.info(f"Scan complete — {summary['total_trades']} trades generated")
+        self.on_market_close()
 
     def shutdown(self):
         """Graceful shutdown."""
@@ -571,8 +638,46 @@ class TradingEngine:
         if self.broker.is_market_open():
             self.on_square_off()
 
-        self.scheduler.stop()
+        if self.scheduler.scheduler.running:
+            self.scheduler.stop()
         logger.info("👋 Trader AI shutdown complete")
+
+    def _bootstrap_runtime(self):
+        """Prepare runtime state so scheduled and one-shot modes start the same way."""
+        if self._bootstrapped:
+            return
+
+        self.on_pre_market()
+        if self.config.get("discovery", {}).get("enabled", True):
+            self.market_scanner.scan_for_momentum()
+        self._enforce_risk_guards()
+        self._bootstrapped = True
+
+    def _enforce_risk_guards(self) -> bool:
+        """Sync equity and escalate local risk kill-switches to the global execution kill-switch."""
+        if self.kill_switch.is_active:
+            return False
+
+        try:
+            equity = self.broker.get_equity()
+            self.risk_manager.sync_equity(equity)
+        except Exception as e:
+            logger.error(f"Failed to sync account equity for risk guards: {e}")
+            return not self.kill_switch.is_active
+
+        if self.risk_manager.is_kill_switch_active and not self.kill_switch.is_active:
+            self._engage_kill_switch(self.risk_manager.kill_switch_reason)
+
+        return not self.kill_switch.is_active
+
+    def _engage_kill_switch(self, reason: str):
+        """Activate the execution kill-switch once and clear in-memory managed state."""
+        if self.kill_switch.is_active:
+            return
+
+        self.kill_switch.activate(reason)
+        self.notifier.notify_kill_switch(reason)
+        self._managed_positions.clear()
 
 
 # ─── Entry Point ──────────────────────────────────────────────────────

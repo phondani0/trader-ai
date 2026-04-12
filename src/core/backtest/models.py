@@ -42,7 +42,13 @@ class BacktestResult:
     win_rate_pct: float = 0.0
     avg_win_pct: float = 0.0
     avg_loss_pct: float = 0.0
+    expectancy_pct: float = 0.0
+    profit_factor: float = 0.0
     total_fees_paid: float = 0.0
+    killed_by_drawdown: bool = False
+    kill_switch_reason: str = ""
+    regime_breakdown: Dict = field(default_factory=dict)
+    strategy_breakdown: Dict = field(default_factory=dict)
 
     def to_dict(self) -> Dict:
         """Helper for JSON/CSV export."""
@@ -52,5 +58,8 @@ class BacktestResult:
             "net_roi": self.net_roi_pct,
             "win_rate": self.win_rate_pct,
             "mdd": self.max_drawdown_pct,
+            "expectancy_pct": self.expectancy_pct,
+            "profit_factor": self.profit_factor,
+            "killed_by_drawdown": self.killed_by_drawdown,
             "trades": len(self.trades),
         }

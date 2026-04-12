@@ -64,6 +64,13 @@ class MarketScheduler:
         """Start the scheduler with all registered callbacks."""
 
         if self.broker.is_24_7_market:
+            if "pre_market" in self._callbacks:
+                self.scheduler.add_job(
+                    self._safe_run("pre_market"),
+                    CronTrigger(hour=0, minute=10, timezone=pytz.UTC),
+                    id="pre_market",
+                    name="Daily Reset (24/7)",
+                )
             # 24/7 continuous scan
             if "scan_tick" in self._callbacks:
                 self.scheduler.add_job(

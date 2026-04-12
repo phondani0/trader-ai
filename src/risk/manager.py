@@ -7,7 +7,6 @@ Validates every trade against account-wide risk rules.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Optional
 
 from loguru import logger
@@ -31,9 +30,12 @@ class RiskManager:
 
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
+        self.peak_capital = initial_capital
+        self.day_start_capital = initial_capital
 
         self.max_risk_per_trade_pct = risk_config.get("max_risk_per_trade_pct", 2.0)
         self.max_daily_loss_pct = risk_config.get("max_daily_loss_pct", 3.0)
+        self.max_drawdown_pct = risk_config.get("max_drawdown_pct", 20.0)
         self.max_open_positions = risk_config.get("max_open_positions", 5)
         self.max_exposure_per_asset_pct = risk_config.get(
             "max_exposure_per_asset_pct",
@@ -46,6 +48,8 @@ class RiskManager:
         self.daily_pnl = 0.0
         self.daily_trades: list[Trade] = []
         self._kill_switch_active = False
+        self._kill_switch_reason = ""
+        self._kill_switch_persistent = False
 
     def validate_signal(
         self,
@@ -61,17 +65,11 @@ class RiskManager:
         """
         # Kill switch check
         if self._kill_switch_active:
-            return False, "🛑 KILL SWITCH ACTIVE — no new trades today", None
+            return False, f"🛑 KILL SWITCH ACTIVE — {self._kill_switch_reason}", None
 
-        # Daily loss check
-        max_daily_loss = self.current_capital * (self.max_daily_loss_pct / 100)
-        if abs(self.daily_pnl) >= max_daily_loss and self.daily_pnl < 0:
-            self._kill_switch_active = True
-            logger.critical(
-                f"🛑 KILL SWITCH TRIGGERED: Daily loss ${abs(self.daily_pnl):.2f} "
-                f"exceeds {self.max_daily_loss_pct}% limit"
-            )
-            return False, f"🛑 Kill switch: daily loss ${abs(self.daily_pnl):.2f} exceeds limit", None
+        triggered, reason = self._evaluate_account_state()
+        if triggered:
+            return False, f"🛑 Kill switch: {reason}", None
 
         # Max positions check
         if len(current_positions) >= self.max_open_positions:
@@ -171,6 +169,7 @@ class RiskManager:
         self.daily_trades.append(trade)
         self.daily_pnl += trade.pnl
         self.current_capital += trade.pnl
+        self.peak_capital = max(self.peak_capital, self.current_capital)
 
         emoji = "💰" if trade.pnl >= 0 else "💸"
         logger.info(
@@ -178,32 +177,61 @@ class RiskManager:
             f"| P&L: ${trade.pnl:.2f} ({trade.pnl_pct:.1f}%) "
             f"| Daily P&L: ${self.daily_pnl:.2f}"
         )
+        self._evaluate_account_state()
 
-    def reset_daily(self):
+    def reset_daily(self, current_equity: Optional[float] = None):
         """Reset daily counters at start of new trading day."""
+        if current_equity is not None:
+            self.current_capital = current_equity
+            self.peak_capital = max(self.peak_capital, current_equity)
+            self.day_start_capital = current_equity
+        else:
+            self.day_start_capital = self.current_capital
+
         self.daily_pnl = 0.0
         self.daily_trades.clear()
-        self._kill_switch_active = False
+
+        if not self._kill_switch_persistent:
+            self._kill_switch_active = False
+            self._kill_switch_reason = ""
+
         logger.info("📊 Daily risk counters reset")
 
-    def activate_kill_switch(self, reason: str = "Manual"):
+    def activate_kill_switch(self, reason: str = "Manual", persistent: bool = True):
         """Manually activate kill switch."""
         self._kill_switch_active = True
+        self._kill_switch_reason = reason
+        self._kill_switch_persistent = persistent
         logger.critical(f"🛑 KILL SWITCH ACTIVATED: {reason}")
 
     def deactivate_kill_switch(self):
         """Deactivate kill switch (use with caution)."""
         self._kill_switch_active = False
+        self._kill_switch_reason = ""
+        self._kill_switch_persistent = False
         logger.warning("⚠️ Kill switch deactivated")
 
     @property
     def is_kill_switch_active(self) -> bool:
         return self._kill_switch_active
 
+    @property
+    def kill_switch_reason(self) -> str:
+        return self._kill_switch_reason
+
+    def sync_equity(self, equity: float) -> tuple[bool, str]:
+        """Sync the latest account equity and evaluate drawdown guards."""
+        self.current_capital = equity
+        self.peak_capital = max(self.peak_capital, equity)
+        return self._evaluate_account_state()
+
     def get_daily_summary(self) -> dict:
         """Get current daily trading summary."""
         winning = [t for t in self.daily_trades if t.pnl > 0]
         losing = [t for t in self.daily_trades if t.pnl < 0]
+        drawdown_pct = 0.0
+        if self.peak_capital > 0:
+            drawdown_pct = ((self.current_capital - self.peak_capital) / self.peak_capital) * 100
 
         return {
             "total_trades": len(self.daily_trades),
@@ -214,6 +242,41 @@ class RiskManager:
             "daily_pnl_pct": (self.daily_pnl / self.initial_capital) * 100,
             "current_capital": self.current_capital,
             "kill_switch": self._kill_switch_active,
+            "kill_switch_reason": self._kill_switch_reason,
             "largest_win": max((t.pnl for t in winning), default=0),
             "largest_loss": min((t.pnl for t in losing), default=0),
+            "peak_capital": self.peak_capital,
+            "drawdown_pct": drawdown_pct,
         }
+
+    def _evaluate_account_state(self) -> tuple[bool, str]:
+        if self._kill_switch_active:
+            return True, self._kill_switch_reason
+
+        max_daily_loss = self.day_start_capital * (self.max_daily_loss_pct / 100)
+        daily_loss = max(0.0, self.day_start_capital - self.current_capital)
+        if daily_loss >= max_daily_loss and self.current_capital < self.day_start_capital:
+            reason = (
+                f"daily loss ${daily_loss:.2f} exceeded {self.max_daily_loss_pct:.1f}% "
+                f"of start-of-day capital"
+            )
+            self._kill_switch_active = True
+            self._kill_switch_reason = reason
+            self._kill_switch_persistent = False
+            logger.critical(f"🛑 KILL SWITCH TRIGGERED: {reason}")
+            return True, reason
+
+        if self.peak_capital > 0:
+            drawdown_pct = ((self.peak_capital - self.current_capital) / self.peak_capital) * 100
+            if drawdown_pct >= self.max_drawdown_pct:
+                reason = (
+                    f"max drawdown {drawdown_pct:.2f}% exceeded {self.max_drawdown_pct:.1f}% "
+                    f"from peak capital ${self.peak_capital:.2f}"
+                )
+                self._kill_switch_active = True
+                self._kill_switch_reason = reason
+                self._kill_switch_persistent = True
+                logger.critical(f"🛑 KILL SWITCH TRIGGERED: {reason}")
+                return True, reason
+
+        return False, ""

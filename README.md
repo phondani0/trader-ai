@@ -31,8 +31,10 @@ Data Layer -> Intelligence Layer -> Strategy Layer -> Risk Layer -> Execution
 ## Intelligence Layer
 
 - Discovery scanner ranks sudden movers by price change and liquidity.
-- Discovery journal persists momentum discoveries and audits them at 1h, 4h, and 24h.
+- Discovery journal deduplicates repeated scans, persists momentum discoveries, and audits them at 1h, 4h, and 24h.
+- The tradable universe is now the core watchlist plus recent high-score discovery candidates.
 - Regime detector gates strategies by trend strength and volatility.
+- Passive parameter suggestions are generated from recent discovery outcomes and completed trades.
 - News sentiment code exists as future-facing scaffolding, not a live execution filter yet.
 
 ## Quick Start
@@ -85,6 +87,7 @@ For the default CCXT crypto path:
 - Discovery scan runs every 10 minutes by default.
 - Discovery journal review runs every 30 minutes.
 - Daily summary runs at `00:05 UTC`.
+- Daily risk reset runs at `00:10 UTC`.
 
 For the optional Alpaca adapter:
 
@@ -101,14 +104,11 @@ For the optional Alpaca adapter:
 | Max single-asset exposure | 20% of capital |
 | Mandatory stop-loss | Yes |
 | Minimum risk:reward | 1.5:1 |
+| Max drawdown kill-switch | 20% from peak capital |
 | Backtest fee baseline | 0.055% taker fee |
 | Backtest slippage baseline | 0.1% |
 
-Current status:
-
-- Daily loss protection is implemented.
-- Conservative wick logic is implemented in backtests.
-- The architectural 20% max-drawdown kill-switch described in the manifesto is still not fully enforced end-to-end.
+Benchmark approvals can now block fragile strategies from live startup based on regime-aware ROI, expectancy, profit factor, trade count, and drawdown thresholds.
 
 ## Optional Alpaca Adapter
 
