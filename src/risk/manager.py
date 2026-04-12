@@ -21,7 +21,7 @@ class RiskManager:
         - Max risk per trade (% of capital)
         - Max daily loss (kill switch)
         - Max open positions
-        - Max exposure per stock
+        - Max exposure per asset
         - Mandatory stop-loss
         - Position sizing based on ATR
     """
@@ -35,7 +35,10 @@ class RiskManager:
         self.max_risk_per_trade_pct = risk_config.get("max_risk_per_trade_pct", 2.0)
         self.max_daily_loss_pct = risk_config.get("max_daily_loss_pct", 3.0)
         self.max_open_positions = risk_config.get("max_open_positions", 5)
-        self.max_exposure_per_stock_pct = risk_config.get("max_exposure_per_stock_pct", 20.0)
+        self.max_exposure_per_asset_pct = risk_config.get(
+            "max_exposure_per_asset_pct",
+            risk_config.get("max_exposure_per_stock_pct", 20.0),
+        )
         self.mandatory_stop_loss = risk_config.get("mandatory_stop_loss", True)
         self.min_rr_ratio = risk_config.get("min_risk_reward_ratio", 1.5)
 
@@ -74,7 +77,7 @@ class RiskManager:
         if len(current_positions) >= self.max_open_positions:
             return False, f"Max positions ({self.max_open_positions}) reached", None
 
-        # Already in this stock?
+        # Already in this asset?
         for pos in current_positions:
             if pos.symbol == signal.symbol:
                 return False, f"Already in position for {signal.symbol}", None
@@ -91,13 +94,13 @@ class RiskManager:
         if quantity <= 0:
             return False, "Position size calculation returned 0 (insufficient capital or risk too high)", None
 
-        # Max exposure per stock
+        # Max exposure per asset
         position_value = signal.entry_price * quantity
-        max_exposure = self.current_capital * (self.max_exposure_per_stock_pct / 100)
+        max_exposure = self.current_capital * (self.max_exposure_per_asset_pct / 100)
         if position_value > max_exposure:
             quantity = round(max_exposure / signal.entry_price, 4)
             if quantity <= 0:
-                return False, f"Exceeds max exposure per stock ({self.max_exposure_per_stock_pct}%)", None
+                return False, f"Exceeds max exposure per asset ({self.max_exposure_per_asset_pct}%)", None
 
         # Buying power check
         if position_value > buying_power:

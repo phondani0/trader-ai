@@ -131,9 +131,15 @@ def run_benchmark(strategy_filter: str = None):
     print("═" * 100 + "\n")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+def main():
+    parser = argparse.ArgumentParser(
+        description="Benchmark strategies across curated crypto market regimes"
+    )
     parser.add_argument("--strategy", default="all")
     args = parser.parse_args()
-    
+
     run_benchmark(args.strategy)
+
+
+if __name__ == "__main__":
+    main()

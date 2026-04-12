@@ -4,8 +4,8 @@ Backtesting Runner.
 Runs strategies against historical data to validate performance.
 
 Usage:
-    python scripts/backtest.py --symbol AAPL --days 90
-    python scripts/backtest.py --symbol SPY --strategy macd_bollinger
+    python scripts/backtest.py --symbol BTC/USDT:USDT --days 90
+    python scripts/backtest.py --symbol ETH/USDT:USDT --strategy vwap_reversion
 """
 
 from __future__ import annotations
@@ -278,7 +278,11 @@ def run_backtest(symbol: str, days: int, strategy_name: str = "all", timeframe: 
 
 def main():
     parser = argparse.ArgumentParser(description="Backtest trading strategies")
-    parser.add_argument("--symbol", default=None, help="Symbol to backtest (defaults to SPY for equity or BTC/USD for crypto)")
+    parser.add_argument(
+        "--symbol",
+        default=None,
+        help="Symbol to backtest (defaults to BTC/USDT:USDT, or SPY when using Alpaca equities)",
+    )
     parser.add_argument("--days", type=int, default=30, help="Number of days to backtest")
     parser.add_argument("--strategy", default="all", help="Strategy name or 'all'")
     parser.add_argument("--timeframe", default="5Min", help="Candle timeframe")
@@ -289,9 +293,9 @@ def main():
     try:
         with open(config_path, "r") as f:
             settings = yaml.safe_load(f)
-        asset_class = settings.get("trading", {}).get("asset_class", "equity").lower()
+        asset_class = settings.get("trading", {}).get("asset_class", "crypto").lower()
     except Exception:
-        asset_class = "equity"
+        asset_class = "crypto"
         
     if args.symbol is None:
         args.symbol = "BTC/USDT:USDT" if asset_class == "crypto" else "SPY"

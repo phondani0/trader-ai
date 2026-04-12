@@ -11,7 +11,8 @@ Logic:
     5. Stop-loss at opposite side of the OR range
 
 This is one of the most discussed profitable strategies on r/algotrading
-and r/Daytrading for US markets.
+and r/Daytrading for session-based markets. It remains disabled by default
+in the crypto-first configuration.
 """
 
 from __future__ import annotations

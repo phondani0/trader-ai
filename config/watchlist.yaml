@@ -1,10 +1,23 @@
 # ═══════════════════════════════════════════════════
-# Stock Watchlist — US Market
+# Market Universe
 # ═══════════════════════════════════════════════════
-# High-liquidity, high-volume stocks ideal for intraday trading
-# These are well-known tickers with tight spreads and predictable patterns
+# The default active universe is crypto-first.
+# Equity lists are kept below as optional reference sets for Alpaca/session experiments.
 
-# Large Cap Tech (High liquidity, excellent for intraday)
+# Default active watchlist (what the bot monitors)
+# For CCXT perpetuals: use SYMBOL/USDT:USDT format
+# For Alpaca equities: use plain tickers (AAPL, SPY)
+# For Alpaca crypto: use SYMBOL/USD format (BTC/USD)
+active_watchlist:
+  - BTC/USDT:USDT
+  - ETH/USDT:USDT
+  - SOL/USDT:USDT
+  - DOGE/USDT:USDT
+  - LTC/USDT:USDT
+
+# Optional equity reference universes
+
+# Large Cap Tech
 large_cap_tech:
   - AAPL     # Apple
   - MSFT     # Microsoft
@@ -37,14 +50,3 @@ energy:
 consumer:
   - DIS      # Disney
   - NKE      # Nike
-
-# Default active watchlist (what the bot monitors daily)
-# For CCXT perpetuals (Bybit): use SYMBOL/USDT:USDT format
-# For Alpaca equities: use plain tickers (AAPL, SPY)
-# For Alpaca crypto: use SYMBOL/USD format (BTC/USD)
-active_watchlist:
-  - BTC/USDT:USDT
-  - ETH/USDT:USDT
-  - SOL/USDT:USDT
-  - DOGE/USDT:USDT
-  - LTC/USDT:USDT

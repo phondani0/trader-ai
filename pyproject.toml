@@ -1,7 +1,7 @@
 [project]
 name = "trader-ai"
 version = "1.0.0"
-description = "Autonomous intraday trading bot for US markets using Alpaca"
+description = "Autonomous crypto trading system with CCXT execution, journaling, and regime-aware backtests"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -32,7 +32,7 @@ dependencies = [
 [project.scripts]
 start = "src.main:main"
 backtest = "scripts.backtest:main"
-benchmark = "scripts.benchmark:run_benchmark"
+benchmark = "scripts.benchmark:main"
 trade = "scripts.trade:main"
 
 [build-system]

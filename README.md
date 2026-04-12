@@ -1,196 +1,196 @@
-# 🤖 Trader AI — Autonomous Intraday Trading Bot
+# Trader AI — Autonomous Crypto Trading System
 
-A production-ready, autonomous intraday trading bot for **US stock markets** using **Alpaca** (commission-free trading). Features multi-strategy engine with market regime detection, adaptive strategy selection, and comprehensive risk management.
+A production-minded trading system for crypto markets built around CCXT, regime-aware strategies, discovery journaling, and friction-aware backtests.
 
-## 🏗️ Architecture
+The default product path is crypto perpetuals through CCXT. The Alpaca adapter remains in the repo as an optional experimental path, but it is not the primary product direction.
 
+## Architecture
+
+```text
+Data Layer -> Intelligence Layer -> Strategy Layer -> Risk Layer -> Execution
+   |              |                    |                |            |
+   |         Discovery Scanner    Strategy Engine    Risk Manager   CCXT Exchange
+   |         Regime Detector      Signal Aggregator  Kill Switch    Paper/Live
+   |         Discovery Journal
+   |
+   -> OHLCV + indicators -> confluence -> validated orders -> journal + reports
 ```
-Data Layer → Intelligence Layer → Strategy Layer → Risk Layer → Execution
-   │              │                    │                │            │
-   │         Regime Detector     7 Strategies      Risk Manager   Alpaca API
-   │         News Sentiment      Signal Aggregator  Kill Switch   Paper/Live
-   │
-   └── Alpaca WebSocket + REST → OHLCV + Indicators
-```
 
-## 📊 Strategies
+## Current Trading Stack
 
-| # | Strategy | Market Condition | Method |
-|---|---------|-----------------|--------|
-| 1 | **MACD + Bollinger Bands** | Sideways/Range | Mean reversion on band touch + MACD cross |
-| 2 | **VWAP Mean Reversion** | Range-bound | Trade deviation from VWAP + RSI |
-| 3 | **Supertrend Momentum** | Trending | Supertrend flip + EMA + volume confirmation |
-| 4 | **Opening Range Breakout** | First 30 min | Break above/below ORB with VWAP filter |
-| 5 | **RSI Divergence** | Trend exhaustion | Price/RSI divergence → reversal |
-| 6 | **EMA Crossover** | Strong trends | 9/21 EMA cross with ADX filter |
-| 7 | **Chart Patterns** | All conditions | Triangle, ABCD, Double Top/Bottom |
+| Strategy | Market Condition | Role | Default Status |
+|---|---|---|---|
+| VWAP Reversion | Sideways / calm | Mean reversion to fair value | Enabled |
+| Supertrend | Trending | Momentum continuation | Enabled |
+| RSI Divergence | Trend exhaustion | Reversal filter | Enabled |
+| EMA Crossover | Strong trends | Trend-following confirmation | Enabled |
+| MACD + Bollinger | Sideways / choppy | Experimental mean reversion | Enabled |
+| ORB | Session opens | Session-based breakout logic | Disabled |
+| Chart Patterns | Higher timeframe | Pattern breakout / reversal | Disabled |
 
-## 🧠 Market Regime Detection
+## Intelligence Layer
 
-The bot automatically detects market conditions and **only activates strategies suited for the current regime**:
+- Discovery scanner ranks sudden movers by price change and liquidity.
+- Discovery journal persists momentum discoveries and audits them at 1h, 4h, and 24h.
+- Regime detector gates strategies by trend strength and volatility.
+- News sentiment code exists as future-facing scaffolding, not a live execution filter yet.
 
-| Regime | Active Strategies |
-|--------|------------------|
-| 📈 Trending + Calm | Supertrend, EMA Crossover, RSI Divergence, ORB |
-| 📈⚡ Trending + Volatile | Supertrend, ORB (wider stops) |
-| ↔️ Ranging + Calm | MACD+BB, VWAP Reversion, ORB |
-| ↔️⚡ Choppy (DANGER) | ORB only (or sit out) |
+## Quick Start
 
-## 🚀 Quick Start
+### 1. Install dependencies
 
-### 1. Get Alpaca API Keys
-1. Go to [https://app.alpaca.markets](https://app.alpaca.markets)
-2. Sign up for a free account
-3. Get your **API Key** and **Secret Key** from the dashboard
-4. Paper trading is enabled by default (free, no risk)
-
-### 2. Setup
 ```bash
-# Clone and enter the project
 cd trader-ai
-
-# Install uv (modern Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install all dependencies (auto-creates .venv)
 uv sync
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Alpaca API keys
 ```
 
-### 3. Configure
-- **`config/settings.yaml`** — Main settings (capital, risk limits, market hours)
-- **`config/strategies.yaml`** — Strategy parameters (tune without code changes)
-- **`config/watchlist.yaml`** — Stocks to monitor
+### 2. Configure environment
 
-### 4. Commands Reference
+```bash
+cp .env.example .env
+```
 
-We use `uv` for environment management. Always run commands using `uv run <command>`.
+Add exchange credentials for the default crypto path:
 
-| Command | Purpose | Usage Example |
-| :--- | :--- | :--- |
-| **`start`** | **The Main Bot.** Launches the autonomous trading engine, market scanner, and discovery journal. | `uv run start` |
-| **`benchmark`**| **Stress Tester.** Runs strategies across historical regimes (Bull Trends, Sideways, etc.). | `uv run benchmark --strategy supertrend` |
-| **`backtest`** | **Single Test.** Run a strategy against a fixed date range with realistic friction. | `uv run backtest --symbol BTC/USDT --days 30` |
-| **`trade`** | **Admin Tool.** Manual trade injector for connectivity tests or emergency liquidations. | `uv run trade --close-all` |
-| **`test`** | **Quality Control.** Runs the project unit tests via Pytest. | `uv run test` |
+```dotenv
+EXCHANGE_ID=bybit
+EXCHANGE_API_KEY=your_key
+EXCHANGE_SECRET_KEY=your_secret
+TRADING_MODE=paper
+```
 
----
+### 3. Review config
 
-## 🛡️ Risk Management
+- `config/settings.yaml` -> broker, capital, risk, database path
+- `config/strategies.yaml` -> strategy parameters and enablement
+- `config/watchlist.yaml` -> active crypto watchlist plus optional equity reference lists
+- `config/regimes.yaml` -> curated historical windows for benchmarks
+
+## Commands
+
+Run commands with `uv run <command>`.
+
+| Command | Purpose | Example |
+|---|---|---|
+| `start` | Launch the trading engine, scanner, and journal loop | `uv run start` |
+| `benchmark` | Stress-test strategies across curated regime windows | `uv run benchmark --strategy supertrend` |
+| `backtest` | Run a single strategy or full stack on a symbol/date window | `uv run backtest --symbol BTC/USDT:USDT --days 30` |
+| `trade` | Manual override for connectivity tests or emergency exits | `uv run trade --symbol BTC/USDT:USDT --side buy --qty 0.01` |
+
+## Runtime Cadence
+
+For the default CCXT crypto path:
+
+- Strategy scan runs every minute.
+- Discovery scan runs every 10 minutes by default.
+- Discovery journal review runs every 30 minutes.
+- Daily summary runs at `00:05 UTC`.
+
+For the optional Alpaca adapter:
+
+- Session-based scheduling and square-off windows apply.
+- ORB is only meaningful in that session-based mode.
+
+## Risk Model
 
 | Rule | Default |
-|------|---------|
+|---|---|
 | Max risk per trade | 2% of capital |
-| Max daily loss (kill switch) | 3% of capital |
+| Max daily loss kill-switch | 3% of capital |
 | Max simultaneous positions | 5 |
-| Max single-stock exposure | 20% of capital |
-| Mandatory stop-loss | Every trade |
-| Auto square-off | 3:50 PM ET daily |
-| Min risk:reward ratio | 1.5:1 |
+| Max single-asset exposure | 20% of capital |
+| Mandatory stop-loss | Yes |
+| Minimum risk:reward | 1.5:1 |
+| Backtest fee baseline | 0.055% taker fee |
+| Backtest slippage baseline | 0.1% |
 
-## 📱 Notifications (Telegram)
+Current status:
 
-Set up a Telegram bot to receive real-time alerts:
+- Daily loss protection is implemented.
+- Conservative wick logic is implemented in backtests.
+- The architectural 20% max-drawdown kill-switch described in the manifesto is still not fully enforced end-to-end.
 
-1. Message [@BotFather](https://t.me/botfather) on Telegram → `/newbot`
-2. Get your bot token
-3. Get your chat ID from [@userinfobot](https://t.me/userinfobot)
-4. Add to `.env`:
-   ```
-   TELEGRAM_BOT_TOKEN=your_token
-   TELEGRAM_CHAT_ID=your_chat_id
-   ```
+## Optional Alpaca Adapter
 
-## 📊 Dashboard
+Alpaca is still supported in code, but it is no longer the repo's primary story.
+
+Use it only if you explicitly want to experiment with:
+
+- US equities
+- Alpaca crypto spot
+- session-based workflows
+
+To switch, update `config/settings.yaml`:
+
+```yaml
+trading:
+  asset_class: equity
+
+broker:
+  name: alpaca
+```
+
+Then provide `ALPACA_API_KEY` and `ALPACA_SECRET_KEY` in `.env`.
+
+## Notifications And Dashboard
+
+- Telegram notifications are supported through `.env` credentials.
+- A basic FastAPI dashboard scaffold exists at `src/dashboard/app.py`.
+
+Start the dashboard scaffold with:
 
 ```bash
-# Start the monitoring dashboard
 uv run uvicorn src.dashboard.app:app --host 0.0.0.0 --port 8080
 ```
-Open [http://localhost:8080](http://localhost:8080) for real-time monitoring.
 
-## 🐳 Docker Deployment
+## Docker
 
 ```bash
-# Build
 docker build -t trader-ai .
-
-# Run (paper mode)
-docker run -d \
-  --name trader-ai \
-  --env-file .env \
-  -p 8080:8080 \
-  trader-ai
+docker run -d --name trader-ai --env-file .env -p 8080:8080 trader-ai
 ```
 
-## ⏰ Daily Lifecycle
+## Important Notes
 
-| Time (ET) | Event |
-|-----------|-------|
-| 8:00 AM | Bot wakes up, fetches pre-market data |
-| 9:30 AM | Market opens → scanning begins |
-| 9:30-10:00 AM | ORB window (Opening Range Breakout) |
-| 10:00 AM-3:30 PM | All strategies active (regime-dependent) |
-| 3:30 PM | Stop new entries |
-| 3:50 PM | Auto square-off all positions |
-| 4:00 PM | Market close → daily P&L report |
+- This is not financial advice.
+- Start in paper or demo mode and observe behavior before considering live capital.
+- Backtests are useful for filtering bad ideas, not proving future returns.
+- If you add a new external dependency or credential, keep `.env.example` and the README in sync.
 
-## ⚠️ Important Disclaimers
+## Project Structure
 
-- **This is NOT financial advice.** Algorithmic trading involves significant risk.
-- **Always start with paper trading.** Run for 30+ days before considering live.
-- **Past performance ≠ future results.** Backtest results may not replicate live.
-- **You are responsible** for all trades placed by this bot.
-- **PDT Rule:** US pattern day trader rule requires $25,000+ for unlimited day trades.
-- **Environment Parity:** If introducing a new API or key, gracefully handle missing keys by utilizing `.env.example` and providing clear error traces.
-
----
-
----
-
-## 🛠 Project Structure
-
-```
+```text
 trader-ai/
-├── config/                    # YAML configuration
-│   ├── settings.yaml          # Main settings
-│   ├── strategies.yaml        # Strategy parameters
-│   └── watchlist.yaml         # Stock universe
+├── config/
+│   ├── settings.yaml
+│   ├── strategies.yaml
+│   ├── watchlist.yaml
+│   └── regimes.yaml
 ├── src/
-│   ├── main.py               # Entry point (autonomous worker)
+│   ├── main.py
 │   ├── core/
-│   │   ├── broker.py          # Alpaca API wrapper
-│   │   ├── data_feed.py       # Market data + indicators
-│   │   ├── scheduler.py       # Market-hours scheduler
-│   │   └── models.py          # Data models
-│   ├── strategies/
-│   │   ├── base.py            # Abstract base strategy
-│   │   ├── macd_bollinger.py  # Strategy 1
-│   │   ├── vwap_reversion.py  # Strategy 2
-│   │   ├── supertrend.py      # Strategy 3
-│   │   ├── orb.py             # Strategy 4
-│   │   ├── rsi_divergence.py  # Strategy 5
-│   │   ├── ema_crossover.py   # Strategy 6
-│   │   └── chart_patterns.py  # Strategy 7
+│   │   ├── broker.py          # Primary CCXT broker
+│   │   ├── alpaca_broker.py   # Optional Alpaca adapter
+│   │   ├── broker_factory.py
+│   │   ├── data_feed.py
+│   │   ├── scheduler.py
+│   │   ├── database.py
+│   │   └── backtest/
 │   ├── intelligence/
-│   │   ├── regime_detector.py # Market regime detection
-│   │   ├── signal_aggregator.py # Multi-strategy orchestrator
-│   │   └── news_sentiment.py  # FinBERT NLP (optional)
+│   │   ├── scanner.py
+│   │   ├── journal.py
+│   │   ├── regime_detector.py
+│   │   ├── signal_aggregator.py
+│   │   └── news_sentiment.py
+│   ├── strategies/
 │   ├── risk/
-│   │   ├── manager.py         # Risk management
-│   │   ├── position_sizer.py  # Position sizing
-│   │   └── kill_switch.py     # Emergency stop
 │   ├── notifications/
-│   │   └── notifier.py        # Telegram alerts
 │   └── dashboard/
-│       └── app.py             # Web dashboard (FastAPI)
 ├── scripts/
-│   └── backtest.py            # Backtesting runner
-├── pyproject.toml              # Dependencies & project config
-├── uv.lock                     # Lockfile (reproducible builds)
-├── Dockerfile
+│   ├── backtest.py
+│   ├── benchmark.py
+│   └── trade.py
+├── pyproject.toml
+├── uv.lock
 └── .env.example
 ```

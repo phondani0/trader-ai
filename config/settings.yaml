@@ -5,15 +5,16 @@
 trading:
   mode: paper                    # paper | live
   capital: 25000                 # Starting capital in USD
-  asset_class: crypto            # equity | crypto
+  asset_class: crypto            # crypto default | equity optional via Alpaca adapter
 
 # Broker Selection
-# Change this to switch the entire execution engine.
-# Supported: "ccxt" (Bybit/Binance perpetuals) | "alpaca" (US equities/crypto spot)
+# Default product path: CCXT for crypto perpetuals.
+# Optional adapter: "alpaca" for US equities / crypto spot experiments.
 broker:
   name: ccxt
   time_in_force: gtc
 
+# Only used by session-based brokers such as Alpaca equities.
 market_hours:
   timezone: "US/Eastern"
   pre_market_start: "08:00"
@@ -28,7 +29,7 @@ risk_management:
   max_risk_per_trade_pct: 2.0    # Max 2% capital risk per trade
   max_daily_loss_pct: 3.0        # Kill switch: stop if daily loss > 3%
   max_open_positions: 5          # Max simultaneous positions
-  max_exposure_per_stock_pct: 20 # Max 20% capital in one asset
+  max_exposure_per_asset_pct: 20 # Max 20% capital in one asset
   mandatory_stop_loss: true      # Every trade MUST have a stop-loss
   trailing_stop_enabled: true
   trailing_stop_atr_multiplier: 2.0
@@ -38,7 +39,7 @@ risk_management:
 data:
   candle_interval: 5Min          # 1Min | 5Min | 15Min | 1Hour
   lookback_days: 60              # Historical data for indicators
-  database_path: data/trades.db
+  database_path: data/trader.db
   max_bars_per_request: 10000
 
 watchlist:

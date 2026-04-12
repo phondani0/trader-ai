@@ -4,8 +4,8 @@ Manual Test Trading CLI
 ========================
 
 Usage:
-    uv run trade --symbol BTC/USD --side buy --qty 0.01
-    uv run trade --symbol BTC/USD --side buy --qty 0.01 --round-trip
+    uv run trade --symbol BTC/USDT:USDT --side buy --qty 0.01
+    uv run trade --symbol BTC/USDT:USDT --side buy --qty 0.01 --round-trip
     uv run trade --close-all
 """
 
@@ -38,7 +38,10 @@ def _load_config() -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Trader AI — Manual Trade Injector")
-    parser.add_argument("--symbol", help="Symbol to trade (e.g. BTC/USD or SPY)")
+    parser.add_argument(
+        "--symbol",
+        help="Symbol to trade (e.g. BTC/USDT:USDT for CCXT or SPY for Alpaca)",
+    )
     parser.add_argument("--side", choices=["buy", "sell"], help="Trade side (buy/sell)")
     parser.add_argument("--qty", type=float, help="Quantity to trade")
     parser.add_argument("--type", default="market", choices=["market", "limit"], help="Order type")

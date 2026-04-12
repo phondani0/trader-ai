@@ -3,13 +3,13 @@ Trader AI — Autonomous Intraday Trading Bot
 ============================================
 
 Main entry point. This is the "always-on worker" that:
-    1. Wakes up before market open
+    1. Resets daily state for the active broker mode
     2. Fetches data and detects market regime
     3. Runs strategies and generates signals
     4. Validates signals through risk management
     5. Executes trades via the configured broker
     6. Monitors positions and manages exits
-    7. Squares off at end of day
+    7. Squares off session-based positions when required
     8. Generates daily report
 
 Usage:
@@ -142,24 +142,19 @@ class TradingEngine:
         self.watchlist = config.get(
             "active_watchlist",
             [
-                "AAPL",
-                "MSFT",
-                "NVDA",
-                "TSLA",
-                "AMD",
-                "META",
-                "SPY",
-                "QQQ",
-                "AMZN",
-                "GOOGL",
+                "BTC/USDT:USDT",
+                "ETH/USDT:USDT",
+                "SOL/USDT:USDT",
+                "DOGE/USDT:USDT",
+                "LTC/USDT:USDT",
             ],
         )
 
         # Initialize capital
-        account = self.broker.get_account()
-        capital = float(
-            account.get("equity", config.get("trading", {}).get("capital", 25000))
-        )
+        try:
+            capital = float(self.broker.get_equity())
+        except Exception:
+            capital = float(config.get("trading", {}).get("capital", 25000))
 
         # Risk Manager
         self.risk_manager = RiskManager(config=config, initial_capital=capital)
@@ -224,7 +219,11 @@ class TradingEngine:
     def on_pre_market(self):
         """Run before market opens — prepare data and reset daily counters."""
         logger.info("═" * 40)
-        logger.info("🌅 Pre-Market Preparation")
+        logger.info(
+            "🌅 Daily Reset & Preparation"
+            if self.broker.is_24_7_market
+            else "🌅 Pre-Market Preparation"
+        )
         logger.info("═" * 40)
 
         # Reset daily state
@@ -242,15 +241,16 @@ class TradingEngine:
         self.data_feed.refresh_all(self.watchlist)
 
         # Account status
-        account = self.broker.get_account()
+        equity = self.broker.get_equity()
+        buying_power = self.broker.get_buying_power()
         logger.info(
-            f"Account equity: ${account['equity']:,.2f} | Buying power: ${account['buying_power']:,.2f}"
+            f"Account equity: ${equity:,.2f} | Buying power: ${buying_power:,.2f}"
         )
 
         # Notify
         self.notifier.notify_startup(
             mode=self.mode.value,
-            capital=account["equity"],
+            capital=equity,
             strategies=[s.name for s in self.strategies if s.enabled],
         )
 
@@ -538,8 +538,12 @@ class TradingEngine:
         self.scheduler.start()
 
         logger.info("🤖 Bot is running — press Ctrl+C to stop")
-        logger.info("Market hours: 9:30 AM - 4:00 PM ET")
-        logger.info("Scanning every 1 minute during market hours")
+        if self.broker.is_24_7_market:
+            logger.info("Market: 24/7 crypto")
+            logger.info("Scanning every 1 minute continuously")
+        else:
+            logger.info("Market hours: 9:30 AM - 4:00 PM ET")
+            logger.info("Scanning every 1 minute during market hours")
 
         # Keep the main thread alive
         try:
