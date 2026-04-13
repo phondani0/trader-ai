@@ -158,6 +158,32 @@ donchian_breakout:
   take_profit_rr_ratio: 3.0
   max_position_pct: 15
 
+bearish_breakdown_continuation:
+  enabled: true
+  regime: ["trending_low_vol", "trending_high_vol"]
+  timeframe: 1Hour
+  breakdown_periods: [20, 55]
+  min_confirmations: 2
+  trend_ema_period: 89
+  confirm_ema_period: 21
+  atr_period: 14
+  adx_period: 14
+  volume_period: 20
+  slope_lookback: 8
+  momentum_lookback: 20
+  rejection_lookback: 20
+  adx_min: 18
+  min_momentum_pct: 1.5
+  volume_multiplier: 1.0
+  secondary_confirmations_required: 2
+  continuation_touch_atr: 0.8
+  continuation_trigger_bars: 3
+  continuation_buffer_atr: 0.05
+  breakdown_buffer_atr: 0.05
+  stop_buffer_atr: 1.0
+  take_profit_rr_ratio: 3.0
+  max_position_pct: 15
+
 volume_weighted_tsmom:
   enabled: true
   regime: ["trending_low_vol", "trending_high_vol"]

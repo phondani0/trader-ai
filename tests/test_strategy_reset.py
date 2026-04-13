@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from src.core.models import MarketRegime, Side
+from src.strategies.bearish_breakdown_continuation import (
+    BearishBreakdownContinuationStrategy,
+)
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
 
@@ -141,6 +144,70 @@ def _build_donchian_short_continuation_frame() -> pd.DataFrame:
 
 
 class StrategyResetTest(unittest.TestCase):
+    def test_bearish_breakdown_continuation_generates_short_signal(self):
+        strategy = BearishBreakdownContinuationStrategy(
+            {
+                "enabled": True,
+                "regime": [MarketRegime.TRENDING_HIGH_VOL.value],
+                "breakdown_periods": [20, 55],
+                "min_confirmations": 2,
+                "trend_ema_period": 60,
+                "confirm_ema_period": 20,
+                "atr_period": 14,
+                "adx_period": 14,
+                "volume_period": 20,
+                "slope_lookback": 8,
+                "momentum_lookback": 20,
+                "rejection_lookback": 20,
+                "continuation_touch_atr": 0.8,
+                "continuation_trigger_bars": 3,
+            }
+        )
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            _build_donchian_short_continuation_frame(),
+            MarketRegime.TRENDING_HIGH_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.SELL)
+        self.assertEqual(
+            signal.strategy_name,
+            "bearish_breakdown_continuation",
+        )
+
+    def test_bearish_breakdown_continuation_allows_one_missing_secondary_confirmation(self):
+        strategy = BearishBreakdownContinuationStrategy(
+            {
+                "enabled": True,
+                "regime": [MarketRegime.TRENDING_HIGH_VOL.value],
+                "breakdown_periods": [20, 55],
+                "min_confirmations": 2,
+                "trend_ema_period": 60,
+                "confirm_ema_period": 20,
+                "atr_period": 14,
+                "adx_period": 14,
+                "volume_period": 20,
+                "slope_lookback": 8,
+                "momentum_lookback": 20,
+                "rejection_lookback": 20,
+                "continuation_touch_atr": 0.8,
+                "continuation_trigger_bars": 3,
+            }
+        )
+        frame = _build_donchian_short_continuation_frame()
+        frame["volume_ratio"] = 0.8
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            frame,
+            MarketRegime.TRENDING_HIGH_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.SELL)
+
     def test_donchian_ensemble_generates_long_signal(self):
         strategy = DonchianBreakoutStrategy(
             {

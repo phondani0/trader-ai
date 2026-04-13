@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.benchmark import build_approvals_payload, derive_strategy_deployment
+from scripts.benchmark import (
+    build_approvals_payload,
+    derive_strategy_deployment,
+    init_strategies,
+)
 
 
 class BenchmarkDeploymentTest(unittest.TestCase):
+    def test_init_strategies_can_construct_bearish_breakdown_continuation(self):
+        strategies = init_strategies("bearish_breakdown_continuation")
+
+        self.assertEqual(len(strategies), 1)
+        self.assertEqual(strategies[0].name, "bearish_breakdown_continuation")
+
     def test_curated_execution_regimes_drive_deployable_runtime_regimes(self):
         deployment = derive_strategy_deployment(
             "supertrend",

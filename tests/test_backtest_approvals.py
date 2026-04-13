@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.backtest import apply_strategy_approvals
+from scripts.backtest import apply_strategy_approvals, load_strategies
 from src.core.models import MarketRegime
 from src.strategies.base import BaseStrategy
 
@@ -21,6 +21,11 @@ class _DummyStrategy(BaseStrategy):
 
 
 class BacktestApprovalsTest(unittest.TestCase):
+    def test_load_strategies_includes_bearish_breakdown_continuation(self):
+        strategies = load_strategies()
+
+        self.assertIn("bearish_breakdown_continuation", strategies)
+
     def test_apply_strategy_approvals_blocks_missing_strategies_when_payload_is_partial(self):
         approved = _DummyStrategy("donchian_breakout")
         missing = _DummyStrategy("volume_weighted_tsmom")

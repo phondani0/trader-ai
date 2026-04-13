@@ -19,6 +19,9 @@ from src.core.backtest.engine import BacktestEngine
 from src.core.broker_factory import BrokerFactory
 from src.core.data_feed import DataFeed
 from src.core.models import TradingMode
+from src.strategies.bearish_breakdown_continuation import (
+    BearishBreakdownContinuationStrategy,
+)
 from src.strategies.chart_patterns import ChartPatternStrategy
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
@@ -56,6 +59,7 @@ def init_strategies(strategy_filter: str | None = None) -> list:
         "rsi_divergence": RSIDivergenceStrategy,
         "ema_crossover": EMACrossoverStrategy,
         "donchian_breakout": DonchianBreakoutStrategy,
+        "bearish_breakdown_continuation": BearishBreakdownContinuationStrategy,
         "volume_weighted_tsmom": VolumeWeightedTSMomentumStrategy,
         "chart_patterns": ChartPatternStrategy,
     }

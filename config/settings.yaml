@@ -39,7 +39,7 @@ risk_management:
 
 discovery:
   enabled: true
-  interval_minutes: 240
+  interval_minutes: 30
   min_24h_volume: 10000000
   min_price_change: 3.0
   min_trade_score: 3.0
@@ -47,7 +47,7 @@ discovery:
   candidate_ttl_minutes: 480
   dynamic_monitor_size: 10
   liquid_universe_size: 30
-  feature_timeframe: 4Hour
+  feature_timeframe: 30Min
   feature_window_bars: 96
   breakout_lookback_bars: 20
   momentum_lookback_bars: 12
@@ -81,11 +81,11 @@ adaptation:
   min_recent_trades: 5
 
 data:
-  candle_interval: 4Hour         # 1Min | 5Min | 15Min | 1Hour | 4Hour | 1Day
+  candle_interval: 30Min         # 1Min | 5Min | 15Min | 30Min | 1Hour | 4Hour | 1Day
   lookback_days: 180             # Historical data for indicators/backtests
-  scan_interval_minutes: 240     # Default: align live scans with candle closes
+  scan_interval_minutes: 30      # Default: align live scans with candle closes
   scan_buffer_minutes: 2         # Wait a little after candle close before evaluating signals
-  position_check_interval_minutes: 15  # Keep TP monitoring responsive between 4h signal scans
+  position_check_interval_minutes: 15  # Keep TP monitoring responsive between 30m signal scans
   database_path: data/trader.db
   max_bars_per_request: 1000     # Keep per-request limits exchange-friendly; DataFeed paginates as needed
   refresh_overlap_bars: 400      # Re-fetch only the recent tail once symbols are cached

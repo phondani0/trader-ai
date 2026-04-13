@@ -51,6 +51,9 @@ from src.intelligence.signal_aggregator import SignalAggregator
 from src.notifications.notifier import Notifier
 from src.risk.kill_switch import KillSwitch
 from src.risk.manager import RiskManager
+from src.strategies.bearish_breakdown_continuation import (
+    BearishBreakdownContinuationStrategy,
+)
 from src.strategies.chart_patterns import ChartPatternStrategy
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
@@ -210,6 +213,7 @@ class TradingEngine:
             "rsi_divergence": RSIDivergenceStrategy,
             "ema_crossover": EMACrossoverStrategy,
             "donchian_breakout": DonchianBreakoutStrategy,
+            "bearish_breakdown_continuation": BearishBreakdownContinuationStrategy,
             "volume_weighted_tsmom": VolumeWeightedTSMomentumStrategy,
             "chart_patterns": ChartPatternStrategy,
         }
