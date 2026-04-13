@@ -45,9 +45,16 @@ class DatabaseManager:
                     entry_price REAL,
                     entry_volume_24h REAL,
                     discovery_score REAL,
+                    discovery_source TEXT,
+                    scanner_profile TEXT,
+                    direction TEXT,
+                    liquidity_score REAL,
+                    burst_score REAL,
+                    breakout_score REAL,
                     regime TEXT,
                     discovery_change_pct REAL,
                     discovery_count INTEGER DEFAULT 1,
+                    scanner_metadata_json TEXT,
                     price_1h REAL,
                     price_4h REAL,
                     price_24h REAL,
@@ -103,11 +110,23 @@ class DatabaseManager:
             self._ensure_column(
                 cursor, "discovery_journal", "discovery_change_pct", "REAL"
             )
+            self._ensure_column(cursor, "discovery_journal", "discovery_source", "TEXT")
+            self._ensure_column(cursor, "discovery_journal", "scanner_profile", "TEXT")
+            self._ensure_column(cursor, "discovery_journal", "direction", "TEXT")
+            self._ensure_column(cursor, "discovery_journal", "liquidity_score", "REAL")
+            self._ensure_column(cursor, "discovery_journal", "burst_score", "REAL")
+            self._ensure_column(cursor, "discovery_journal", "breakout_score", "REAL")
             self._ensure_column(
                 cursor,
                 "discovery_journal",
                 "discovery_count",
                 "INTEGER DEFAULT 1",
+            )
+            self._ensure_column(
+                cursor,
+                "discovery_journal",
+                "scanner_metadata_json",
+                "TEXT",
             )
             self._ensure_column(cursor, "discovery_journal", "min_price", "REAL")
             self._ensure_column(cursor, "trades", "regime", "TEXT")
@@ -152,6 +171,24 @@ class DatabaseManager:
                         float(existing["discovery_score"] or 0.0), float(data["score"])
                     ),
                     "regime": data.get("regime") or existing["regime"] or "UNKNOWN",
+                    "discovery_source": data.get("discovery_source")
+                    or existing["discovery_source"]
+                    or "scanner_v2",
+                    "scanner_profile": data.get("scanner_profile")
+                    or existing["scanner_profile"],
+                    "direction": data.get("direction") or existing["direction"],
+                    "liquidity_score": max(
+                        float(existing["liquidity_score"] or 0.0),
+                        float(data.get("liquidity_score", 0.0) or 0.0),
+                    ),
+                    "burst_score": max(
+                        float(existing["burst_score"] or 0.0),
+                        float(data.get("burst_score", 0.0) or 0.0),
+                    ),
+                    "breakout_score": max(
+                        float(existing["breakout_score"] or 0.0),
+                        float(data.get("breakout_score", 0.0) or 0.0),
+                    ),
                     "discovery_change_pct": (
                         data.get("change")
                         if data.get("change") is not None
@@ -166,6 +203,10 @@ class DatabaseManager:
                         float(existing["min_price"] or data["last_price"]),
                         float(data["last_price"]),
                     ),
+                    "scanner_metadata_json": json.dumps(
+                        data.get("metadata", {}),
+                        sort_keys=True,
+                    ),
                 }
                 self._update_row(conn, "discovery_journal", existing["id"], updates)
                 return int(existing["id"]), False
@@ -178,13 +219,20 @@ class DatabaseManager:
                     entry_price,
                     entry_volume_24h,
                     discovery_score,
+                    discovery_source,
+                    scanner_profile,
+                    direction,
+                    liquidity_score,
+                    burst_score,
+                    breakout_score,
                     regime,
                     discovery_change_pct,
                     discovery_count,
+                    scanner_metadata_json,
                     max_price,
                     min_price,
                     status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             params = (
                 data["symbol"],
@@ -193,9 +241,16 @@ class DatabaseManager:
                 data["last_price"],
                 data["volume_24h"],
                 data["score"],
+                data.get("discovery_source", "scanner_v2"),
+                data.get("scanner_profile"),
+                data.get("direction"),
+                data.get("liquidity_score"),
+                data.get("burst_score"),
+                data.get("breakout_score"),
                 data.get("regime", "UNKNOWN"),
                 data.get("change"),
                 1,
+                json.dumps(data.get("metadata", {}), sort_keys=True),
                 data["last_price"],
                 data["last_price"],
                 "pending",

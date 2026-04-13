@@ -112,6 +112,10 @@ class CCXTBroker(BaseBroker):
     def supported_order_types(self) -> list[OrderType]:
         return [OrderType.MARKET, OrderType.LIMIT, OrderType.STOP_LIMIT]
 
+    @property
+    def uses_exchange_managed_stops(self) -> bool:
+        return True
+
     # ─── Account ──────────────────────────────────────────────────
 
     def get_buying_power(self) -> float:
@@ -248,6 +252,17 @@ class CCXTBroker(BaseBroker):
                 success = False
         return success
 
+    def fetch_recent_closed_orders(
+        self,
+        symbol: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        try:
+            return self.exchange.fetch_closed_orders(symbol=symbol, limit=limit)
+        except Exception as e:
+            logger.error(f"Failed to fetch closed orders for {symbol or 'all symbols'}: {e}")
+            return []
+
     # ─── Market Data ──────────────────────────────────────────────
 
     def fetch_ohlcv(
@@ -282,6 +297,26 @@ class CCXTBroker(BaseBroker):
                     "change": float(t.get("percentage", 0.0) or 0.0),
                     "baseVolume": float(t.get("baseVolume", 0.0) or 0.0),
                     "quoteVolume": float(t.get("quoteVolume", 0.0) or 0.0),
+                    "open": float(t.get("open", 0.0) or 0.0),
+                    "high": float(t.get("high", 0.0) or 0.0),
+                    "low": float(t.get("low", 0.0) or 0.0),
+                    "vwap": float(t.get("vwap", 0.0) or 0.0),
+                    "fundingRate": self._extract_float(
+                        t.get("info", {}),
+                        ["fundingRate", "funding_rate"],
+                    ),
+                    "openInterest": self._extract_float(
+                        t.get("info", {}),
+                        ["openInterest", "open_interest"],
+                    ),
+                    "openInterestValue": self._extract_float(
+                        t.get("info", {}),
+                        ["openInterestValue", "open_interest_value"],
+                    ),
+                    "prevPrice1h": self._extract_float(
+                        t.get("info", {}),
+                        ["prevPrice1h", "prev_price_1h"],
+                    ),
                 }
                 for sym, t in tickers.items()
             }
@@ -315,3 +350,16 @@ class CCXTBroker(BaseBroker):
         elif stat == "rejected":
             return OrderStatus.REJECTED
         return OrderStatus.PENDING
+
+    @staticmethod
+    def _extract_float(payload: dict, keys: list[str]) -> float:
+        if not isinstance(payload, dict):
+            return 0.0
+        for key in keys:
+            value = payload.get(key)
+            if value not in (None, ""):
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        return 0.0

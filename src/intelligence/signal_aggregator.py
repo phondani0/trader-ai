@@ -44,6 +44,75 @@ class SignalAggregator:
             f"{', '.join(self._active_strategies)}"
         )
 
+    def diagnose_symbol(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        *,
+        market_profile: str | None = None,
+    ) -> dict:
+        """
+        Explain why a symbol did or did not produce an executable signal.
+        """
+        if df.empty or len(df) < 30:
+            return {
+                "symbol": symbol,
+                "status": "insufficient_data",
+                "regime": MarketRegime.UNKNOWN.value,
+                "market_profile": market_profile or "unknown",
+                "eligible_strategies": [],
+                "generated_signals": [],
+                "blocked_reasons": {"insufficient_data": self._active_strategy_names()},
+            }
+
+        regime = self.regime_detector.detect(df)
+        if market_profile is None:
+            profile_df = (
+                df.tail(self._market_profile_lookback_bars)
+                if len(df) > self._market_profile_lookback_bars
+                else df
+            )
+            market_profile = self.regime_detector.profile_window(profile_df).get(
+                "detected_market_profile"
+            )
+
+        allowed = self.regime_detector.get_allowed_strategies(regime)
+        eligible_strategies: list[str] = []
+        generated_signals: list[str] = []
+        blocked_reasons: dict[str, list[str]] = {}
+
+        for strategy in self.strategies:
+            reason = self._strategy_skip_reason(strategy, regime, market_profile, allowed)
+            if reason:
+                blocked_reasons.setdefault(reason, []).append(strategy.name)
+                continue
+
+            eligible_strategies.append(strategy.name)
+            try:
+                signal = strategy.generate_signal(symbol, df, regime)
+            except Exception as exc:
+                blocked_reasons.setdefault("strategy_error", []).append(
+                    f"{strategy.name}({exc})"
+                )
+                continue
+
+            if signal:
+                generated_signals.append(strategy.name)
+
+        status = "signal_ready" if generated_signals else "no_entry"
+        if not eligible_strategies and blocked_reasons:
+            status = "fully_gated"
+
+        return {
+            "symbol": symbol,
+            "status": status,
+            "regime": regime.value,
+            "market_profile": market_profile or "unknown",
+            "eligible_strategies": eligible_strategies,
+            "generated_signals": generated_signals,
+            "blocked_reasons": blocked_reasons,
+        }
+
     def generate_signals(
         self,
         data: dict[str, pd.DataFrame],
@@ -120,6 +189,34 @@ class SignalAggregator:
             logger.info(f"Generated {len(all_signals)} signals across all symbols")
 
         return all_signals
+
+    def _strategy_skip_reason(
+        self,
+        strategy: BaseStrategy,
+        regime: MarketRegime,
+        market_profile: str | None,
+        allowed: list[str],
+    ) -> str | None:
+        if not strategy.enabled:
+            return "disabled"
+
+        if None not in strategy._supported_regimes and regime not in strategy.supported_regimes:
+            return "config_regime_mismatch"
+
+        approved_regimes = strategy._benchmark_approved_regimes
+        if approved_regimes is not None and regime not in approved_regimes:
+            return "benchmark_regime_mismatch"
+
+        if not strategy.allows_market_profile(market_profile):
+            return "market_profile_mismatch"
+
+        if strategy.name not in allowed:
+            return "regime_matrix_mismatch"
+
+        return None
+
+    def _active_strategy_names(self) -> list[str]:
+        return [strategy.name for strategy in self.strategies if strategy.enabled]
 
     def _resolve_conflicts(
         self,

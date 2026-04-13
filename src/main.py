@@ -291,6 +291,9 @@ class TradingEngine:
             if isinstance(s, ORBStrategy):
                 s.reset_daily()
 
+        # Refresh dynamic discovery universe before the first data preload.
+        self.market_scanner.scan_for_momentum()
+
         # Pre-fetch data
         bootstrap_universe = self.market_scanner.build_tradable_universe(self.watchlist)
         logger.info(f"Fetching data for {len(bootstrap_universe)} symbols...")
@@ -373,16 +376,23 @@ class TradingEngine:
                 candidate["symbol"]: candidate
                 for candidate in self.market_scanner.get_active_candidates()
             }
+            dynamic_universe_symbols = set(
+                self.market_scanner.get_dynamic_universe_symbols()
+            )
             signal_data = {
                 symbol: symbol_data
                 for symbol, symbol_data in data.items()
-                if symbol in self.watchlist or symbol in active_candidates
+                if symbol in self.watchlist
+                or symbol in active_candidates
+                or symbol in dynamic_universe_symbols
             }
 
             # 4. Generate signals from the core watchlist plus approved discoveries
             signals = self.signal_aggregator.generate_signals(signal_data)
 
             if not signals:
+                if active_candidates:
+                    self._log_no_signal_context(active_candidates, signal_data)
                 return
 
             # 5. Validate and execute signals through risk manager
@@ -393,8 +403,16 @@ class TradingEngine:
                 if candidate_context:
                     signal.metadata["discovery_score"] = candidate_context["score"]
                     signal.metadata["discovery_change_pct"] = candidate_context["change"]
+                    signal.metadata["scanner_profile"] = candidate_context.get(
+                        "scanner_profile"
+                    )
+                    signal.metadata["discovery_direction"] = candidate_context.get(
+                        "direction"
+                    )
                 elif signal.symbol in self.watchlist:
                     signal.metadata["core_watchlist"] = True
+                elif signal.symbol in dynamic_universe_symbols:
+                    signal.metadata["dynamic_universe"] = True
 
                 approved, reason, order = self.risk_manager.validate_signal(
                     signal=signal,
@@ -416,18 +434,64 @@ class TradingEngine:
             logger.error(f"Error in scan tick: {e}")
             self.notifier.notify_error(f"Scan tick error: {str(e)}")
 
+    def _log_no_signal_context(
+        self,
+        active_candidates: dict[str, dict],
+        signal_data: dict[str, pd.DataFrame],
+    ):
+        """Explain why active discoveries did not convert into executable signals."""
+        candidate_summaries: list[str] = []
+        regime_detector = self.signal_aggregator.regime_detector
+
+        for symbol, candidate in list(active_candidates.items())[:5]:
+            df = signal_data.get(symbol)
+            if df is None or df.empty:
+                candidate_summaries.append(
+                    f"{symbol}(score={candidate.get('score', 0.0):.1f}, no data)"
+                )
+                continue
+
+            diagnosis = self.signal_aggregator.diagnose_symbol(symbol, df)
+            regime = diagnosis["regime"]
+            market_profile = diagnosis["market_profile"]
+            eligible = diagnosis["eligible_strategies"]
+            generated = diagnosis["generated_signals"]
+            blocked = diagnosis["blocked_reasons"]
+            if generated:
+                outcome = f"signals={','.join(generated[:2])}"
+            elif eligible:
+                outcome = f"eligible={','.join(eligible[:2])}, no_entry"
+            elif blocked:
+                top_reason, names = next(iter(blocked.items()))
+                outcome = f"blocked={top_reason}:{','.join(names[:2])}"
+            else:
+                outcome = "no_strategy_path"
+            candidate_summaries.append(
+                f"{symbol}(score={candidate.get('score', 0.0):.1f}, "
+                f"profile={candidate.get('scanner_profile', '-')}, "
+                f"regime={regime}, market={market_profile}, {outcome})"
+            )
+
+        logger.info(
+            "No executable strategy setups this cycle. "
+            f"Active discoveries: {', '.join(candidate_summaries)}"
+        )
+
     def _execute_order(self, order):
         """Execute a validated order through the broker."""
         try:
             result = self.broker.place_order(order)
 
             if result.status in (OrderStatus.FILLED, OrderStatus.PENDING):
+                filled_entry_price = result.filled_price or order.signal.entry_price
                 # Track the position
                 self._managed_positions[order.symbol] = {
                     "order_id": result.id,
                     "signal": order.signal,
                     "entry_time": datetime.utcnow(),
                     "side": order.side,
+                    "quantity": order.quantity,
+                    "entry_price": filled_entry_price,
                 }
 
                 # Send notification
@@ -435,14 +499,20 @@ class TradingEngine:
                     symbol=order.symbol,
                     side=order.side.value,
                     quantity=order.quantity,
-                    price=result.filled_price or order.signal.entry_price,
+                    price=filled_entry_price,
                     strategy=order.strategy_name,
                     stop_loss=order.signal.stop_loss,
                     take_profit=order.signal.take_profit,
                 )
 
                 # Place stop-loss order
-                self._place_stop_loss(order)
+                if self.broker.uses_exchange_managed_stops:
+                    logger.info(
+                        f"🛡️ Exchange-managed stop-loss attached for {order.symbol} "
+                        f"at ${order.signal.stop_loss:.2f}"
+                    )
+                else:
+                    self._place_stop_loss(order)
 
         except Exception as e:
             logger.error(f"Order execution failed for {order.symbol}: {e}")
@@ -482,6 +552,8 @@ class TradingEngine:
         if positions is None:
             positions = self.broker.get_positions()
 
+        self._reconcile_exchange_closed_positions(positions)
+
         for pos in positions:
             if pos.symbol not in self._managed_positions:
                 continue
@@ -510,6 +582,139 @@ class TradingEngine:
                         f"🎯 Take-profit hit for {pos.symbol} at ${current_price:.2f}"
                     )
                     self._close_position(pos, "Take-profit target reached")
+
+    def _reconcile_exchange_closed_positions(self, positions: list[Position]):
+        """
+        Record positions that disappeared on the exchange outside our direct close path.
+        """
+        active_symbols = {position.symbol for position in positions}
+        stale_symbols = [
+            symbol
+            for symbol in list(self._managed_positions.keys())
+            if symbol not in active_symbols
+        ]
+
+        for symbol in stale_symbols:
+            self._record_exchange_side_close(symbol)
+
+    def _record_exchange_side_close(self, symbol: str):
+        managed = self._managed_positions.get(symbol)
+        if not managed:
+            return
+
+        closed_orders = self.broker.fetch_recent_closed_orders(symbol=symbol, limit=10)
+        closing_order = self._match_closing_order(managed, closed_orders)
+
+        if not closing_order:
+            logger.warning(
+                f"Position disappeared on exchange for {symbol}, but no closing order "
+                "was found yet. Keeping local tracking until a later scan."
+            )
+            return
+
+        signal = managed.get("signal")
+        entry_price = float(managed.get("entry_price") or getattr(signal, "entry_price", 0.0) or 0.0)
+        exit_price = float(
+            closing_order.get("average")
+            or closing_order.get("price")
+            or entry_price
+            or 0.0
+        )
+        quantity = float(
+            closing_order.get("filled")
+            or closing_order.get("amount")
+            or managed.get("quantity")
+            or 0.0
+        )
+        exit_time = self._order_datetime(closing_order) or datetime.utcnow()
+        reason = self._infer_exchange_close_reason(closing_order)
+
+        trade = Trade(
+            symbol=symbol,
+            side=managed.get("side", Side.BUY),
+            quantity=quantity,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            entry_time=managed.get("entry_time", datetime.utcnow()),
+            exit_time=exit_time,
+            strategy_name=getattr(signal, "strategy_name", "unknown"),
+            reason_exit=reason,
+        )
+        trade.calculate_pnl()
+
+        self.risk_manager.record_trade(trade)
+        self.db.record_trade(trade)
+        self.notifier.notify_trade_closed(
+            symbol=trade.symbol,
+            side=trade.side.value,
+            pnl=trade.pnl,
+            pnl_pct=trade.pnl_pct,
+            reason=reason,
+        )
+        self._managed_positions.pop(symbol, None)
+        logger.info(
+            f"🔄 Reconciled exchange-side close for {symbol} at ${exit_price:.4f} "
+            f"({reason})"
+        )
+
+    def _match_closing_order(self, managed: dict, closed_orders: list[dict]) -> dict | None:
+        entry_time = managed.get("entry_time")
+        expected_side = Side.SELL if managed.get("side") == Side.BUY else Side.BUY
+
+        candidates: list[dict] = []
+        for order in closed_orders:
+            side = str(order.get("side", "")).lower()
+            if side != expected_side.value:
+                continue
+            order_dt = self._order_datetime(order)
+            if entry_time and order_dt and order_dt < entry_time:
+                continue
+            candidates.append(order)
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda order: self._order_datetime(order) or datetime.min,
+            reverse=True,
+        )
+        return candidates[0]
+
+    @staticmethod
+    def _order_datetime(order: dict) -> datetime | None:
+        raw_dt = order.get("datetime")
+        if raw_dt:
+            try:
+                return datetime.fromisoformat(str(raw_dt).replace("Z", "+00:00")).replace(tzinfo=None)
+            except ValueError:
+                pass
+
+        timestamp = order.get("timestamp") or order.get("lastTradeTimestamp")
+        if timestamp:
+            try:
+                return datetime.utcfromtimestamp(float(timestamp) / 1000.0)
+            except (TypeError, ValueError, OSError):
+                return None
+        return None
+
+    @staticmethod
+    def _infer_exchange_close_reason(order: dict) -> str:
+        info = order.get("info", {}) if isinstance(order.get("info"), dict) else {}
+        stop_order_type = str(info.get("stopOrderType", "")).lower()
+        create_type = str(info.get("createType", "")).lower()
+        trigger_price = (
+            order.get("triggerPrice")
+            or order.get("stopLossPrice")
+            or info.get("triggerPrice")
+        )
+
+        if "stoploss" in stop_order_type or "stoploss" in create_type:
+            return "Exchange stop-loss triggered"
+        if trigger_price:
+            return "Exchange trigger order executed"
+        if info.get("reduceOnly") or order.get("reduceOnly"):
+            return "Exchange reduce-only close"
+        return "Position closed on exchange"
 
     def _close_position(self, position, reason: str):
         """Close a position and record the trade."""

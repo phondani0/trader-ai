@@ -14,6 +14,7 @@ Capabilities (not conditionals):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -67,6 +68,16 @@ class BaseBroker(ABC):
     def get_equity(self) -> float:
         """Get total account equity."""
         ...
+
+    @property
+    def uses_exchange_managed_stops(self) -> bool:
+        """
+        Whether stop-loss protection is attached to the position/order at the exchange.
+
+        Brokers that return True should not receive a second synthetic stop order from
+        the engine after entry.
+        """
+        return False
 
     # ─── Orders ───────────────────────────────────────────────────
 
@@ -187,3 +198,16 @@ class BaseBroker(ABC):
             stop_price=stop_price,
             strategy_name=strategy_name,
         )
+
+    def fetch_recent_closed_orders(
+        self,
+        symbol: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Optional broker hook for inspecting recent closed orders/fills.
+
+        Runtime reconciliation uses this to record exchange-side exits such as
+        exchange-managed stop losses.
+        """
+        return []

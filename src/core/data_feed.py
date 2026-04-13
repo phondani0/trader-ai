@@ -46,6 +46,9 @@ class DataFeed:
         self.max_bars_per_request = int(
             config.get("data", {}).get("max_bars_per_request", 1000)
         )
+        self.refresh_overlap_bars = int(
+            config.get("data", {}).get("refresh_overlap_bars", 400)
+        )
 
         self._cache: dict[str, pd.DataFrame] = {}
         self._last_update: dict[str, datetime] = {}
@@ -65,6 +68,9 @@ class DataFeed:
             cached = self.indicator_pipeline.enrich(self._cache[symbol], strategies)
             self._cache[symbol] = cached
             return cached
+
+        if force_refresh and symbol in self._cache and not self._cache[symbol].empty:
+            return self._refresh_cached_data(symbol, strategies=strategies)
 
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=self.lookback_days)
@@ -146,6 +152,48 @@ class DataFeed:
     @property
     def cached_symbols(self) -> list[str]:
         return list(self._cache.keys())
+
+    def _refresh_cached_data(
+        self,
+        symbol: str,
+        *,
+        strategies: Sequence | None = None,
+    ) -> pd.DataFrame:
+        cached = self._cache.get(symbol)
+        if cached is None or cached.empty:
+            end_date = datetime.utcnow()
+            start_date = end_date - timedelta(days=self.lookback_days)
+            return self.get_historical_range(
+                symbol,
+                start_date,
+                end_date,
+                strategies=strategies,
+                cache_symbol=symbol,
+            )
+
+        overlap_bars = max(50, self.refresh_overlap_bars)
+        overlap_index = max(0, len(cached) - overlap_bars)
+        start_date = cached.index[overlap_index].to_pydatetime()
+        end_date = datetime.utcnow()
+
+        logger.info(
+            f"Refreshing cached range for {symbol}: {start_date} to {end_date}"
+        )
+        recent_raw = self._fetch_range(symbol, start_date, end_date)
+        if recent_raw.empty:
+            return cached
+
+        history_prefix = cached.loc[cached.index < start_date, ["open", "high", "low", "close", "volume"]]
+        combined = pd.concat([history_prefix, recent_raw])
+        combined = combined[~combined.index.duplicated(keep="last")]
+        combined.sort_index(inplace=True)
+
+        cutoff = end_date - timedelta(days=self.lookback_days)
+        combined = combined.loc[combined.index >= cutoff]
+        enriched = self.indicator_pipeline.enrich(combined, strategies)
+        self._cache[symbol] = enriched
+        self._last_update[symbol] = datetime.utcnow()
+        return enriched
 
     def _fetch_range(
         self,

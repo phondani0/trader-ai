@@ -45,6 +45,25 @@ discovery:
   min_trade_score: 3.0
   top_n: 5
   candidate_ttl_minutes: 30
+  dynamic_monitor_size: 10
+  liquid_universe_size: 30
+  feature_timeframe: 5Min
+  feature_window_bars: 96
+  breakout_lookback_bars: 20
+  momentum_lookback_bars: 12
+  acceleration_lookback_bars: 3
+  relative_volume_lookback_bars: 20
+  min_relative_volume: 1.15
+  min_intraday_momentum_pct: 1.0
+  min_breakout_score: 1.0
+  max_spread_bps: 35.0
+  score_weights:
+    liquidity: 0.2
+    change_24h: 0.15
+    momentum_1h: 0.25
+    acceleration_15m: 0.2
+    breakout: 0.15
+    relative_volume: 0.05
 
 benchmarking:
   approvals_path: data/strategy_approvals.json
@@ -66,6 +85,7 @@ data:
   lookback_days: 60              # Historical data for indicators
   database_path: data/trader.db
   max_bars_per_request: 1000     # Keep per-request limits exchange-friendly; DataFeed paginates as needed
+  refresh_overlap_bars: 400      # Re-fetch only the recent tail once symbols are cached
 
 watchlist:
   source: config

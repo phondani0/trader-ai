@@ -9,10 +9,16 @@ from src.core.models import Order, OrderType, OrderStatus, Position, Side
 
 
 class StubBroker(BaseBroker):
-    def __init__(self, equity: float = 10000.0, tickers: dict | None = None):
+    def __init__(
+        self,
+        equity: float = 10000.0,
+        tickers: dict | None = None,
+        ohlcv: dict[str, pd.DataFrame] | None = None,
+    ):
         self.equity = equity
         self.buying_power = equity
         self.tickers = tickers or {}
+        self.ohlcv = ohlcv or {}
         self.positions: list[Position] = []
         self.orders: list[Order] = []
 
@@ -63,7 +69,15 @@ class StubBroker(BaseBroker):
         return True
 
     def fetch_ohlcv(self, symbol: str, timeframe: str, limit: int = 1000, since=None) -> pd.DataFrame:
-        return pd.DataFrame()
+        frame = self.ohlcv.get(symbol)
+        if frame is None:
+            return pd.DataFrame()
+        if since is not None:
+            since_dt = pd.to_datetime(since, unit="ms")
+            frame = frame.loc[frame.index >= since_dt]
+        if limit and len(frame) > limit:
+            frame = frame.tail(limit)
+        return frame.copy()
 
     def fetch_ticker(self, symbol: str) -> dict:
         return self.tickers.get(symbol, {"last": 0.0, "bid": 0.0, "ask": 0.0})

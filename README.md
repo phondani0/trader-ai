@@ -30,9 +30,9 @@ Data Layer -> Intelligence Layer -> Strategy Layer -> Risk Layer -> Execution
 
 ## Intelligence Layer
 
-- Discovery scanner ranks sudden movers by price change and liquidity.
+- Discovery scanner now builds a dynamic liquid universe from exchange-wide tickers, then enriches shortlist symbols with 15m/1h momentum, relative volume, and breakout context.
 - Discovery journal deduplicates repeated scans, persists momentum discoveries, and audits them at 1h, 4h, and 24h.
-- The tradable universe is now the core watchlist plus recent high-score discovery candidates.
+- The tradable universe is now the core watchlist plus a rotating dynamic universe plus recent high-score discovery candidates.
 - Regime detector gates strategies by trend strength and volatility.
 - Passive parameter suggestions are generated from recent discovery outcomes and completed trades.
 - News sentiment code exists as future-facing scaffolding, not a live execution filter yet.
@@ -84,7 +84,7 @@ Run commands with `uv run <command>`.
 For the default CCXT crypto path:
 
 - Strategy scan runs every minute.
-- Discovery scan runs every 10 minutes by default.
+- Discovery scan runs every 10 minutes by default and can pull in non-watchlist symbols from the broader liquid universe.
 - Discovery journal review runs every 30 minutes.
 - Daily summary runs at `00:05 UTC`.
 - Daily risk reset runs at `00:10 UTC`.
@@ -117,6 +117,13 @@ The benchmark output now includes:
 - curated benchmark intent for market profile and expected execution regimes
 - market-profile capability summaries instead of only one global score
 - deployable regime lists that the runtime can use to gate strategies
+
+The discovery scanner now includes:
+
+- exchange-wide liquid-universe ranking instead of only static watchlists
+- dynamic monitoring symbols for breakout scouting
+- intraday burst features from recent OHLCV
+- richer discovery metadata persisted to SQLite for later learning
 
 ## Optional Alpaca Adapter
 
