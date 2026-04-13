@@ -35,6 +35,7 @@ from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
+from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
 from src.strategies.vwap_reversion import VWAPReversionStrategy
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -58,6 +59,9 @@ def load_strategies() -> dict:
         "rsi_divergence": RSIDivergenceStrategy(strat_config.get("rsi_divergence", {})),
         "ema_crossover": EMACrossoverStrategy(strat_config.get("ema_crossover", {})),
         "donchian_breakout": DonchianBreakoutStrategy(strat_config.get("donchian_breakout", {})),
+        "volume_weighted_tsmom": VolumeWeightedTSMomentumStrategy(
+            strat_config.get("volume_weighted_tsmom", {})
+        ),
         "chart_patterns": ChartPatternStrategy(strat_config.get("chart_patterns", {})),
     }
 
@@ -91,14 +95,25 @@ def apply_strategy_approvals(
 ) -> list:
     approved_strategies = []
     for strategy in strategies:
+        if approvals and strategy.name not in approvals:
+            logger.info(
+                f"Skipping unbenchmarked strategy in live-style backtest: {strategy.name}"
+            )
+            continue
+
         approval = approvals.get(strategy.name, {})
         deployable_regimes = approval.get("deployable_regimes")
         deployable_market_profiles = approval.get("deployable_market_profiles")
+        deployable_market_biases = approval.get("deployable_market_biases")
         if deployable_regimes is not None:
             strategy.set_benchmark_approved_regimes(deployable_regimes)
         if deployable_market_profiles is not None:
             strategy.set_benchmark_approved_market_profiles(
                 deployable_market_profiles
+            )
+        if deployable_market_biases is not None:
+            strategy.set_benchmark_approved_market_biases(
+                deployable_market_biases
             )
 
         if approval and not approval.get("approved", False) and not deployable_regimes:

@@ -44,6 +44,35 @@ class NoEntryStrategy(BaseStrategy):
 
 
 class SignalAggregatorDiagnosticsTest(unittest.TestCase):
+    def test_market_profile_window_scales_with_bar_interval(self):
+        strategy = NoEntryStrategy({"enabled": True, "regime": ["all"]})
+        aggregator = SignalAggregator(
+            strategies=[strategy],
+            regime_detector=RegimeDetector(),
+        )
+
+        start = datetime.utcnow() - timedelta(minutes=30 * 2999)
+        rows = []
+        for idx in range(3000):
+            ts = start + timedelta(minutes=30 * idx)
+            rows.append(
+                {
+                    "timestamp": ts,
+                    "open": 100.0,
+                    "high": 101.0,
+                    "low": 99.0,
+                    "close": 100.0,
+                    "volume": 1_000,
+                }
+            )
+        df = pd.DataFrame(rows)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df.set_index("timestamp", inplace=True)
+
+        profile_df = aggregator.market_profile_window(df)
+
+        self.assertEqual(len(profile_df), 2160)
+
     def test_diagnose_symbol_reports_market_profile_gate(self):
         strategy = NoEntryStrategy(
             {"enabled": True, "regime": [MarketRegime.TRENDING_LOW_VOL.value]}
@@ -63,6 +92,27 @@ class SignalAggregatorDiagnosticsTest(unittest.TestCase):
         self.assertEqual(diagnosis["status"], "fully_gated")
         self.assertEqual(diagnosis["regime"], MarketRegime.TRENDING_LOW_VOL.value)
         self.assertIn("market_profile_mismatch", diagnosis["blocked_reasons"])
+
+    def test_diagnose_symbol_reports_market_bias_gate(self):
+        strategy = NoEntryStrategy(
+            {"enabled": True, "regime": [MarketRegime.TRENDING_LOW_VOL.value]}
+        )
+        strategy.set_benchmark_approved_market_profiles(["trend"])
+        strategy.set_benchmark_approved_market_biases(["bullish"])
+        aggregator = SignalAggregator(
+            strategies=[strategy],
+            regime_detector=RegimeDetector(),
+        )
+
+        diagnosis = aggregator.diagnose_symbol(
+            "BTC/USDT:USDT",
+            _build_regime_frame(),
+            market_profile="trend",
+            market_bias="bearish",
+        )
+
+        self.assertEqual(diagnosis["status"], "fully_gated")
+        self.assertIn("market_bias_mismatch", diagnosis["blocked_reasons"])
 
     def test_diagnose_symbol_reports_eligible_no_entry(self):
         strategy = NoEntryStrategy(

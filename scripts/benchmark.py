@@ -27,6 +27,7 @@ from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
+from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
 from src.strategies.vwap_reversion import VWAPReversionStrategy
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -55,6 +56,7 @@ def init_strategies(strategy_filter: str | None = None) -> list:
         "rsi_divergence": RSIDivergenceStrategy,
         "ema_crossover": EMACrossoverStrategy,
         "donchian_breakout": DonchianBreakoutStrategy,
+        "volume_weighted_tsmom": VolumeWeightedTSMomentumStrategy,
         "chart_patterns": ChartPatternStrategy,
     }
 
@@ -188,6 +190,7 @@ def derive_strategy_deployment(
     target_regimes = set(strategy_targets.get(strategy_name, []))
     deployable_regimes: set[str] = set()
     deployable_market_profiles: set[str] = set()
+    deployable_market_biases: set[str] = set()
     approved_windows: list[str] = []
     reasons: list[str] = []
 
@@ -202,6 +205,7 @@ def derive_strategy_deployment(
         if strategy_metrics.get("approved") and overlap:
             deployable_regimes.update(overlap)
             deployable_market_profiles.add(window.get("market_profile", "mixed"))
+            deployable_market_biases.add(window.get("market_bias", "flat"))
             approved_windows.append(window["name"])
             continue
 
@@ -223,6 +227,7 @@ def derive_strategy_deployment(
         "reason": reason,
         "deployable_regimes": sorted(deployable_regimes),
         "deployable_market_profiles": sorted(deployable_market_profiles),
+        "deployable_market_biases": sorted(deployable_market_biases),
         "approved_windows": approved_windows,
     }
 
@@ -276,8 +281,14 @@ def summarize_selected_rollups(
     return summarize_rollup(engine, symbol, combined)
 
 
-def run_benchmark(strategy_filter: str = None):
+def run_benchmark(
+    strategy_filter: str = None,
+    timeframe: str | None = None,
+):
     settings = load_settings()
+    if timeframe:
+        settings.setdefault("data", {})
+        settings["data"]["candle_interval"] = timeframe
     regimes = load_regimes()
     strategies = init_strategies(strategy_filter)
     benchmark_cfg = settings.get("benchmarking", {})
@@ -380,6 +391,7 @@ def run_benchmark(strategy_filter: str = None):
             "end": end.isoformat(timespec="seconds"),
             "description": regime["description"],
             "market_profile": market_profile,
+            "market_bias": window_profile.get("market_bias", "flat"),
             "expected_execution_regimes": expected_execution_regimes,
             "aligned_execution_pct": aligned_execution_pct,
             "profile": window_profile,
@@ -549,6 +561,7 @@ def build_approvals_payload(
             "target_regimes": strategy_targets.get(strategy_name, []),
             "deployable_regimes": deployment["deployable_regimes"],
             "deployable_market_profiles": deployment["deployable_market_profiles"],
+            "deployable_market_biases": deployment["deployable_market_biases"],
             "approved_windows": deployment["approved_windows"],
             "global_metrics": result_metrics(global_summary),
             "deployable_metrics": (
@@ -571,9 +584,14 @@ def main():
         description="Benchmark strategies across curated crypto market regimes"
     )
     parser.add_argument("--strategy", default="all")
+    parser.add_argument(
+        "--timeframe",
+        default=None,
+        help="Override candle timeframe for this benchmark run (e.g. 30Min, 1Hour, 4Hour)",
+    )
     args = parser.parse_args()
 
-    run_benchmark(args.strategy)
+    run_benchmark(args.strategy, args.timeframe)
 
 
 if __name__ == "__main__":

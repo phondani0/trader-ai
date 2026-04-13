@@ -240,10 +240,21 @@ class RegimeDetector:
         """
         strategy_map = {
             MarketRegime.TRENDING_LOW_VOL: [
-                "supertrend", "ema_crossover", "rsi_divergence", "donchian_breakout", "chart_patterns", "orb",
+                "supertrend",
+                "ema_crossover",
+                "rsi_divergence",
+                "donchian_breakout",
+                "volume_weighted_tsmom",
+                "chart_patterns",
+                "orb",
             ],
             MarketRegime.TRENDING_HIGH_VOL: [
-                "supertrend", "rsi_divergence", "donchian_breakout", "chart_patterns", "orb",  # Fewer strategies, wider stops
+                "supertrend",
+                "rsi_divergence",
+                "donchian_breakout",
+                "volume_weighted_tsmom",
+                "chart_patterns",
+                "orb",
             ],
             MarketRegime.SIDEWAYS_LOW_VOL: [
                 "macd_bollinger", "vwap_reversion", "chart_patterns", "orb",

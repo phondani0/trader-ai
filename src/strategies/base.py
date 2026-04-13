@@ -53,6 +53,7 @@ class BaseStrategy(ABC):
         ]
         self._benchmark_approved_regimes: set[MarketRegime] | None = None
         self._benchmark_approved_market_profiles: set[str] | None = None
+        self._benchmark_approved_market_biases: set[str] | None = None
 
     @property
     @abstractmethod
@@ -120,6 +121,25 @@ class BaseStrategy(ABC):
         if not market_profile:
             return False
         return market_profile in self._benchmark_approved_market_profiles
+
+    def set_benchmark_approved_market_biases(self, biases: list[str] | None):
+        """Restrict runtime execution to benchmark-approved macro market bias."""
+        if biases is None:
+            self._benchmark_approved_market_biases = None
+            return
+        self._benchmark_approved_market_biases = {
+            str(bias)
+            for bias in biases
+            if str(bias)
+        }
+
+    def allows_market_bias(self, market_bias: str | None) -> bool:
+        """Check whether this strategy is approved for the current macro bias."""
+        if self._benchmark_approved_market_biases is None:
+            return True
+        if not market_bias:
+            return False
+        return market_bias in self._benchmark_approved_market_biases
 
     @abstractmethod
     def generate_signal(

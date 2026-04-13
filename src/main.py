@@ -59,6 +59,7 @@ from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
+from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
 from src.strategies.vwap_reversion import VWAPReversionStrategy
 
 # ─── Configuration ────────────────────────────────────────────────────
@@ -209,20 +210,36 @@ class TradingEngine:
             "rsi_divergence": RSIDivergenceStrategy,
             "ema_crossover": EMACrossoverStrategy,
             "donchian_breakout": DonchianBreakoutStrategy,
+            "volume_weighted_tsmom": VolumeWeightedTSMomentumStrategy,
             "chart_patterns": ChartPatternStrategy,
         }
 
         for name, cls in strategy_map.items():
             params = config.get(name, {"enabled": True, "regime": ["all"]})
             strategy = cls(params=params)
+            if approvals and name not in approvals:
+                strategy.enabled = False
+                logger.warning(
+                    f"  ⛔ Strategy skipped until benchmarked: {name}"
+                )
+                strategies.append(strategy)
+                status = "✅" if strategy.enabled else "⬜"
+                logger.info(f"  {status} Strategy: {name}")
+                continue
+
             approval = approvals.get(name, {})
             deployable_regimes = approval.get("deployable_regimes")
             deployable_market_profiles = approval.get("deployable_market_profiles")
+            deployable_market_biases = approval.get("deployable_market_biases")
             if deployable_regimes is not None:
                 strategy.set_benchmark_approved_regimes(deployable_regimes)
             if deployable_market_profiles is not None:
                 strategy.set_benchmark_approved_market_profiles(
                     deployable_market_profiles
+                )
+            if deployable_market_biases is not None:
+                strategy.set_benchmark_approved_market_biases(
+                    deployable_market_biases
                 )
 
             if approval and not approval.get("approved", False) and not deployable_regimes:
@@ -239,6 +256,10 @@ class TradingEngine:
                 if deployable_market_profiles:
                     logger.info(
                         f"     Macro profiles: {', '.join(deployable_market_profiles)}"
+                    )
+                if deployable_market_biases:
+                    logger.info(
+                        f"     Macro bias: {', '.join(deployable_market_biases)}"
                     )
             strategies.append(strategy)
             status = "✅" if strategy.enabled else "⬜"

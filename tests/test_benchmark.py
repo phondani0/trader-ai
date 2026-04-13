@@ -14,6 +14,7 @@ class BenchmarkDeploymentTest(unittest.TestCase):
                 {
                     "name": "Bullish Trend (Early 2024)",
                     "market_profile": "trend",
+                    "market_bias": "bullish",
                     "expected_execution_regimes": [
                         "trending_low_vol",
                         "trending_high_vol",
@@ -34,6 +35,7 @@ class BenchmarkDeploymentTest(unittest.TestCase):
             ["trending_high_vol", "trending_low_vol"],
         )
         self.assertEqual(deployment["deployable_market_profiles"], ["trend"])
+        self.assertEqual(deployment["deployable_market_biases"], ["bullish"])
 
     def test_approvals_payload_uses_deployable_metrics_for_approved_windows(self):
         class _Summary:
@@ -103,12 +105,14 @@ class BenchmarkDeploymentTest(unittest.TestCase):
                 {
                     "name": "Bull",
                     "market_profile": "trend",
+                    "market_bias": "bullish",
                     "expected_execution_regimes": ["trending_low_vol", "trending_high_vol"],
                     "strategies": {"supertrend": {"approved": False, "reason": "bad"}},
                 },
                 {
                     "name": "Breakout",
                     "market_profile": "breakout",
+                    "market_bias": "bullish",
                     "expected_execution_regimes": ["trending_low_vol", "trending_high_vol"],
                     "strategies": {"supertrend": {"approved": True, "reason": "approved"}},
                 },
@@ -117,6 +121,10 @@ class BenchmarkDeploymentTest(unittest.TestCase):
 
         metrics = approvals["strategies"]["supertrend"]["deployable_metrics"]
         self.assertEqual(metrics["net_roi_pct"], 4.5)
+        self.assertEqual(
+            approvals["strategies"]["supertrend"]["deployable_market_biases"],
+            ["bullish"],
+        )
         self.assertEqual(
             approvals["strategies"]["supertrend"]["global_metrics"]["net_roi_pct"],
             -0.5,

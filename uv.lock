@@ -2036,6 +2036,7 @@ dependencies = [
     { name = "rich" },
     { name = "scipy" },
     { name = "sqlalchemy" },
+    { name = "tzdata" },
     { name = "uvicorn" },
 ]
 
@@ -2067,6 +2068,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.3.4" },
     { name = "scipy", specifier = ">=1.13.1" },
     { name = "sqlalchemy", specifier = ">=2.0.49" },
+    { name = "tzdata", specifier = ">=2026.1" },
     { name = "uvicorn", specifier = ">=0.39.0" },
 ]
 

@@ -224,7 +224,7 @@ class BacktestEngine:
                 continue
 
             if cached_market_profile is None or (i - min_lookback) % market_profile_refresh_bars == 0:
-                profile_window = window.tail(aggregator._market_profile_lookback_bars)
+                profile_window = aggregator.market_profile_window(window)
                 cached_market_profile = self.regime_detector.profile_window(
                     profile_window
                 ).get("detected_market_profile")

@@ -2,7 +2,6 @@
 name = "trader-ai"
 version = "1.0.0"
 description = "Autonomous crypto trading system with CCXT execution, journaling, and regime-aware backtests"
-readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.5",
@@ -27,6 +26,7 @@ dependencies = [
     "scipy>=1.13.1",
     "sqlalchemy>=2.0.49",
     "uvicorn>=0.39.0",
+    "tzdata>=2026.1",
 ]
 
 [project.scripts]
