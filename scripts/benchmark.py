@@ -23,6 +23,7 @@ from src.strategies.chart_patterns import ChartPatternStrategy
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
+from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
@@ -41,12 +42,13 @@ def load_regimes() -> list:
         return yaml.safe_load(f)["regimes"]
 
 
-def init_strategies() -> list:
+def init_strategies(strategy_filter: str | None = None) -> list:
     with open(PROJECT_ROOT / "config" / "strategies.yaml", "r") as f:
         config = yaml.safe_load(f)
 
     strategy_map = {
         "macd_bollinger": MACDBollingerStrategy,
+        "macd_bollinger_inverse": MACDBollingerInverseStrategy,
         "vwap_reversion": VWAPReversionStrategy,
         "supertrend": SupertrendStrategy,
         "orb": ORBStrategy,
@@ -60,6 +62,8 @@ def init_strategies() -> list:
     for name, cls in strategy_map.items():
         params = config.get(name, {"enabled": True})
         strategies.append(cls(params=params))
+    if strategy_filter and strategy_filter != "all":
+        return [strategy for strategy in strategies if strategy.name == strategy_filter]
     return [strategy for strategy in strategies if strategy.enabled]
 
 
@@ -133,6 +137,17 @@ def result_metrics(summary) -> dict:
     }
 
 
+def empty_metrics() -> dict:
+    return {
+        "trades": 0,
+        "net_roi_pct": 0.0,
+        "expectancy_pct": 0.0,
+        "profit_factor": 0.0,
+        "max_drawdown_pct": 0.0,
+        "win_rate_pct": 0.0,
+    }
+
+
 def resolve_window_market_profile(regime_cfg: dict, window_profile: dict) -> str:
     return regime_cfg.get("market_profile") or window_profile.get(
         "detected_market_profile",
@@ -152,6 +167,17 @@ def resolve_expected_execution_regimes(
         "dominant_regime"
     )
     return [dominant] if dominant else []
+
+
+def execution_alignment_pct(
+    expected_execution_regimes: list[str],
+    window_profile: dict,
+) -> float:
+    mix = window_profile.get("execution_regime_mix_pct", {}) or {}
+    return round(
+        sum(float(mix.get(regime, 0.0) or 0.0) for regime in expected_execution_regimes),
+        2,
+    )
 
 
 def derive_strategy_deployment(
@@ -202,10 +228,19 @@ def derive_strategy_deployment(
 
 
 def log_window_profile(profile: dict):
+    execution_mix = profile.get("execution_regime_mix_pct", {}) or {}
+    mix_items = sorted(
+        execution_mix.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    mix_summary = ", ".join(
+        f"{name}={pct:.1f}%"
+        for name, pct in mix_items[:4]
+    ) or "-"
     print(
         "  Market Profile: "
         f"Detected={profile['detected_market_profile']} ({profile['market_bias']}) | "
-        f"Dominant Execution={profile['dominant_execution_regime']} | "
         f"Return={profile['window_return_pct']:+.2f}% | "
         f"Realized Vol={profile['realized_vol_pct']:.2f}% | "
         f"Median ADX={profile['median_adx']:.2f} | "
@@ -213,12 +248,38 @@ def log_window_profile(profile: dict):
         f"Trend Efficiency={profile['trend_efficiency_pct']:.2f}% | "
         f"Breakout Rate={profile['breakout_rate_pct']:.2f}%"
     )
+    print(f"  Observed Execution Mix: {mix_summary}")
+
+
+def summarize_selected_rollups(
+    engine,
+    symbol: str,
+    strategy_window_rollups: dict[str, dict],
+    selected_windows: list[str],
+):
+    combined = new_rollup()
+    for window_name in selected_windows:
+        rollup = strategy_window_rollups.get(window_name)
+        if not rollup:
+            continue
+        combined["trades"].extend(rollup["trades"])
+        combined["windows"].extend(rollup["windows"])
+        combined["window_names"].extend(rollup["window_names"])
+        combined["profiles"].extend(rollup["profiles"])
+        if rollup["killed_by_drawdown"]:
+            combined["killed_by_drawdown"] = True
+        combined["kill_reasons"].extend(rollup["kill_reasons"])
+
+    if not combined["windows"]:
+        return None
+
+    return summarize_rollup(engine, symbol, combined)
 
 
 def run_benchmark(strategy_filter: str = None):
     settings = load_settings()
     regimes = load_regimes()
-    strategies = init_strategies()
+    strategies = init_strategies(strategy_filter)
     benchmark_cfg = settings.get("benchmarking", {})
     risk_cfg = settings.get("risk_management", {})
 
@@ -259,18 +320,21 @@ def run_benchmark(strategy_filter: str = None):
     results_matrix = []
     benchmark_windows: list[dict] = []
     strategy_rollups = {strategy.name: new_rollup() for strategy in strategies}
+    strategy_window_rollups = {strategy.name: {} for strategy in strategies}
     market_profile_rollups = {strategy.name: {} for strategy in strategies}
 
     print("\n" + "═" * 120)
     print(f"{'STRATEGY BENCHMARK SUITE':^120}")
     print("═" * 120)
+    print(f"Timeframe: {settings.get('data', {}).get('candle_interval', '5Min')}")
 
     for regime in regimes:
         name = regime["name"]
         symbol = regime["symbol"]
 
-        if regime["start_date"] == "trailing_30":
-            start = datetime.utcnow() - timedelta(days=30)
+        if str(regime["start_date"]).startswith("trailing_"):
+            trailing_days = int(str(regime["start_date"]).split("_", 1)[1])
+            start = datetime.utcnow() - timedelta(days=trailing_days)
             end = datetime.utcnow()
         else:
             start = datetime.strptime(regime["start_date"], "%Y-%m-%d")
@@ -298,10 +362,15 @@ def run_benchmark(strategy_filter: str = None):
             window_profile,
         )
         log_window_profile(window_profile)
+        aligned_execution_pct = execution_alignment_pct(
+            expected_execution_regimes,
+            window_profile,
+        )
         print(
             "  Curated Benchmark Intent: "
             f"Market={market_profile} | "
-            f"Expected Execution={', '.join(expected_execution_regimes) or '-'}"
+            f"Expected Execution={', '.join(expected_execution_regimes) or '-'} | "
+            f"Observed Alignment={aligned_execution_pct:.1f}%"
         )
 
         window_record = {
@@ -312,6 +381,7 @@ def run_benchmark(strategy_filter: str = None):
             "description": regime["description"],
             "market_profile": market_profile,
             "expected_execution_regimes": expected_execution_regimes,
+            "aligned_execution_pct": aligned_execution_pct,
             "profile": window_profile,
             "strategies": {},
         }
@@ -324,6 +394,14 @@ def run_benchmark(strategy_filter: str = None):
                 name,
                 window_profile,
             )
+            strategy_window_rollups[strategy.name][name] = {
+                "trades": list(result.trades),
+                "windows": [(result.period_start, result.period_end)],
+                "window_names": [name],
+                "profiles": [window_profile],
+                "killed_by_drawdown": result.killed_by_drawdown,
+                "kill_reasons": [result.kill_switch_reason] if result.kill_switch_reason else [],
+            }
 
             profile_bucket = market_profile_rollups[strategy.name].setdefault(
                 market_profile,
@@ -342,7 +420,7 @@ def run_benchmark(strategy_filter: str = None):
                 {
                     "Window": name,
                     "Market Profile": market_profile,
-                    "Dominant Execution": window_profile["dominant_execution_regime"],
+                    "Observed Alignment %": f"{aligned_execution_pct:.1f}%",
                     "Strategy": strategy.name,
                     "Trades": len(result.trades),
                     "Win Rate": f"{result.win_rate_pct:.1f}%",
@@ -398,6 +476,7 @@ def run_benchmark(strategy_filter: str = None):
     approvals = build_approvals_payload(
         engine,
         strategy_rollups,
+        strategy_window_rollups,
         market_profile_capabilities,
         strategy_targets,
         benchmark_cfg,
@@ -416,11 +495,14 @@ def run_benchmark(strategy_filter: str = None):
     for strategy_name, approval in approvals["strategies"].items():
         verdict = "APPROVED" if approval["approved"] else "BLOCKED"
         deployable = ", ".join(approval["deployable_regimes"]) or "-"
+        display_metrics = (
+            approval["deployable_metrics"] if approval["approved"] else approval["global_metrics"]
+        )
         print(
-            f"  {strategy_name:<15} | {verdict:<8} | ROI: {approval['metrics']['net_roi_pct']:>7.2f}% | "
-            f"Expectancy: {approval['metrics']['expectancy_pct']:>6.2f}% | "
-            f"PF: {approval['metrics']['profit_factor']:<6} | "
-            f"MDD: {approval['metrics']['max_drawdown_pct']:>6.2f}% | "
+            f"  {strategy_name:<15} | {verdict:<8} | ROI: {display_metrics['net_roi_pct']:>7.2f}% | "
+            f"Expectancy: {display_metrics['expectancy_pct']:>6.2f}% | "
+            f"PF: {display_metrics['profit_factor']:<6} | "
+            f"MDD: {display_metrics['max_drawdown_pct']:>6.2f}% | "
             f"Deployable Regimes: {deployable} | "
             f"Reason: {approval['reason']}"
         )
@@ -433,6 +515,7 @@ def run_benchmark(strategy_filter: str = None):
 def build_approvals_payload(
     engine,
     strategy_rollups: dict[str, dict],
+    strategy_window_rollups: dict[str, dict],
     market_profile_capabilities: dict[str, dict],
     strategy_targets: dict[str, list[str]],
     benchmark_cfg: dict,
@@ -447,11 +530,17 @@ def build_approvals_payload(
     }
 
     for strategy_name, rollup in strategy_rollups.items():
-        summary = summarize_rollup(engine, strategy_name, rollup)
+        global_summary = summarize_rollup(engine, strategy_name, rollup)
         deployment = derive_strategy_deployment(
             strategy_name,
             strategy_targets,
             benchmark_windows,
+        )
+        deployable_summary = summarize_selected_rollups(
+            engine,
+            strategy_name,
+            strategy_window_rollups.get(strategy_name, {}),
+            deployment["approved_windows"],
         )
 
         payload["strategies"][strategy_name] = {
@@ -461,7 +550,17 @@ def build_approvals_payload(
             "deployable_regimes": deployment["deployable_regimes"],
             "deployable_market_profiles": deployment["deployable_market_profiles"],
             "approved_windows": deployment["approved_windows"],
-            "metrics": result_metrics(summary),
+            "global_metrics": result_metrics(global_summary),
+            "deployable_metrics": (
+                result_metrics(deployable_summary)
+                if deployable_summary is not None
+                else empty_metrics()
+            ),
+            "metrics": (
+                result_metrics(deployable_summary)
+                if deployment["approved"] and deployable_summary is not None
+                else result_metrics(global_summary)
+            ),
         }
 
     return payload

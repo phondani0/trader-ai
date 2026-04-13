@@ -8,7 +8,7 @@
 macd_bollinger:
   enabled: true
   regime: ["sideways_low_vol", "sideways_high_vol"]
-  timeframe: 5Min
+  timeframe: 4Hour
   # MACD parameters
   macd_fast: 12
   macd_slow: 26
@@ -21,10 +21,27 @@ macd_bollinger:
   take_profit_rr_ratio: 2.0       # Risk:Reward 1:2
   max_position_pct: 15
 
+macd_bollinger_inverse:
+  enabled: false
+  regime: ["trending_low_vol", "trending_high_vol"]
+  timeframe: 4Hour
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bb_period: 20
+  bb_std_dev: 2.2
+  trend_sma: 50
+  bb_width_lookback: 20
+  bb_width_expansion_factor: 1.0
+  breakout_buffer_pct: 0.0
+  stop_loss_atr_multiplier: 1.5
+  take_profit_rr_ratio: 2.5
+  max_position_pct: 15
+
 vwap_reversion:
   enabled: true
   regime: ["sideways_low_vol"]
-  timeframe: 5Min
+  timeframe: 4Hour
   # VWAP deviation threshold
   vwap_std_entry: 1.2
   vwap_std_exit: 0.5              # Exit when price returns near VWAP
@@ -41,7 +58,7 @@ vwap_reversion:
 supertrend:
   enabled: true
   regime: ["trending_low_vol", "trending_high_vol"]
-  timeframe: 5Min
+  timeframe: 4Hour
   # Supertrend parameters
   atr_period: 14
   atr_multiplier: 2.5
@@ -78,7 +95,7 @@ orb:
 rsi_divergence:
   enabled: true
   regime: ["trending_low_vol", "trending_high_vol"]
-  timeframe: 5Min
+  timeframe: 4Hour
   rsi_period: 14
   lookback_bars: 30               # Bars to look back for divergence
   min_swing_pct: 0.3              # Min price swing to qualify
@@ -98,7 +115,7 @@ rsi_divergence:
 ema_crossover:
   enabled: true
   regime: ["trending_low_vol"]
-  timeframe: 5Min
+  timeframe: 4Hour
   fast_ema: 20
   slow_ema: 50
   long_term_ema: 200
@@ -117,7 +134,7 @@ ema_crossover:
 donchian_breakout:
   enabled: false
   regime: ["trending_low_vol", "trending_high_vol"]
-  timeframe: 5Min
+  timeframe: 4Hour
   channel_period: 20
   trend_ema_period: 200
   atr_period: 14

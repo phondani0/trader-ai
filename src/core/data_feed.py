@@ -20,6 +20,7 @@ _TIMEFRAME_MAP = {
     "15Min": "15m",
     "30Min": "30m",
     "1Hour": "1h",
+    "4Hour": "4h",
     "1Day": "1d",
 }
 
@@ -29,6 +30,7 @@ _TIMEFRAME_MINUTES = {
     "15m": 15,
     "30m": 30,
     "1h": 60,
+    "4h": 240,
     "1d": 1440,
 }
 
@@ -125,14 +127,21 @@ class DataFeed:
                 result[symbol] = pd.DataFrame()
         return result
 
-    def get_latest_price(self, symbol: str) -> Optional[float]:
+    def get_latest_price(
+        self,
+        symbol: str,
+        *,
+        prefer_live: bool = False,
+    ) -> Optional[float]:
         """Return the latest cached close or fallback ticker price."""
-        if symbol in self._cache and not self._cache[symbol].empty:
+        if not prefer_live and symbol in self._cache and not self._cache[symbol].empty:
             return float(self._cache[symbol]["close"].iloc[-1])
         try:
             ticker = self.broker.fetch_ticker(symbol)
             return float(ticker.get("last", 0.0) or 0.0)
         except Exception:
+            if symbol in self._cache and not self._cache[symbol].empty:
+                return float(self._cache[symbol]["close"].iloc[-1])
             return None
 
     def get_vwap(self, symbol: str) -> Optional[float]:

@@ -25,6 +25,7 @@ _TIMEFRAME_MAP = {
     "15Min": "15m",
     "30Min": "30m",
     "1Hour": "1h",
+    "4Hour": "4h",
     "1Day": "1d",
 }
 

@@ -40,6 +40,15 @@ class PaginatedBroker(StubBroker):
 
 
 class DataFeedTest(unittest.TestCase):
+    def test_four_hour_timeframe_mapping(self):
+        data_feed = DataFeed(
+            broker=StubBroker(),
+            config={"data": {"candle_interval": "4Hour", "lookback_days": 30}},
+        )
+
+        self.assertEqual(data_feed.timeframe, "4h")
+        self.assertEqual(data_feed._timeframe_delta_ms, 240 * 60 * 1000)
+
     def test_get_data_paginates_beyond_one_thousand_bars(self):
         symbol = "BTC/USDT:USDT"
         end_time = datetime.utcnow()

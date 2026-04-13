@@ -31,6 +31,7 @@ from src.strategies.chart_patterns import ChartPatternStrategy
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
+from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
@@ -50,6 +51,7 @@ def load_strategies() -> dict:
 
     return {
         "macd_bollinger": MACDBollingerStrategy(strat_config.get("macd_bollinger", {})),
+        "macd_bollinger_inverse": MACDBollingerInverseStrategy(strat_config.get("macd_bollinger_inverse", {})),
         "vwap_reversion": VWAPReversionStrategy(strat_config.get("vwap_reversion", {})),
         "supertrend": SupertrendStrategy(strat_config.get("supertrend", {})),
         "orb": ORBStrategy(strat_config.get("orb", {})),
@@ -113,9 +115,9 @@ def apply_strategy_approvals(
 
 def run_backtest(
     symbol: str,
-    days: int,
+    days: int | None,
     strategy_name: str = "all",
-    timeframe: str = "5Min",
+    timeframe: str | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
 ):
@@ -131,9 +133,15 @@ def run_backtest(
         format="<green>{time:HH:mm:ss}</green> | <level>{message}</level>",
     )
 
-    logger.info(f"═══ Backtesting {symbol} — {days} days — {strategy_name} ═══")
-
     settings = load_settings()
+    if days is None:
+        days = int(settings.get("data", {}).get("lookback_days", 30))
+    if timeframe is None:
+        timeframe = str(settings.get("data", {}).get("candle_interval", "5Min"))
+
+    logger.info(
+        f"═══ Backtesting {symbol} — {days} days — {strategy_name} — {timeframe} ═══"
+    )
     risk_config = settings.get("risk_management", {})
     data_config = dict(settings.get("data", {}))
     data_config.update({"candle_interval": timeframe, "lookback_days": days})
@@ -277,15 +285,31 @@ def _parse_datetime(value: str) -> datetime:
 
 
 def main():
+    settings = load_settings()
     parser = argparse.ArgumentParser(description="Backtest trading strategies")
     parser.add_argument(
         "--symbol",
         default="BTC/USDT:USDT",
         help="Symbol to backtest (defaults to BTC/USDT:USDT)",
     )
-    parser.add_argument("--days", type=int, default=30, help="Number of days to backtest")
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=None,
+        help=(
+            "Number of days to backtest "
+            f"(defaults to config data.lookback_days={settings.get('data', {}).get('lookback_days', 30)})"
+        ),
+    )
     parser.add_argument("--strategy", default="all", help="Strategy name or 'all'")
-    parser.add_argument("--timeframe", default="5Min", help="Candle timeframe")
+    parser.add_argument(
+        "--timeframe",
+        default=None,
+        help=(
+            "Candle timeframe "
+            f"(defaults to config data.candle_interval={settings.get('data', {}).get('candle_interval', '5Min')})"
+        ),
+    )
     parser.add_argument(
         "--from",
         dest="from_date",

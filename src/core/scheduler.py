@@ -16,11 +16,29 @@ from typing import Callable
 import pytz
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
 from src.core.base_broker import BaseBroker
 
 ET = pytz.timezone("US/Eastern")
+
+_TIMEFRAME_MINUTES = {
+    "1Min": 1,
+    "5Min": 5,
+    "15Min": 15,
+    "30Min": 30,
+    "1Hour": 60,
+    "4Hour": 240,
+    "1Day": 1440,
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+}
 
 
 class MarketScheduler:
@@ -28,7 +46,7 @@ class MarketScheduler:
     Schedules bot tasks around market hours.
 
     Automatically adapts based on broker capabilities:
-        - 24/7 broker → continuous 1-minute scan loop
+        - 24/7 broker → config-driven scan loop aligned to candle closes
         - Session broker → NYSE market hours lifecycle
     """
 
@@ -36,6 +54,18 @@ class MarketScheduler:
         self.broker = broker
         self.config = config
         self.scheduler = BackgroundScheduler(timezone=ET)
+        data_cfg = config.get("data", {})
+        candle_interval = data_cfg.get("candle_interval", "5Min")
+        self.scan_interval_minutes = int(
+            data_cfg.get(
+                "scan_interval_minutes",
+                _TIMEFRAME_MINUTES.get(candle_interval, 1),
+            )
+        )
+        self.scan_buffer_minutes = int(data_cfg.get("scan_buffer_minutes", 1))
+        self.position_check_interval_minutes = int(
+            data_cfg.get("position_check_interval_minutes", 15)
+        )
 
         # Parse market hours from config
         hours = config.get("market_hours", {})
@@ -54,7 +84,7 @@ class MarketScheduler:
         Register a callback for a lifecycle event.
 
         Events:
-            pre_market, market_open, orb_end, scan_tick, discovery_scan,
+            pre_market, market_open, orb_end, scan_tick, position_check, discovery_scan,
             journal_review, stop_entries, square_off, market_close
         """
         self._callbacks[event] = callback
@@ -71,11 +101,11 @@ class MarketScheduler:
                     id="pre_market",
                     name="Daily Reset (24/7)",
                 )
-            # 24/7 continuous scan
+            # 24/7 scan cadence derived from candle timeframe/config
             if "scan_tick" in self._callbacks:
                 self.scheduler.add_job(
                     self._safe_run("scan_tick"),
-                    CronTrigger(minute="*/1", timezone=pytz.UTC),
+                    self._build_24_7_scan_trigger(),
                     id="scan_tick",
                     name="Strategy Scan Tick (24/7)",
                 )
@@ -86,6 +116,16 @@ class MarketScheduler:
                     CronTrigger(hour=0, minute=5, timezone=pytz.UTC),
                     id="market_close",
                     name="Daily Report (Midnight UTC)",
+                )
+            if "position_check" in self._callbacks:
+                self.scheduler.add_job(
+                    self._safe_run("position_check"),
+                    IntervalTrigger(
+                        minutes=self.position_check_interval_minutes,
+                        timezone=pytz.UTC,
+                    ),
+                    id="position_check",
+                    name="Position Monitor",
                 )
             self.scheduler.start()
 
@@ -107,11 +147,16 @@ class MarketScheduler:
                 interval = discovery_cfg.get("interval_minutes", 10)
                 self.scheduler.add_job(
                     self._safe_run("discovery_scan"),
-                    CronTrigger(minute=f"*/{interval}", timezone=pytz.UTC),
+                    self._build_24_7_interval_trigger(
+                        interval_minutes=int(interval),
+                        buffer_minute=self.scan_buffer_minutes,
+                    ),
                     id="discovery_scan",
                     name="Market Discovery Scanner",
                 )
-            logger.info("📅 Scheduler started — running continuously (24/7 market)")
+            logger.info(
+                f"📅 Scheduler started — 24/7 market | scan every {self.scan_interval_minutes}m"
+            )
             self._log_schedule()
             return
 
@@ -214,17 +259,25 @@ class MarketScheduler:
         discovery_cfg = self.config.get("discovery", {})
         if discovery_cfg.get("enabled", True) and "discovery_scan" in self._callbacks:
             interval = discovery_cfg.get("interval_minutes", 10)
-            self.scheduler.add_job(
-                self._safe_run("discovery_scan"),
-                CronTrigger(
-                    minute=f"*/{interval}",
-                    hour=f"{self.market_open.hour}-{self.stop_entries.hour}",
-                    day_of_week="mon-fri",
-                    timezone=ET,
-                ),
-                id="discovery_scan",
-                name="Market Discovery Scanner",
-            )
+            if int(interval) < 60 and 60 % int(interval) == 0:
+                self.scheduler.add_job(
+                    self._safe_run("discovery_scan"),
+                    CronTrigger(
+                        minute=f"*/{interval}",
+                        hour=f"{self.market_open.hour}-{self.stop_entries.hour}",
+                        day_of_week="mon-fri",
+                        timezone=ET,
+                    ),
+                    id="discovery_scan",
+                    name="Market Discovery Scanner",
+                )
+            else:
+                self.scheduler.add_job(
+                    self._safe_run("discovery_scan"),
+                    IntervalTrigger(minutes=int(interval), timezone=ET),
+                    id="discovery_scan",
+                    name="Market Discovery Scanner",
+                )
         self._log_schedule()
 
         # Journal Review (Performance Follow-up) - Global
@@ -318,6 +371,40 @@ class MarketScheduler:
         logger.info("Scheduled jobs:")
         for job in self.scheduler.get_jobs():
             logger.info(f"  📌 {job.name} → {job.trigger}")
+
+    def _build_24_7_scan_trigger(self):
+        return self._build_24_7_interval_trigger(
+            interval_minutes=self.scan_interval_minutes,
+            buffer_minute=self.scan_buffer_minutes,
+        )
+
+    @staticmethod
+    def _build_24_7_interval_trigger(interval_minutes: int, buffer_minute: int = 0):
+        interval = max(1, int(interval_minutes))
+        buffer_minute = max(0, min(int(buffer_minute), 59))
+
+        if interval < 60 and 60 % interval == 0:
+            if interval == 1:
+                return CronTrigger(minute="*", timezone=pytz.UTC)
+            start_minute = buffer_minute % interval
+            return CronTrigger(
+                minute=f"{start_minute}-59/{interval}",
+                timezone=pytz.UTC,
+            )
+
+        if interval < 1440 and interval % 60 == 0 and 1440 % interval == 0:
+            hour_step = interval // 60
+            hour_expr = "*" if hour_step == 1 else f"0-23/{hour_step}"
+            return CronTrigger(
+                hour=hour_expr,
+                minute=buffer_minute,
+                timezone=pytz.UTC,
+            )
+
+        if interval == 1440:
+            return CronTrigger(hour=0, minute=buffer_minute, timezone=pytz.UTC)
+
+        return IntervalTrigger(minutes=interval, timezone=pytz.UTC)
 
     @staticmethod
     def _parse_time(time_str: str) -> time:

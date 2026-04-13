@@ -55,6 +55,7 @@ from src.strategies.chart_patterns import ChartPatternStrategy
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
+from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
@@ -201,6 +202,7 @@ class TradingEngine:
 
         strategy_map = {
             "macd_bollinger": MACDBollingerStrategy,
+            "macd_bollinger_inverse": MACDBollingerInverseStrategy,
             "vwap_reversion": VWAPReversionStrategy,
             "supertrend": SupertrendStrategy,
             "orb": ORBStrategy,
@@ -339,8 +341,7 @@ class TradingEngine:
 
     def on_scan_tick(self):
         """
-        Main scan loop — runs every minute during market hours.
-        This is where the magic happens.
+        Main scan loop — runs on the configured scheduler cadence.
         """
         if not self._enforce_risk_guards():
             return
@@ -565,7 +566,10 @@ class TradingEngine:
                 continue
 
             # Get latest price
-            current_price = self.data_feed.get_latest_price(pos.symbol)
+            current_price = self.data_feed.get_latest_price(
+                pos.symbol,
+                prefer_live=True,
+            )
             if not current_price:
                 continue
 
@@ -812,6 +816,16 @@ class TradingEngine:
         # Clear data cache
         self.data_feed.clear_cache()
 
+    def on_position_check(self):
+        """Monitor live positions between signal scans so exits are not delayed by higher timeframes."""
+        try:
+            positions = self.broker.get_positions()
+            if not positions:
+                return
+            self._manage_positions({}, positions)
+        except Exception as e:
+            logger.error(f"Position monitor error: {e}")
+
     # ─── Main Run Loop ────────────────────────────────────────────
 
     def run(self):
@@ -823,6 +837,7 @@ class TradingEngine:
         self.scheduler.register("market_open", self.on_market_open)
         self.scheduler.register("orb_end", self.on_orb_end)
         self.scheduler.register("scan_tick", self.on_scan_tick)
+        self.scheduler.register("position_check", self.on_position_check)
         self.scheduler.register("discovery_scan", self.market_scanner.scan_for_momentum)
         self.scheduler.register("journal_review", self.journal.update_performance)
         self.scheduler.register("stop_entries", self.on_stop_entries)
@@ -837,7 +852,10 @@ class TradingEngine:
         logger.info("🤖 Bot is running — press Ctrl+C to stop")
         if self.broker.is_24_7_market:
             logger.info("Market: 24/7 crypto")
-            logger.info("Scanning every 1 minute continuously")
+            logger.info(
+                f"Signal scans every {self.scheduler.scan_interval_minutes} minutes "
+                f"with position checks every {self.scheduler.position_check_interval_minutes} minutes"
+            )
         else:
             logger.info("Market hours: 9:30 AM - 4:00 PM ET")
             logger.info("Scanning every 1 minute during market hours")
