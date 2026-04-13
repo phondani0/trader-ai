@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from src.core.backtest.engine import BacktestEngine
 from src.core.models import MarketRegime, SignalType, Side
+from src.intelligence.regime_detector import RegimeDetector
 from src.strategies.base import BaseStrategy
 from tests.helpers import build_price_frame
 
@@ -62,6 +63,25 @@ class NoSignalStrategy(BaseStrategy):
 
     def generate_signal(self, symbol, df, regime):
         return None
+
+
+class CountingRegimeDetector(RegimeDetector):
+    def __init__(self):
+        super().__init__()
+        self.profile_window_calls = 0
+
+    def detect(self, df):
+        return MarketRegime.TRENDING_HIGH_VOL
+
+    def profile_window(self, df):
+        self.profile_window_calls += 1
+        return {
+            "detected_market_profile": "breakout",
+            "market_bias": "bearish",
+        }
+
+    def get_allowed_strategies(self, regime):
+        return ["no_signal"]
 
 
 class BacktestEngineTest(unittest.TestCase):
@@ -179,6 +199,35 @@ class BacktestEngineTest(unittest.TestCase):
 
         self.assertEqual(len(result.trades), 0)
         self.assertEqual(result.final_equity, 25000.0)
+
+    def test_selector_caches_market_profile_and_bias_between_refreshes(self):
+        base_time = datetime(2024, 1, 1)
+        df = build_price_frame(
+            [
+                {
+                    "timestamp": base_time + timedelta(minutes=30 * i),
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100 + (i % 3),
+                    "volume": 1000,
+                    "adx": 30,
+                    "atr_pct": 1,
+                }
+                for i in range(75)
+            ]
+        )
+        engine = BacktestEngine(fee_pct=0.0, slippage_pct=0.0)
+        engine.regime_detector = CountingRegimeDetector()
+
+        engine.run_selector(
+            "BTC/USDT:USDT",
+            df,
+            [NoSignalStrategy({"enabled": True, "regime": ["all"]})],
+            min_lookback=50,
+        )
+
+        self.assertEqual(engine.regime_detector.profile_window_calls, 3)
 
 
 if __name__ == "__main__":

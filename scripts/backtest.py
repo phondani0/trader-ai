@@ -36,6 +36,7 @@ from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
 from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
+from src.strategies.range_reversion import RangeReversionStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
 from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
@@ -57,6 +58,7 @@ def load_strategies() -> dict:
         "macd_bollinger": MACDBollingerStrategy(strat_config.get("macd_bollinger", {})),
         "macd_bollinger_inverse": MACDBollingerInverseStrategy(strat_config.get("macd_bollinger_inverse", {})),
         "vwap_reversion": VWAPReversionStrategy(strat_config.get("vwap_reversion", {})),
+        "range_reversion": RangeReversionStrategy(strat_config.get("range_reversion", {})),
         "supertrend": SupertrendStrategy(strat_config.get("supertrend", {})),
         "orb": ORBStrategy(strat_config.get("orb", {})),
         "rsi_divergence": RSIDivergenceStrategy(strat_config.get("rsi_divergence", {})),

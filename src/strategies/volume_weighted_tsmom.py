@@ -137,6 +137,7 @@ class VolumeWeightedTSMomentumStrategy(BaseStrategy):
         )
         breakout_buffer_atr = float(self.params.get("breakout_buffer_atr", 0.05))
         stop_buffer_atr = float(self.params.get("stop_buffer_atr", 1.0))
+        pullback_touch_atr = float(self.params.get("pullback_touch_atr", 0.6))
         take_profit_rr_ratio = float(self.params.get("take_profit_rr_ratio", 3.0))
 
         breakout_high = float(
@@ -151,6 +152,8 @@ class VolumeWeightedTSMomentumStrategy(BaseStrategy):
         breakout_buffer = atr * breakout_buffer_atr
         recent_low = float(recent["low"].min())
         recent_high = float(recent["high"].max())
+        long_pullback_seen = recent_low <= (float(confirm_ema) + (atr * pullback_touch_atr))
+        short_pullback_seen = recent_high >= (float(confirm_ema) - (atr * pullback_touch_atr))
 
         long_setup = (
             close > confirm_ema > trend_ema
@@ -160,7 +163,7 @@ class VolumeWeightedTSMomentumStrategy(BaseStrategy):
             and normalized_momentum >= min_normalized_momentum
             and prev_close <= (breakout_high + breakout_buffer)
             and close > (breakout_high + breakout_buffer)
-            and recent_low <= float(confirm_ema)
+            and long_pullback_seen
             and (di_plus is None or di_minus is None or di_plus > di_minus)
         )
         if long_setup:
@@ -208,7 +211,7 @@ class VolumeWeightedTSMomentumStrategy(BaseStrategy):
             and normalized_momentum <= -min_normalized_momentum
             and prev_close >= (breakout_low - breakout_buffer)
             and close < (breakout_low - breakout_buffer)
-            and recent_high >= float(confirm_ema)
+            and short_pullback_seen
             and (di_plus is None or di_minus is None or di_minus > di_plus)
         )
         if short_setup:

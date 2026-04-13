@@ -60,6 +60,7 @@ from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
 from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
 from src.strategies.orb import ORBStrategy
+from src.strategies.range_reversion import RangeReversionStrategy
 from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
 from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
@@ -208,6 +209,7 @@ class TradingEngine:
             "macd_bollinger": MACDBollingerStrategy,
             "macd_bollinger_inverse": MACDBollingerInverseStrategy,
             "vwap_reversion": VWAPReversionStrategy,
+            "range_reversion": RangeReversionStrategy,
             "supertrend": SupertrendStrategy,
             "orb": ORBStrategy,
             "rsi_divergence": RSIDivergenceStrategy,

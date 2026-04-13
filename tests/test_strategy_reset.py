@@ -4,12 +4,14 @@ import unittest
 from datetime import datetime, timedelta
 
 import pandas as pd
+import yaml
 
 from src.core.models import MarketRegime, Side
 from src.strategies.bearish_breakdown_continuation import (
     BearishBreakdownContinuationStrategy,
 )
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
+from src.strategies.range_reversion import RangeReversionStrategy
 from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
 
 
@@ -74,6 +76,38 @@ def _build_tsmom_breakout_frame() -> pd.DataFrame:
     df["di_plus"] = 24.0
     df["di_minus"] = 12.0
     df["volume_ratio"] = 1.3
+    return df
+
+
+def _build_tsmom_research_breakout_frame() -> pd.DataFrame:
+    closes = []
+    for idx in range(260):
+        if idx < 170:
+            close = 100 + (idx * 0.22)
+        elif idx < 230:
+            close = 137.4 - ((idx - 170) * 0.18)
+        elif idx < 258:
+            close = 126.6 + ((idx - 230) * 0.32)
+        elif idx == 258:
+            close = 137.8
+        else:
+            close = 141.2
+        closes.append(close)
+
+    df = pd.DataFrame(index=_build_index(len(closes)))
+    df["close"] = closes
+    df["open"] = df["close"].shift(1).fillna(df["close"])
+    df["high"] = df["close"] + 0.45
+    df["low"] = df["close"] - 0.45
+    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
+    df["atr"] = 1.15
+    df["atr_pct"] = (df["atr"] / df["close"]) * 100
+    df["adx"] = 27.0
+    df["di_plus"] = 25.0
+    df["di_minus"] = 12.0
+    df["volume_ratio"] = 1.28
     return df
 
 
@@ -143,7 +177,124 @@ def _build_donchian_short_continuation_frame() -> pd.DataFrame:
     return df
 
 
+def _build_range_reversion_long_frame() -> pd.DataFrame:
+    closes = [100.0 + ((idx % 6) - 3) * 0.18 for idx in range(100)]
+    closes[-3] = 96.4
+    closes[-2] = 95.2
+    closes[-1] = 96.9
+
+    df = pd.DataFrame(index=_build_index(len(closes)))
+    df["close"] = closes
+    df["open"] = df["close"].shift(1).fillna(df["close"])
+    df["high"] = df["close"] + 0.45
+    df["low"] = df["close"] - 0.45
+    df.loc[df.index[-2], "low"] = 94.8
+    df["atr"] = 1.1
+    df["adx"] = 16.0
+    df["vwap"] = 100.0
+    df["rsi_14"] = 45.0
+    df.loc[df.index[-2], "rsi_14"] = 27.0
+    df.loc[df.index[-1], "rsi_14"] = 35.0
+    df["bb_lower"] = 96.1
+    df["bb_mid"] = 100.0
+    df["bb_upper"] = 103.9
+    df["bb_bandwidth"] = 0.078
+    df["bb_pct"] = 0.35
+    return df
+
+
+def _build_range_reversion_short_frame() -> pd.DataFrame:
+    closes = [100.0 + ((idx % 6) - 3) * 0.18 for idx in range(100)]
+    closes[-3] = 103.6
+    closes[-2] = 104.8
+    closes[-1] = 103.1
+
+    df = pd.DataFrame(index=_build_index(len(closes)))
+    df["close"] = closes
+    df["open"] = df["close"].shift(1).fillna(df["close"])
+    df["high"] = df["close"] + 0.45
+    df["low"] = df["close"] - 0.45
+    df.loc[df.index[-2], "high"] = 105.2
+    df["atr"] = 1.1
+    df["adx"] = 16.0
+    df["vwap"] = 100.0
+    df["rsi_14"] = 55.0
+    df.loc[df.index[-2], "rsi_14"] = 73.0
+    df.loc[df.index[-1], "rsi_14"] = 64.0
+    df["bb_lower"] = 96.1
+    df["bb_mid"] = 100.0
+    df["bb_upper"] = 103.9
+    df["bb_bandwidth"] = 0.078
+    df["bb_pct"] = 0.65
+    return df
+
+
 class StrategyResetTest(unittest.TestCase):
+    def test_volume_weighted_tsmom_config_generates_long_signal(self):
+        with open("config/strategies.yaml", "r") as fh:
+            config = yaml.safe_load(fh)
+
+        strategy = VolumeWeightedTSMomentumStrategy(config["volume_weighted_tsmom"])
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            _build_tsmom_research_breakout_frame(),
+            MarketRegime.TRENDING_LOW_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.BUY)
+
+    def test_range_reversion_generates_long_signal(self):
+        strategy = RangeReversionStrategy(
+            {
+                "enabled": True,
+                "regime": [MarketRegime.SIDEWAYS_LOW_VOL.value],
+                "bb_period": 20,
+                "bb_std_dev": 2.0,
+                "rsi_period": 14,
+                "adx_period": 14,
+                "atr_period": 14,
+                "adx_max": 23,
+                "rsi_oversold": 38,
+                "rsi_overbought": 62,
+            }
+        )
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            _build_range_reversion_long_frame(),
+            MarketRegime.SIDEWAYS_LOW_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.BUY)
+
+    def test_range_reversion_generates_short_signal(self):
+        strategy = RangeReversionStrategy(
+            {
+                "enabled": True,
+                "regime": [MarketRegime.SIDEWAYS_LOW_VOL.value],
+                "bb_period": 20,
+                "bb_std_dev": 2.0,
+                "rsi_period": 14,
+                "adx_period": 14,
+                "atr_period": 14,
+                "adx_max": 23,
+                "rsi_oversold": 38,
+                "rsi_overbought": 62,
+            }
+        )
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            _build_range_reversion_short_frame(),
+            MarketRegime.SIDEWAYS_LOW_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.SELL)
+
     def test_bearish_breakdown_continuation_generates_short_signal(self):
         strategy = BearishBreakdownContinuationStrategy(
             {

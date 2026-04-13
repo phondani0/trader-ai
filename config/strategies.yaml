@@ -55,6 +55,26 @@ vwap_reversion:
   min_vwap_distance_pct: 0.25
   max_position_pct: 10
 
+range_reversion:
+  enabled: true
+  regime: ["sideways_low_vol", "sideways_high_vol"]
+  timeframe: 30Min
+  bb_period: 20
+  bb_std_dev: 2.0
+  rsi_period: 14
+  atr_period: 14
+  adx_period: 14
+  adx_max: 23
+  max_bandwidth: 0.12
+  rsi_oversold: 38
+  rsi_overbought: 62
+  touch_tolerance_pct: 0.2
+  min_vwap_distance_pct: 1.0
+  stop_buffer_atr: 0.5
+  take_profit_blend: 0.5
+  min_rr: 2.0
+  max_position_pct: 10
+
 supertrend:
   enabled: false
   regime: ["trending_low_vol", "trending_high_vol"]
@@ -187,7 +207,7 @@ bearish_breakdown_continuation:
 volume_weighted_tsmom:
   enabled: true
   regime: ["trending_low_vol", "trending_high_vol"]
-  timeframe: 1Hour
+  timeframe: 30Min
   fast_momentum_bars: 12
   slow_momentum_bars: 48
   breakout_lookback: 20
@@ -200,8 +220,9 @@ volume_weighted_tsmom:
   slope_lookback: 12
   adx_min: 18
   volume_multiplier: 1.05
-  min_normalized_momentum: 18.0
+  min_normalized_momentum: 6.0
   breakout_buffer_atr: 0.05
+  pullback_touch_atr: 0.6
   stop_buffer_atr: 1.0
   take_profit_rr_ratio: 3.0
   max_position_pct: 15

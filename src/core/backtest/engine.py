@@ -186,6 +186,7 @@ class BacktestEngine:
         )
         market_profile_refresh_bars = 12
         cached_market_profile: str | None = None
+        cached_market_bias: str | None = None
 
         for i in range(min_lookback, len(df)):
             window = df.iloc[: i + 1]
@@ -225,14 +226,15 @@ class BacktestEngine:
 
             if cached_market_profile is None or (i - min_lookback) % market_profile_refresh_bars == 0:
                 profile_window = aggregator.market_profile_window(window)
-                cached_market_profile = self.regime_detector.profile_window(
-                    profile_window
-                ).get("detected_market_profile")
+                market_context = self.regime_detector.profile_window(profile_window)
+                cached_market_profile = market_context.get("detected_market_profile")
+                cached_market_bias = market_context.get("market_bias")
 
             signals = aggregator.generate_signals(
                 {symbol: window},
                 log_signals=False,
                 market_profiles={symbol: cached_market_profile} if cached_market_profile else None,
+                market_biases={symbol: cached_market_bias} if cached_market_bias else None,
             )
             if not signals:
                 continue

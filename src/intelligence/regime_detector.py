@@ -259,10 +259,15 @@ class RegimeDetector:
                 "orb",
             ],
             MarketRegime.SIDEWAYS_LOW_VOL: [
-                "macd_bollinger", "vwap_reversion", "chart_patterns", "orb",
+                "macd_bollinger",
+                "vwap_reversion",
+                "range_reversion",
+                "chart_patterns",
+                "orb",
             ],
             MarketRegime.SIDEWAYS_HIGH_VOL: [
-                "orb",  # Only ORB — most other strategies get eaten alive here
+                "range_reversion",
+                "orb",
             ],
             MarketRegime.UNKNOWN: [
                 "orb",  # Conservative — only the most robust strategy
