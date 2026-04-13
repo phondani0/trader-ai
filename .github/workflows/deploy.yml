@@ -1,0 +1,45 @@
+name: Deploy Trader AI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up SSH Agent
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.DO_SSH_KEY }}
+
+    - name: Copy Code to Server
+      run: |
+        rsync -avz --delete \
+          --exclude '.venv' \
+          --exclude '__pycache__' \
+          --exclude '.git' \
+          --exclude 'data/*.db' \
+          -e "ssh -o StrictHostKeyChecking=no" \
+          ./ ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/projects/trader-ai
+
+    - name: Create .env on server
+      run: |
+        echo "${{ secrets.SERVER_ENV_FILE }}" | ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "cat > /home/${{ secrets.DEPLOY_USER }}/projects/trader-ai/.env"
+
+    - name: Build & Restart Trader AI
+      run: |
+        ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+          "cd /home/${{ secrets.DEPLOY_USER }}/projects/trader-ai && \
+           # Ensure uv is installed
+           curl -LsSf https://astral.sh/uv/install.sh | sh && \
+           export PATH=\"\$HOME/.local/bin:\$PATH\" && \
+           # Sync dependencies
+           uv sync --frozen && \
+           # Restart with PM2
+           pm2 restart trader-ai || pm2 start \"uv run start\" --name trader-ai --time"
+    
