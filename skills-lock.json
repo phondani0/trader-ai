@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "skills": {
+    "backtesting-frameworks": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "d6a1704ca435018bd441ef4472e843bf6a2e9dbf3e8b75a0aae9c95e66efe7bd"
+    },
+    "backtesting-trading-strategies": {
+      "source": "jeremylongshore/claude-code-plugins-plus-skills",
+      "sourceType": "github",
+      "computedHash": "d3d31dfb5a2234936d56f9097f5f5636a0a2469b7a21ce1cfc2909f9cafbf699"
+    },
+    "tavily-research": {
+      "source": "tavily-ai/skills",
+      "sourceType": "github",
+      "computedHash": "58a32caadb010598a2faad7544dedade288c1e81e72aa550b13d83b003264062"
+    }
+  }
+}
