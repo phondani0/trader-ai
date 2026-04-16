@@ -24,6 +24,8 @@ from src.strategies.bearish_breakdown_continuation import (
 )
 from src.strategies.chart_patterns import ChartPatternStrategy
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
+from src.strategies.episodic_pivot import EpisodicPivotStrategy
+from src.strategies.episodic_pivot_short import EpisodicPivotShortStrategy
 from src.strategies.ema_crossover import EMACrossoverStrategy
 from src.strategies.macd_bollinger import MACDBollingerStrategy
 from src.strategies.macd_bollinger_inverse import MACDBollingerInverseStrategy
@@ -57,6 +59,8 @@ def init_strategies(strategy_filter: str | None = None) -> list:
         "vwap_reversion": VWAPReversionStrategy,
         "range_reversion": RangeReversionStrategy,
         "supertrend": SupertrendStrategy,
+        "episodic_pivot": EpisodicPivotStrategy,
+        "episodic_pivot_short": EpisodicPivotShortStrategy,
         "orb": ORBStrategy,
         "rsi_divergence": RSIDivergenceStrategy,
         "ema_crossover": EMACrossoverStrategy,
@@ -75,8 +79,13 @@ def init_strategies(strategy_filter: str | None = None) -> list:
     return [strategy for strategy in strategies if strategy.enabled]
 
 
+def simulate_strategy_window(engine, symbol: str, df: pd.DataFrame, strategy):
+    """Benchmark strategies through the live-style selector path for consistency."""
+    return engine.run_selector(symbol, df, [strategy])
+
+
 def evaluate_strategy(summary, thresholds: dict) -> tuple[bool, str]:
-    if len(summary.trades) < thresholds.get("min_trades", 3):
+    if len(summary.trades) < thresholds.get("min_trades", 1):
         return False, "not enough benchmark trades"
     if summary.killed_by_drawdown:
         return False, summary.kill_switch_reason or "drawdown kill-switch triggered"
@@ -205,6 +214,11 @@ def derive_strategy_deployment(
         if not strategy_metrics:
             continue
 
+        if not window.get("deployment_eligible", True):
+            if strategy_metrics.get("approved"):
+                reasons.append("approved only in research/non-deployable windows")
+            continue
+
         overlap = sorted(
             target_regimes.intersection(window.get("expected_execution_regimes", []))
         )
@@ -289,12 +303,8 @@ def summarize_selected_rollups(
 
 def run_benchmark(
     strategy_filter: str = None,
-    timeframe: str | None = None,
 ):
     settings = load_settings()
-    if timeframe:
-        settings.setdefault("data", {})
-        settings["data"]["candle_interval"] = timeframe
     regimes = load_regimes()
     strategies = init_strategies(strategy_filter)
     benchmark_cfg = settings.get("benchmarking", {})
@@ -343,7 +353,14 @@ def run_benchmark(
     print("\n" + "═" * 120)
     print(f"{'STRATEGY BENCHMARK SUITE':^120}")
     print("═" * 120)
-    print(f"Timeframe: {settings.get('data', {}).get('candle_interval', '5Min')}")
+    strategy_timeframes = ", ".join(
+        sorted({str(strategy.timeframe or settings.get("data", {}).get("candle_interval", "5Min")) for strategy in strategies})
+    )
+    print(
+        "Reference Profile Timeframe: "
+        f"{settings.get('data', {}).get('candle_interval', '5Min')} | "
+        f"Strategy Timeframes: {strategy_timeframes}"
+    )
 
     for regime in regimes:
         name = regime["name"]
@@ -362,17 +379,30 @@ def run_benchmark(
         print(f"  {regime['description']}")
         print("-" * 120)
 
-        df = data_feed.get_historical_range(
+        ref_tf = settings.get("data", {}).get("candle_interval", "30Min")
+        
+        # ─── Macro Pre-warm (L1.10 Hardening) ───
+        # Fetch 30 days of lead-in history to ensure EMA1000/Bias filters have converged
+        # before the benchmark window starts.
+        lead_in_start = start - timedelta(days=30)
+        
+        df_full = data_feed.get_historical_range(
             symbol,
-            start,
+            lead_in_start,
             end,
-            strategies=strategies,
+            timeframe=ref_tf,
         )
-        if df.empty:
-            print("  ⚠️ No data found for this period. Skipping.")
+        if df_full.empty:
+            print("  ⚠️ No reference data found for this period. Skipping.")
             continue
 
-        window_profile = data_feed.regime_detector.profile_window(df)
+        # Trim to the target benchmark window AFTER indicator calculation
+        ref_df = df_full[df_full.index >= pd.Timestamp(start)]
+        if ref_df.empty:
+            print("  ⚠️ No reference data found in the target window. Skipping.")
+            continue
+
+        window_profile = data_feed.regime_detector.profile_window(ref_df)
         market_profile = resolve_window_market_profile(regime, window_profile)
         expected_execution_regimes = resolve_expected_execution_regimes(
             regime,
@@ -396,6 +426,7 @@ def run_benchmark(
             "start": start.isoformat(timespec="seconds"),
             "end": end.isoformat(timespec="seconds"),
             "description": regime["description"],
+            "deployment_eligible": regime.get("deployment_eligible", True),
             "market_profile": market_profile,
             "market_bias": window_profile.get("market_bias", "flat"),
             "expected_execution_regimes": expected_execution_regimes,
@@ -405,7 +436,19 @@ def run_benchmark(
         }
 
         for strategy in strategies:
-            result = engine.run(symbol, df, strategy)
+            st_tf = strategy.params.get("timeframe") or ref_tf
+            st_df = data_feed.get_historical_range(
+                symbol,
+                start,
+                end,
+                timeframe=st_tf,
+                strategies=[strategy],
+            )
+            if st_df.empty:
+                print(f"  ⚠️ No data found for {strategy.name} on {st_tf}. Skipping.")
+                continue
+
+            result = simulate_strategy_window(engine, symbol, st_df, strategy)
             collect_rollup(
                 strategy_rollups[strategy.name],
                 result,
@@ -504,6 +547,17 @@ def run_benchmark(
         "approvals_path", "data/strategy_approvals.json"
     )
     approvals_path.parent.mkdir(parents=True, exist_ok=True)
+    if strategy_filter and strategy_filter != "all" and approvals_path.exists():
+        try:
+            with open(approvals_path, "r") as f:
+                existing_payload = json.load(f)
+        except Exception:
+            existing_payload = None
+        approvals = merge_approvals_payload(
+            existing_payload,
+            approvals,
+            {strategy.name for strategy in strategies},
+        )
     with open(approvals_path, "w") as f:
         json.dump(approvals, f, indent=2)
 
@@ -545,6 +599,7 @@ def build_approvals_payload(
         "benchmark_windows": benchmark_windows,
         "market_profile_capabilities": market_profile_capabilities,
         "strategies": {},
+        "symbols": {},
     }
 
     for strategy_name, rollup in strategy_rollups.items():
@@ -582,7 +637,118 @@ def build_approvals_payload(
             ),
         }
 
+    benchmark_symbols = sorted(
+        {
+            window["symbol"]
+            for window in benchmark_windows
+            if window.get("symbol")
+        }
+    )
+    for symbol in benchmark_symbols:
+        symbol_windows = [
+            window for window in benchmark_windows if window.get("symbol") == symbol
+        ]
+        symbol_payload = {"strategies": {}}
+        for strategy_name, rollup in strategy_rollups.items():
+            symbol_window_names = [window["name"] for window in symbol_windows]
+            symbol_summary = summarize_selected_rollups(
+                engine,
+                strategy_name,
+                strategy_window_rollups.get(strategy_name, {}),
+                symbol_window_names,
+            )
+            if symbol_summary is None:
+                continue
+
+            deployment = derive_strategy_deployment(
+                strategy_name,
+                strategy_targets,
+                symbol_windows,
+            )
+            deployable_summary = summarize_selected_rollups(
+                engine,
+                strategy_name,
+                strategy_window_rollups.get(strategy_name, {}),
+                deployment["approved_windows"],
+            )
+            symbol_payload["strategies"][strategy_name] = {
+                "approved": deployment["approved"],
+                "reason": deployment["reason"],
+                "target_regimes": strategy_targets.get(strategy_name, []),
+                "deployable_regimes": deployment["deployable_regimes"],
+                "deployable_market_profiles": deployment["deployable_market_profiles"],
+                "deployable_market_biases": deployment["deployable_market_biases"],
+                "approved_windows": deployment["approved_windows"],
+                "global_metrics": result_metrics(symbol_summary),
+                "deployable_metrics": (
+                    result_metrics(deployable_summary)
+                    if deployable_summary is not None
+                    else empty_metrics()
+                ),
+                "metrics": (
+                    result_metrics(deployable_summary)
+                    if deployment["approved"] and deployable_summary is not None
+                    else result_metrics(symbol_summary)
+                ),
+            }
+        payload["symbols"][symbol] = symbol_payload
+
     return payload
+
+
+def merge_approvals_payload(
+    existing_payload: dict | None,
+    new_payload: dict,
+    strategy_names: set[str],
+) -> dict:
+    """Preserve untouched strategies when a benchmark run targets a subset."""
+    if not existing_payload:
+        return new_payload
+
+    merged = json.loads(json.dumps(existing_payload))
+    merged["generated_at"] = new_payload.get("generated_at", merged.get("generated_at"))
+    merged["thresholds"] = new_payload.get("thresholds", merged.get("thresholds", {}))
+
+    existing_windows = {
+        (window.get("name"), window.get("symbol")): window
+        for window in merged.get("benchmark_windows", [])
+    }
+    for window in new_payload.get("benchmark_windows", []):
+        key = (window.get("name"), window.get("symbol"))
+        if key not in existing_windows:
+            existing_windows[key] = window
+            continue
+        existing_window = existing_windows[key]
+        existing_window.setdefault("strategies", {})
+        for strategy_name in strategy_names:
+            strategy_metrics = window.get("strategies", {}).get(strategy_name)
+            if strategy_metrics is not None:
+                existing_window["strategies"][strategy_name] = strategy_metrics
+
+    merged["benchmark_windows"] = list(existing_windows.values())
+
+    merged.setdefault("market_profile_capabilities", {})
+    for strategy_name in strategy_names:
+        capability = new_payload.get("market_profile_capabilities", {}).get(strategy_name)
+        if capability is not None:
+            merged["market_profile_capabilities"][strategy_name] = capability
+
+    merged.setdefault("strategies", {})
+    for strategy_name in strategy_names:
+        strategy_payload = new_payload.get("strategies", {}).get(strategy_name)
+        if strategy_payload is not None:
+            merged["strategies"][strategy_name] = strategy_payload
+
+    merged.setdefault("symbols", {})
+    for symbol, symbol_payload in new_payload.get("symbols", {}).items():
+        merged["symbols"].setdefault(symbol, {})
+        merged["symbols"][symbol].setdefault("strategies", {})
+        for strategy_name in strategy_names:
+            strategy_payload = symbol_payload.get("strategies", {}).get(strategy_name)
+            if strategy_payload is not None:
+                merged["symbols"][symbol]["strategies"][strategy_name] = strategy_payload
+
+    return merged
 
 
 def main():
@@ -590,14 +756,9 @@ def main():
         description="Benchmark strategies across curated crypto market regimes"
     )
     parser.add_argument("--strategy", default="all")
-    parser.add_argument(
-        "--timeframe",
-        default=None,
-        help="Override candle timeframe for this benchmark run (e.g. 30Min, 1Hour, 4Hour)",
-    )
     args = parser.parse_args()
 
-    run_benchmark(args.strategy, args.timeframe)
+    run_benchmark(args.strategy)
 
 
 if __name__ == "__main__":

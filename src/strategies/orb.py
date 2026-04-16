@@ -23,7 +23,7 @@ from typing import Optional
 import pandas as pd
 import pytz
 
-from src.core.models import Signal, SignalType, Side, MarketRegime
+from src.core.models import Signal, SignalType, Side, MarketRegime, StrategyType
 from src.strategies.base import BaseStrategy
 
 
@@ -38,6 +38,10 @@ class ORBStrategy(BaseStrategy):
         self._orb_low: dict[str, float] = {}      # symbol -> ORB low
         self._orb_set: dict[str, bool] = {}        # symbol -> whether ORB is established
         self._traded_today: dict[str, bool] = {}   # symbol -> already traded today
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.TREND_FOLLOWING
 
     @property
     def name(self) -> str:

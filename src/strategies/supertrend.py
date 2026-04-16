@@ -19,11 +19,15 @@ from typing import Optional
 
 import pandas as pd
 
-from src.core.models import Signal, SignalType, Side, MarketRegime
+from src.core.models import Signal, SignalType, Side, MarketRegime, StrategyType
 from src.strategies.base import BaseStrategy
 
 
 class SupertrendStrategy(BaseStrategy):
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.TREND_FOLLOWING
 
     @property
     def name(self) -> str:

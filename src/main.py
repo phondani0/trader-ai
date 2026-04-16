@@ -43,6 +43,7 @@ from src.core.models import (
     Trade,
     TradingMode,
 )
+from src.core.strategy_approvals import get_global_strategy_approvals
 from src.core.scheduler import MarketScheduler
 from src.intelligence.journal import DiscoveryJournal
 from src.intelligence.regime_detector import RegimeDetector
@@ -186,7 +187,11 @@ class TradingEngine:
         )
 
         # Scheduler
-        self.scheduler = MarketScheduler(broker=self.broker, config=config)
+        self.scheduler = MarketScheduler(
+            broker=self.broker,
+            config=config,
+            strategies=self.strategies,
+        )
 
         # Track active positions managed by us
         self._managed_positions: dict[
@@ -203,7 +208,9 @@ class TradingEngine:
     def _init_strategies(self, config: dict) -> list:
         """Initialize all strategy instances from config."""
         strategies = []
-        approvals = self._load_strategy_approvals()
+        approvals_payload = self._load_strategy_approvals()
+        approvals = get_global_strategy_approvals(approvals_payload)
+        symbol_approvals = approvals_payload.get("symbols", {}) if approvals_payload else {}
 
         strategy_map = {
             "macd_bollinger": MACDBollingerStrategy,
@@ -223,7 +230,38 @@ class TradingEngine:
         for name, cls in strategy_map.items():
             params = config.get(name, {"enabled": True, "regime": ["all"]})
             strategy = cls(params=params)
-            if approvals and name not in approvals:
+            approved_symbols: list[str] = []
+            for symbol, symbol_payload in symbol_approvals.items():
+                symbol_strategy_approval = (
+                    symbol_payload.get("strategies", {}).get(name, {})
+                )
+                deployable_regimes = symbol_strategy_approval.get("deployable_regimes")
+                deployable_market_profiles = symbol_strategy_approval.get(
+                    "deployable_market_profiles"
+                )
+                deployable_market_biases = symbol_strategy_approval.get(
+                    "deployable_market_biases"
+                )
+                if deployable_regimes:
+                    strategy.set_symbol_benchmark_approval(
+                        symbol,
+                        regimes=deployable_regimes,
+                        market_profiles=deployable_market_profiles,
+                        market_biases=deployable_market_biases,
+                    )
+                    approved_symbols.append(symbol)
+
+            if approvals_payload and symbol_approvals and not approved_symbols:
+                strategy.enabled = False
+                logger.warning(
+                    f"  ⛔ Strategy not approved for any benchmarked symbol: {name}"
+                )
+                strategies.append(strategy)
+                status = "✅" if strategy.enabled else "⬜"
+                logger.info(f"  {status} Strategy: {name}")
+                continue
+
+            if approvals and name not in approvals and not symbol_approvals:
                 strategy.enabled = False
                 logger.warning(
                     f"  ⛔ Strategy skipped until benchmarked: {name}"
@@ -267,6 +305,10 @@ class TradingEngine:
                     logger.info(
                         f"     Macro bias: {', '.join(deployable_market_biases)}"
                     )
+            if approved_symbols:
+                logger.info(
+                    f"     Approved symbols: {', '.join(sorted(approved_symbols))}"
+                )
             strategies.append(strategy)
             status = "✅" if strategy.enabled else "⬜"
             logger.info(f"  {status} Strategy: {name}")
@@ -291,7 +333,7 @@ class TradingEngine:
         try:
             with open(approvals_path, "r") as f:
                 payload = json.load(f)
-            return payload.get("strategies", {})
+            return payload
         except Exception as e:
             logger.error(f"Failed to load strategy approvals: {e}")
             return {}
@@ -326,7 +368,10 @@ class TradingEngine:
         # Pre-fetch data
         bootstrap_universe = self.market_scanner.build_tradable_universe(self.watchlist)
         logger.info(f"Fetching data for {len(bootstrap_universe)} symbols...")
-        self.data_feed.refresh_all(bootstrap_universe, strategies=self.strategies)
+        self.data_feed.refresh_for_strategies(
+            bootstrap_universe,
+            strategies=self.strategies,
+        )
 
         # Account status
         buying_power = self.broker.get_buying_power()
@@ -349,14 +394,20 @@ class TradingEngine:
         """ORB window (first 30 min) has closed — set ORB levels."""
         logger.info("⏰ ORB window closed — setting Opening Range levels")
 
-        data = self.data_feed.refresh_all(self.watchlist, strategies=self.strategies)
+        orb_strategies = [s for s in self.strategies if isinstance(s, ORBStrategy)]
+        data = self.data_feed.refresh_for_strategies(
+            self.watchlist,
+            strategies=orb_strategies,
+        )
 
         for s in self.strategies:
             if isinstance(s, ORBStrategy):
                 for symbol in self.watchlist:
-                    if symbol in data and not data[symbol].empty:
+                    symbol_frames = data.get(symbol, {})
+                    strategy_df = symbol_frames.get(self.data_feed.strategy_timeframe(s))
+                    if strategy_df is not None and not strategy_df.empty:
                         orb_minutes = s.params.get("orb_minutes", 30)
-                        s.set_orb_range(symbol, data[symbol], orb_minutes)
+                        s.set_orb_range(symbol, strategy_df, orb_minutes)
 
                         if symbol in s._orb_set and s._orb_set[symbol]:
                             logger.info(
@@ -382,7 +433,7 @@ class TradingEngine:
             )
 
             # 1. Refresh data
-            data = self.data_feed.refresh_all(
+            data = self.data_feed.refresh_for_strategies(
                 tradable_universe,
                 strategies=self.strategies,
             )
@@ -416,7 +467,10 @@ class TradingEngine:
             }
 
             # 4. Generate signals from the core watchlist plus approved discoveries
-            signals = self.signal_aggregator.generate_signals(signal_data)
+            signals = self.signal_aggregator.generate_signals(
+                signal_data,
+                enforce_fresh_bars=True,
+            )
 
             if not signals:
                 if active_candidates:

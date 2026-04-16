@@ -12,7 +12,8 @@ import pandas as pd
 from loguru import logger
 
 from src.core.backtest.models import BacktestResult, BacktestTrade
-from src.core.models import Side
+from src.core.models import Side, MarketBias, MarketRegime, StrategyType
+from src.core.timeframes import canonical_timeframe, timeframe_to_minutes
 from src.intelligence.regime_detector import RegimeDetector
 from src.intelligence.signal_aggregator import SignalAggregator
 
@@ -74,7 +75,9 @@ class BacktestEngine:
         for i in range(min_lookback, len(df)):
             window = df.iloc[: i + 1]
             current_bar = df.iloc[i]
-            regime = self.regime_detector.detect(window)
+            regime_state = self.regime_detector.detect(window)
+            regime = regime_state.regime
+            bias = regime_state.bias
 
             for strategy in strategies:
                 current_pos = current_positions[strategy.name]
@@ -86,6 +89,14 @@ class BacktestEngine:
                     if strategy.should_run(regime):
                         signal = strategy.generate_signal(symbol, window, regime)
                         if signal:
+                            if strategy.strategy_type == StrategyType.TREND_FOLLOWING:
+                                if bias == MarketBias.BULLISH and signal.side == Side.SELL:
+                                    logger.info(f"🚫 Bias Gate: REJECTED {strategy.name} SELL signal (Macro Bias: BULLISH)")
+                                    continue
+                                if bias == MarketBias.BEARISH and signal.side == Side.BUY:
+                                    logger.info(f"🚫 Bias Gate: REJECTED {strategy.name} BUY signal (Macro Bias: BEARISH)")
+                                    continue
+
                             current_positions[strategy.name] = {
                                 "entry_price": self._apply_entry_friction(
                                     signal.side,
@@ -161,7 +172,7 @@ class BacktestEngine:
     def run_selector(
         self,
         symbol: str,
-        df: pd.DataFrame,
+        df: pd.DataFrame | dict[str, pd.DataFrame],
         strategies: list,
         min_lookback: int = 50,
     ) -> BacktestResult:
@@ -173,6 +184,14 @@ class BacktestEngine:
         """
         strategy_label = ", ".join(strategy.name for strategy in strategies)
         logger.debug(f"Starting selector simulation for {strategy_label} on {symbol}")
+
+        if isinstance(df, dict):
+            return self._run_selector_multitimeframe(
+                symbol,
+                df,
+                strategies,
+                min_lookback=min_lookback,
+            )
 
         trades: List[BacktestTrade] = []
         current_position: dict | None = None
@@ -272,6 +291,141 @@ class BacktestEngine:
             symbol=symbol,
             period_start=df.index[0],
             period_end=df.index[-1],
+            trades=trades,
+            killed_by_drawdown=killed_by_drawdown,
+            kill_reason=kill_reason,
+        )
+
+    def _run_selector_multitimeframe(
+        self,
+        symbol: str,
+        frames: dict[str, pd.DataFrame],
+        strategies: list,
+        *,
+        min_lookback: int,
+    ) -> BacktestResult:
+        active_frames = {
+            canonical_timeframe(timeframe): frame.sort_index()
+            for timeframe, frame in frames.items()
+            if isinstance(frame, pd.DataFrame) and not frame.empty
+        }
+        if not active_frames:
+            now = datetime.utcnow()
+            return self.summarize(
+                symbol=symbol,
+                period_start=now,
+                period_end=now,
+                trades=[],
+            )
+
+        execution_timeframe = min(
+            active_frames,
+            key=lambda timeframe: timeframe_to_minutes(timeframe),
+        )
+        execution_frame = active_frames[execution_timeframe]
+        timeline = sorted({timestamp for frame in active_frames.values() for timestamp in frame.index})
+
+        trades: List[BacktestTrade] = []
+        current_position: dict | None = None
+        running_equity = self.initial_capital
+        peak_equity = self.initial_capital
+        killed_by_drawdown = False
+        kill_reason = ""
+        aggregator = SignalAggregator(
+            strategies=strategies,
+            regime_detector=self.regime_detector,
+        )
+
+        for timestamp in timeline:
+            execution_window = execution_frame.loc[execution_frame.index <= timestamp]
+            if execution_window.empty:
+                continue
+            current_bar = execution_window.iloc[-1]
+
+            if current_position is not None:
+                exit_price = self._resolve_exit_price(current_position, current_bar)
+                if exit_price is not None:
+                    trade = self._create_trade_record(
+                        symbol,
+                        current_position,
+                        self._apply_exit_friction(current_position["side"], exit_price),
+                        timestamp,
+                        current_position["strategy"],
+                    )
+                    trades.append(trade)
+                    current_position = None
+
+                    running_equity, peak_equity, drawdown_pct = self._update_equity(
+                        running_equity,
+                        peak_equity,
+                        trade.pnl_pct,
+                    )
+                    if drawdown_pct <= -self.max_drawdown_pct:
+                        killed_by_drawdown = True
+                        kill_reason = (
+                            f"max drawdown {abs(drawdown_pct):.2f}% exceeded "
+                            f"{self.max_drawdown_pct:.1f}%"
+                        )
+                        logger.warning(
+                            f"Backtest drawdown kill-switch triggered for selector on {symbol}: {kill_reason}"
+                        )
+                        break
+
+            if current_position is not None or killed_by_drawdown:
+                continue
+
+            fresh_windows: dict[str, pd.DataFrame] = {}
+            for timeframe, frame in active_frames.items():
+                if timestamp not in frame.index:
+                    continue
+                window = frame.loc[:timestamp]
+                if len(window) < min_lookback:
+                    continue
+                fresh_windows[timeframe] = window
+
+            if not fresh_windows:
+                continue
+
+            signals = aggregator.generate_signals(
+                {symbol: fresh_windows},
+                log_signals=False,
+            )
+            if not signals:
+                continue
+
+            signal = signals[0]
+            current_position = {
+                "entry_price": self._apply_entry_friction(
+                    signal.side,
+                    signal.entry_price,
+                ),
+                "stop_loss": signal.stop_loss,
+                "take_profit": signal.take_profit,
+                "side": signal.side,
+                "entry_time": timestamp,
+                "regime": signal.regime.value,
+                "reason": signal.reason,
+                "strategy": signal.strategy_name,
+            }
+
+        if current_position is not None:
+            last_close = float(execution_frame.iloc[-1]["close"])
+            last_time = execution_frame.index[-1]
+            trades.append(
+                self._create_trade_record(
+                    symbol,
+                    current_position,
+                    self._apply_exit_friction(current_position["side"], last_close),
+                    last_time,
+                    current_position["strategy"],
+                    "EOD Close",
+                )
+            )
+
+        return self.summarize(
+            symbol=symbol,
+            period_start=min(frame.index[0] for frame in active_frames.values()),
+            period_end=max(frame.index[-1] for frame in active_frames.values()),
             trades=trades,
             killed_by_drawdown=killed_by_drawdown,
             kill_reason=kill_reason,

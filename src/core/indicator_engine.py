@@ -141,6 +141,7 @@ class IndicatorPipeline:
             "volume_sma": set(),
             "stochrsi": set(),
             "vwap": False,
+            "microstructure": True,
         }
 
         if include_regime and self.regime_detector is not None:
@@ -254,6 +255,22 @@ class IndicatorPipeline:
             enriched[f"stoch_rsi_k{suffix}"] = stoch_rsi.iloc[:, 0]
             enriched[f"stoch_rsi_d{suffix}"] = stoch_rsi.iloc[:, 1]
 
+        # ─── Microstructure Consciousness (L2.0 Sudden Momentum) ───
+        if plan.get("microstructure"):
+            # 1. Sudden Burst (Volume Ratio)
+            vol_sma_20 = ta.sma(enriched["volume"], length=20)
+            enriched["volume_burst_ratio"] = enriched["volume"] / vol_sma_20
+            
+            # 2. Liquidity Sweep (Wick Detector)
+            # A sweep is a candle that penetrates the 20-bar high/low but closes inside
+            rolling_high_20 = enriched["high"].shift(1).rolling(20).max()
+            rolling_low_20 = enriched["low"].shift(1).rolling(20).min()
+            
+            # Bullish Sweep: Low below rolling_low but Close above it (Wick Rejection)
+            enriched["is_bullish_sweep"] = (enriched["low"] < rolling_low_20) & (enriched["close"] > rolling_low_20)
+            # Bearish Sweep: High above rolling_high but Close below it (Wick Rejection)
+            enriched["is_bearish_sweep"] = (enriched["high"] > rolling_high_20) & (enriched["close"] < rolling_high_20)
+
         return enriched
 
     @staticmethod
@@ -261,6 +278,10 @@ class IndicatorPipeline:
         for key, value in requirements.items():
             if key == "vwap":
                 plan["vwap"] = bool(plan["vwap"] or value)
+                continue
+
+            if key == "microstructure":
+                plan["microstructure"] = bool(plan.get("microstructure") or value)
                 continue
 
             if value is None:

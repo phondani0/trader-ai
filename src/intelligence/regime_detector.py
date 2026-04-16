@@ -16,7 +16,7 @@ from collections import Counter
 
 import pandas as pd
 
-from src.core.models import MarketRegime
+from src.core.models import MarketRegime, MarketBias, RegimeState
 
 
 class RegimeDetector:
@@ -32,47 +32,42 @@ class RegimeDetector:
         self.config = config or {}
         self.adx_trending_threshold = 25   # ADX > 25 = trending
         self.atr_lookback = 100            # Compare current ATR to 100-period average
+        self.bias_ema_period = 1000        # Use 1000-period EMA for macro bias (The "20-Day Wall")
 
     def indicator_requirements(self) -> dict[str, object]:
         return {
             "adx": [14],
             "atr": [14],
             "volume_sma": [20],
+            "ema": [self.bias_ema_period],
         }
 
-    def detect(self, df: pd.DataFrame) -> MarketRegime:
+    def detect(self, df: pd.DataFrame) -> RegimeState:
         """
-        Detect market regime from indicator-enriched DataFrame.
-
-        Args:
-            df: DataFrame with pre-computed indicators (adx, atr_pct)
-
-        Returns:
-            MarketRegime enum value
+        Detect market regime and macro bias.
         """
         if df.empty or len(df) < 30:
-            return MarketRegime.UNKNOWN
+            return RegimeState(regime=MarketRegime.UNKNOWN, bias=MarketBias.NEUTRAL)
 
         curr = df.iloc[-1]
         adx = curr.get("adx")
         atr_pct = curr.get("atr_pct")
+        bias_ema_col = f"ema_{self.bias_ema_period}"
+        bias_ema = curr.get(bias_ema_col)
+        close = curr.get("close")
 
         if pd.isna(adx) or pd.isna(atr_pct):
-            return MarketRegime.UNKNOWN
+            return RegimeState(regime=MarketRegime.UNKNOWN, bias=MarketBias.NEUTRAL)
 
         # Determine trend
         is_trending = adx > self.adx_trending_threshold
 
-        # Determine volatility (compare to historical average)
+        # Determine volatility
         atr_pct_series = df["atr_pct"].dropna()
-        if len(atr_pct_series) < self.atr_lookback:
-            atr_avg = atr_pct_series.mean()
-        else:
-            atr_avg = atr_pct_series.tail(self.atr_lookback).mean()
-
+        atr_avg = atr_pct_series.tail(self.atr_lookback).mean() if len(atr_pct_series) >= 20 else atr_pct_series.mean()
         is_high_vol = atr_pct > atr_avg if not pd.isna(atr_avg) else False
 
-        # Classify
+        # Classify Regime
         if is_trending and not is_high_vol:
             regime = MarketRegime.TRENDING_LOW_VOL
         elif is_trending and is_high_vol:
@@ -82,7 +77,32 @@ class RegimeDetector:
         else:
             regime = MarketRegime.SIDEWAYS_HIGH_VOL
 
-        return regime
+        # Determine Bias (EMA1000 - Macro Filter)
+        if not pd.isna(bias_ema) and not pd.isna(close):
+            if close > bias_ema * 1.01: # 1.0% buffer for Bullish Macro
+                bias = MarketBias.BULLISH
+            elif close < bias_ema * 0.99: # 1.0% buffer for Bearish Macro
+                bias = MarketBias.BEARISH
+            else:
+                bias = MarketBias.NEUTRAL
+        else:
+            bias = MarketBias.NEUTRAL
+
+        is_burst = False
+        is_sweep = False
+
+        if "volume_burst_ratio" in df.columns:
+            is_burst = float(df["volume_burst_ratio"].iloc[-1]) > 3.0
+        
+        if "is_bullish_sweep" in df.columns and "is_bearish_sweep" in df.columns:
+            is_sweep = bool(df["is_bullish_sweep"].iloc[-1] or df["is_bearish_sweep"].iloc[-1])
+
+        return RegimeState(
+            regime=regime,
+            bias=bias,
+            is_burst=is_burst,
+            is_sweep=is_sweep
+        )
 
     def profile_window(self, df: pd.DataFrame) -> dict:
         """Summarize a historical window using real market features."""
@@ -245,6 +265,8 @@ class RegimeDetector:
                 "rsi_divergence",
                 "donchian_breakout",
                 "bearish_breakdown_continuation",
+                "episodic_pivot",
+                "episodic_pivot_short",
                 "volume_weighted_tsmom",
                 "chart_patterns",
                 "orb",
@@ -254,6 +276,8 @@ class RegimeDetector:
                 "rsi_divergence",
                 "donchian_breakout",
                 "bearish_breakdown_continuation",
+                "episodic_pivot",
+                "episodic_pivot_short",
                 "volume_weighted_tsmom",
                 "chart_patterns",
                 "orb",
@@ -262,11 +286,15 @@ class RegimeDetector:
                 "macd_bollinger",
                 "vwap_reversion",
                 "range_reversion",
+                "episodic_pivot",
+                "episodic_pivot_short",
                 "chart_patterns",
                 "orb",
             ],
             MarketRegime.SIDEWAYS_HIGH_VOL: [
                 "range_reversion",
+                "episodic_pivot",
+                "episodic_pivot_short",
                 "orb",
             ],
             MarketRegime.UNKNOWN: [

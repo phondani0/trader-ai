@@ -75,15 +75,15 @@ Run commands with `uv run <command>`.
 | Command | Purpose | Example |
 |---|---|---|
 | `start` | Launch the trading engine, scanner, and journal loop | `uv run start` |
-| `benchmark` | Stress-test strategies across curated real-market windows and generate a regime capability matrix with curated macro profiles plus expected execution regimes | `uv run benchmark --strategy supertrend` |
-| `backtest` | Run a single strategy or the live-style multi-strategy selector on a symbol/date window using paginated historical fetches | `uv run backtest --symbol BTC/USDT:USDT --from 2024-01-01 --to 2024-03-31` |
+| `benchmark` | Stress-test strategies across curated real-market windows; each strategy uses its own timeframe from `config/strategies.yaml` while the reference market-profile window uses `config/settings.yaml` | `uv run benchmark --strategy supertrend` |
+| `backtest` | Run a single strategy or the live-style multi-strategy selector on a symbol/date window using strategy-configured timeframes from `config/strategies.yaml` | `uv run backtest --symbol BTC/USDT:USDT --from 2024-01-01 --to 2024-03-31` |
 | `trade` | Manual override for connectivity tests or emergency exits | `uv run trade --symbol BTC/USDT:USDT --side buy --qty 0.01` |
 
 ## Runtime Cadence
 
 For the default CCXT crypto path:
 
-- Strategy scan runs every minute.
+- Strategy scan cadence is derived from the smallest enabled strategy timeframe.
 - Discovery scan runs every 10 minutes by default and can pull in non-watchlist symbols from the broader liquid universe.
 - Discovery journal review runs every 30 minutes.
 - Daily summary runs at `00:05 UTC`.
@@ -172,6 +172,7 @@ docker run -d --name trader-ai --env-file .env -p 8080:8080 trader-ai
 - Backtests are useful for filtering bad ideas, not proving future returns.
 - `backtest --days N` now pages historical candles across multiple requests instead of silently truncating to a single 1000-bar fetch.
 - `backtest --strategy all` now uses the same one-best-signal selector shape as live trading instead of opening parallel positions per strategy on the same symbol.
+- Strategy timeframes are defined in `config/strategies.yaml` and are now the source of truth for live scans, selector backtests, and per-strategy benchmark runs.
 - If you add a new external dependency or credential, keep `.env.example` and the README in sync.
 
 ## Project Structure

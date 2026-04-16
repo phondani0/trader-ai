@@ -20,26 +20,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
 from src.core.base_broker import BaseBroker
+from src.core.timeframes import timeframe_to_minutes
 
 ET = pytz.timezone("US/Eastern")
-
-_TIMEFRAME_MINUTES = {
-    "1Min": 1,
-    "5Min": 5,
-    "15Min": 15,
-    "30Min": 30,
-    "1Hour": 60,
-    "4Hour": 240,
-    "1Day": 1440,
-    "1m": 1,
-    "5m": 5,
-    "15m": 15,
-    "30m": 30,
-    "1h": 60,
-    "4h": 240,
-    "1d": 1440,
-}
-
 
 class MarketScheduler:
     """
@@ -50,18 +33,25 @@ class MarketScheduler:
         - Session broker → NYSE market hours lifecycle
     """
 
-    def __init__(self, broker: BaseBroker, config: dict):
+    def __init__(self, broker: BaseBroker, config: dict, strategies: list | None = None):
         self.broker = broker
         self.config = config
         self.scheduler = BackgroundScheduler(timezone=ET)
         data_cfg = config.get("data", {})
         candle_interval = data_cfg.get("candle_interval", "5Min")
-        self.scan_interval_minutes = int(
-            data_cfg.get(
-                "scan_interval_minutes",
-                _TIMEFRAME_MINUTES.get(candle_interval, 1),
+        enabled_strategies = [strategy for strategy in (strategies or []) if strategy.enabled]
+        if enabled_strategies:
+            self.scan_interval_minutes = min(
+                timeframe_to_minutes(getattr(strategy, "timeframe", None) or candle_interval)
+                for strategy in enabled_strategies
             )
-        )
+        else:
+            self.scan_interval_minutes = int(
+                data_cfg.get(
+                    "scan_interval_minutes",
+                    timeframe_to_minutes(candle_interval),
+                )
+            )
         self.scan_buffer_minutes = int(data_cfg.get("scan_buffer_minutes", 1))
         self.position_check_interval_minutes = int(
             data_cfg.get("position_check_interval_minutes", 15)

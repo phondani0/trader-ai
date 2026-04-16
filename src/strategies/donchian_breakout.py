@@ -15,11 +15,15 @@ from typing import Optional
 
 import pandas as pd
 
-from src.core.models import MarketRegime, Signal, SignalType, Side
+from src.core.models import MarketRegime, Signal, SignalType, Side, StrategyType
 from src.strategies.base import BaseStrategy
 
 
 class DonchianBreakoutStrategy(BaseStrategy):
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.TREND_FOLLOWING
+
     @property
     def name(self) -> str:
         return "donchian_breakout"

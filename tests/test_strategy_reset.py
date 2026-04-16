@@ -11,6 +11,8 @@ from src.strategies.bearish_breakdown_continuation import (
     BearishBreakdownContinuationStrategy,
 )
 from src.strategies.donchian_breakout import DonchianBreakoutStrategy
+from src.strategies.episodic_pivot import EpisodicPivotStrategy
+from src.strategies.episodic_pivot_short import EpisodicPivotShortStrategy
 from src.strategies.range_reversion import RangeReversionStrategy
 from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
 
@@ -229,7 +231,98 @@ def _build_range_reversion_short_frame() -> pd.DataFrame:
     return df
 
 
+def _build_episodic_pivot_long_frame() -> pd.DataFrame:
+    closes = [100.0 + (idx * 0.12) for idx in range(220)]
+    closes[-1] = closes[-2] + 1.4
+
+    df = pd.DataFrame(index=_build_index(len(closes)))
+    df["close"] = closes
+    df["open"] = df["close"].shift(1).fillna(df["close"])
+    df["high"] = df["close"] + 0.25
+    df["low"] = df["close"] - 0.25
+    df.loc[df.index[-1], "high"] = df["close"].iloc[-1] + 0.45
+    df.loc[df.index[-1], "low"] = df["close"].iloc[-1] - 0.20
+    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
+    df["atr"] = 1.0
+    df["adx"] = 26.0
+    df["volume_ratio"] = 1.0
+    df["volume_burst_ratio"] = 1.0
+    df.loc[df.index[-1], "volume_burst_ratio"] = 2.6
+    return df
+
+
+def _build_episodic_pivot_short_frame() -> pd.DataFrame:
+    closes = [200.0 - (idx * 0.12) for idx in range(220)]
+    closes[-1] = closes[-2] - 1.4
+
+    df = pd.DataFrame(index=_build_index(len(closes)))
+    df["close"] = closes
+    df["open"] = df["close"].shift(1).fillna(df["close"])
+    df["high"] = df["close"] + 0.25
+    df["low"] = df["close"] - 0.25
+    df.loc[df.index[-1], "high"] = df["close"].iloc[-1] + 0.20
+    df.loc[df.index[-1], "low"] = df["close"].iloc[-1] - 0.45
+    df["ema_20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
+    df["atr"] = 1.0
+    df["adx"] = 28.0
+    df["volume_ratio"] = 1.0
+    df["volume_burst_ratio"] = 1.0
+    df.loc[df.index[-1], "volume_burst_ratio"] = 2.7
+    return df
+
+
 class StrategyResetTest(unittest.TestCase):
+    def test_episodic_pivot_long_signal_uses_configured_structure_stop(self):
+        df = _build_episodic_pivot_long_frame()
+        strategy = EpisodicPivotStrategy(
+            {
+                "enabled": True,
+                "regime": [MarketRegime.TRENDING_HIGH_VOL.value],
+                "vol_multiplier": 2.0,
+                "stop_buffer_atr": 0.1,
+                "tp_rr_ratio": 3.0,
+            }
+        )
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            df,
+            MarketRegime.TRENDING_HIGH_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.BUY)
+        expected_stop = float(df.iloc[-1]["low"] - (df.iloc[-1]["atr"] * 0.1))
+        self.assertAlmostEqual(signal.stop_loss, expected_stop, places=6)
+        self.assertEqual(signal.metadata["adx"], 26.0)
+
+    def test_episodic_pivot_short_signal_uses_configured_structure_stop(self):
+        df = _build_episodic_pivot_short_frame()
+        strategy = EpisodicPivotShortStrategy(
+            {
+                "enabled": True,
+                "regime": [MarketRegime.TRENDING_HIGH_VOL.value],
+                "vol_multiplier": 2.0,
+                "stop_buffer_atr": 0.1,
+                "tp_rr_ratio": 3.0,
+            }
+        )
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            df,
+            MarketRegime.TRENDING_HIGH_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.SELL)
+        expected_stop = float(df.iloc[-1]["high"] + (df.iloc[-1]["atr"] * 0.1))
+        self.assertAlmostEqual(signal.stop_loss, expected_stop, places=6)
+
     def test_volume_weighted_tsmom_config_generates_long_signal(self):
         with open("config/strategies.yaml", "r") as fh:
             config = yaml.safe_load(fh)
@@ -294,6 +387,36 @@ class StrategyResetTest(unittest.TestCase):
 
         self.assertIsNotNone(signal)
         self.assertEqual(signal.side, Side.SELL)
+
+    def test_range_reversion_accepts_same_bar_touch_reclaim(self):
+        strategy = RangeReversionStrategy(
+            {
+                "enabled": True,
+                "regime": [MarketRegime.SIDEWAYS_LOW_VOL.value],
+                "bb_period": 20,
+                "bb_std_dev": 2.0,
+                "rsi_period": 14,
+                "adx_period": 14,
+                "atr_period": 14,
+                "adx_max": 23,
+                "rsi_oversold": 38,
+                "rsi_overbought": 62,
+            }
+        )
+
+        df = _build_range_reversion_long_frame()
+        # Previous bar no longer touches lower band; current bar still sweeps and reclaims.
+        df.loc[df.index[-2], "low"] = 96.7
+        df.loc[df.index[-1], "low"] = 94.9
+
+        signal = strategy.generate_signal(
+            "BTC/USDT:USDT",
+            df,
+            MarketRegime.SIDEWAYS_LOW_VOL,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal.side, Side.BUY)
 
     def test_bearish_breakdown_continuation_generates_short_signal(self):
         strategy = BearishBreakdownContinuationStrategy(

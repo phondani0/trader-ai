@@ -27,7 +27,7 @@ from src.core.indicator_engine import (
     volume_ratio_col,
     volume_sma_col,
 )
-from src.core.models import Signal, SignalType, Side, MarketRegime
+from src.core.models import Signal, SignalType, Side, MarketRegime, StrategyType
 
 
 class BaseStrategy(ABC):
@@ -54,11 +54,17 @@ class BaseStrategy(ABC):
         self._benchmark_approved_regimes: set[MarketRegime] | None = None
         self._benchmark_approved_market_profiles: set[str] | None = None
         self._benchmark_approved_market_biases: set[str] | None = None
+        self._benchmark_symbol_approvals: dict[str, dict[str, set | None]] = {}
 
     @property
     @abstractmethod
     def name(self) -> str:
         """Unique strategy name (e.g., 'macd_bollinger')."""
+        ...
+    @property
+    @abstractmethod
+    def strategy_type(self) -> StrategyType:
+        """Category of strategy (Trend, Mean Reversion, etc.)"""
         ...
 
     @property
@@ -68,7 +74,15 @@ class BaseStrategy(ABC):
             return list(MarketRegime)  # Active in all regimes
         return self._supported_regimes
 
-    def should_run(self, regime: MarketRegime) -> bool:
+    @property
+    def timeframe(self) -> str | None:
+        """Configured candle timeframe for this strategy, if any."""
+        timeframe = self.params.get("timeframe")
+        if timeframe is None:
+            return None
+        return str(timeframe)
+
+    def should_run(self, regime: MarketRegime, symbol: str | None = None) -> bool:
         """Check if this strategy should run in the current market regime."""
         if not self.enabled:
             return False
@@ -79,6 +93,14 @@ class BaseStrategy(ABC):
 
         if not supported:
             return False
+
+        if symbol is not None and self._benchmark_symbol_approvals:
+            symbol_approval = self._benchmark_symbol_approvals.get(symbol)
+            if symbol_approval is None:
+                return False
+            approved_regimes = symbol_approval.get("regimes")
+            if approved_regimes is not None:
+                return regime in approved_regimes
 
         if self._benchmark_approved_regimes is not None:
             return regime in self._benchmark_approved_regimes
@@ -114,8 +136,52 @@ class BaseStrategy(ABC):
             if str(profile)
         }
 
-    def allows_market_profile(self, market_profile: str | None) -> bool:
+    def set_symbol_benchmark_approval(
+        self,
+        symbol: str,
+        *,
+        regimes: list[str] | None = None,
+        market_profiles: list[str] | None = None,
+        market_biases: list[str] | None = None,
+    ):
+        approval: dict[str, set | None] = {}
+
+        if regimes is not None:
+            approved_regimes: set[MarketRegime] = set()
+            for regime_name in regimes:
+                try:
+                    approved_regimes.add(MarketRegime(regime_name))
+                except ValueError:
+                    continue
+            approval["regimes"] = approved_regimes
+
+        if market_profiles is not None:
+            approval["market_profiles"] = {
+                str(profile) for profile in market_profiles if str(profile)
+            }
+
+        if market_biases is not None:
+            approval["market_biases"] = {
+                str(bias) for bias in market_biases if str(bias)
+            }
+
+        self._benchmark_symbol_approvals[symbol] = approval
+
+    def allows_market_profile(
+        self,
+        market_profile: str | None,
+        symbol: str | None = None,
+    ) -> bool:
         """Check whether this strategy is approved for the current macro profile."""
+        if symbol is not None and self._benchmark_symbol_approvals:
+            symbol_approval = self._benchmark_symbol_approvals.get(symbol)
+            if symbol_approval is None:
+                return False
+            approved_profiles = symbol_approval.get("market_profiles")
+            if approved_profiles is not None:
+                if not market_profile:
+                    return False
+                return market_profile in approved_profiles
         if self._benchmark_approved_market_profiles is None:
             return True
         if not market_profile:
@@ -133,8 +199,21 @@ class BaseStrategy(ABC):
             if str(bias)
         }
 
-    def allows_market_bias(self, market_bias: str | None) -> bool:
+    def allows_market_bias(
+        self,
+        market_bias: str | None,
+        symbol: str | None = None,
+    ) -> bool:
         """Check whether this strategy is approved for the current macro bias."""
+        if symbol is not None and self._benchmark_symbol_approvals:
+            symbol_approval = self._benchmark_symbol_approvals.get(symbol)
+            if symbol_approval is None:
+                return False
+            approved_biases = symbol_approval.get("market_biases")
+            if approved_biases is not None:
+                if not market_bias:
+                    return False
+                return market_bias in approved_biases
         if self._benchmark_approved_market_biases is None:
             return True
         if not market_bias:

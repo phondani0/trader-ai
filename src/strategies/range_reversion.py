@@ -17,11 +17,15 @@ from typing import Optional
 
 import pandas as pd
 
-from src.core.models import MarketRegime, Signal, SignalType, Side
+from src.core.models import MarketRegime, Signal, SignalType, Side, StrategyType
 from src.strategies.base import BaseStrategy
 
 
 class RangeReversionStrategy(BaseStrategy):
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.MEAN_REVERSION
+
     @property
     def name(self) -> str:
         return "range_reversion"
@@ -113,15 +117,15 @@ class RangeReversionStrategy(BaseStrategy):
         if atr <= 0 or vwap == 0:
             return None
 
-        adx_max = float(self.params.get("adx_max", 23))
-        max_bandwidth = float(self.params.get("max_bandwidth", 0.12))
+        adx_max = float(self.params.get("adx_max", 30))
+        max_bandwidth = float(self.params.get("max_bandwidth", 1.2))
         rsi_oversold = float(self.params.get("rsi_oversold", 35))
         rsi_overbought = float(self.params.get("rsi_overbought", 65))
         touch_tolerance_pct = float(self.params.get("touch_tolerance_pct", 0.2)) / 100
         min_vwap_distance_pct = float(
-            self.params.get("min_vwap_distance_pct", 1.0)
+            self.params.get("min_vwap_distance_pct", 0.5)
         )
-        stop_buffer_atr = float(self.params.get("stop_buffer_atr", 0.5))
+        stop_buffer_atr = float(self.params.get("stop_buffer_atr", 0.6))
         take_profit_blend = float(self.params.get("take_profit_blend", 0.5))
         min_rr = float(self.params.get("min_rr", 2.0))
 
@@ -134,14 +138,11 @@ class RangeReversionStrategy(BaseStrategy):
 
         target = float(vwap) * take_profit_blend + float(bb_mid) * (1 - take_profit_blend)
 
-        lower_touch = min(prev_close, prev_low) <= float(bb_lower) * (
-            1 + touch_tolerance_pct
-        )
-        upper_touch = max(prev_close, prev_high) >= float(bb_upper) * (
-            1 - touch_tolerance_pct
-        )
+        # Accept either prior-bar or current-bar band sweeps before reclaim.
+        lower_touch = min(prev_low, low) <= float(bb_lower) * (1 + touch_tolerance_pct)
+        upper_touch = max(prev_high, high) >= float(bb_upper) * (1 - touch_tolerance_pct)
 
-        long_reclaim = close > float(bb_lower) and close > prev_close and low >= prev_low
+        long_reclaim = close > float(bb_lower) and close > prev_close
         if (
             lower_touch
             and long_reclaim
@@ -182,7 +183,7 @@ class RangeReversionStrategy(BaseStrategy):
                 },
             )
 
-        short_reclaim = close < float(bb_upper) and close < prev_close and high <= prev_high
+        short_reclaim = close < float(bb_upper) and close < prev_close
         if (
             upper_touch
             and short_reclaim

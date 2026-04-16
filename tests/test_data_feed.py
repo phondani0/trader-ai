@@ -39,6 +39,29 @@ class PaginatedBroker(StubBroker):
         return df.copy()
 
 
+class MultiTimeframeBroker(StubBroker):
+    def __init__(self, bars_by_key: dict[tuple[str, str], pd.DataFrame]):
+        super().__init__()
+        self.bars_by_key = bars_by_key
+
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 1000,
+        since=None,
+    ) -> pd.DataFrame:
+        frame = self.bars_by_key.get((symbol, timeframe))
+        if frame is None:
+            return pd.DataFrame()
+        if since is not None:
+            since_dt = pd.to_datetime(since, unit="ms")
+            frame = frame.loc[frame.index >= since_dt]
+        if limit and len(frame) > limit:
+            frame = frame.iloc[:limit]
+        return frame.copy()
+
+
 class DataFeedTest(unittest.TestCase):
     def test_four_hour_timeframe_mapping(self):
         data_feed = DataFeed(
@@ -187,6 +210,73 @@ class DataFeedTest(unittest.TestCase):
         self.assertIsNotNone(refresh_calls[0])
         self.assertGreater(int(refresh_calls[0]), int(broker.calls[0]))
         self.assertLessEqual(len(refresh_calls), initial_call_count)
+
+    def test_refresh_for_strategies_returns_per_timeframe_frames(self):
+        symbol = "BTC/USDT:USDT"
+        base_time = datetime.utcnow() - timedelta(hours=5)
+        rows_15m = []
+        for idx in range(8):
+            ts = base_time + timedelta(minutes=15 * idx)
+            rows_15m.append(
+                {
+                    "timestamp": ts,
+                    "open": 100.0,
+                    "high": 101.0,
+                    "low": 99.0,
+                    "close": 100.0 + idx,
+                    "volume": 1_000 + idx,
+                }
+            )
+        rows_1h = []
+        for idx in range(4):
+            ts = base_time + timedelta(hours=idx)
+            rows_1h.append(
+                {
+                    "timestamp": ts,
+                    "open": 200.0,
+                    "high": 201.0,
+                    "low": 199.0,
+                    "close": 200.0 + idx,
+                    "volume": 2_000 + idx,
+                }
+            )
+
+        broker = MultiTimeframeBroker(
+            {
+                (symbol, "15Min"): build_price_frame(rows_15m),
+                (symbol, "1Hour"): build_price_frame(rows_1h),
+            }
+        )
+        data_feed = DataFeed(
+            broker=broker,
+            config={"data": {"candle_interval": "30Min", "lookback_days": 10}},
+        )
+        strategies = [
+            EMACrossoverStrategy(
+                {
+                    "enabled": True,
+                    "regime": ["trending_low_vol"],
+                    "timeframe": "1Hour",
+                    "fast_ema": 20,
+                    "slow_ema": 50,
+                    "require_vwap_alignment": False,
+                }
+            ),
+            VWAPReversionStrategy(
+                {
+                    "enabled": True,
+                    "regime": ["sideways_low_vol"],
+                    "timeframe": "15Min",
+                }
+            ),
+        ]
+
+        data = data_feed.refresh_for_strategies([symbol], strategies=strategies)
+
+        self.assertIn(symbol, data)
+        self.assertEqual(set(data[symbol].keys()), {"15Min", "1Hour"})
+        self.assertEqual(len(data[symbol]["15Min"]), 8)
+        self.assertEqual(len(data[symbol]["1Hour"]), 4)
 
 
 if __name__ == "__main__":

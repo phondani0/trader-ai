@@ -27,6 +27,7 @@ from src.core.backtest.engine import BacktestEngine
 from src.core.broker_factory import BrokerFactory
 from src.core.data_feed import DataFeed
 from src.core.models import TradingMode
+from src.core.strategy_approvals import get_symbol_strategy_approvals
 from src.strategies.bearish_breakdown_continuation import (
     BearishBreakdownContinuationStrategy,
 )
@@ -41,6 +42,8 @@ from src.strategies.rsi_divergence import RSIDivergenceStrategy
 from src.strategies.supertrend import SupertrendStrategy
 from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrategy
 from src.strategies.vwap_reversion import VWAPReversionStrategy
+from src.strategies.episodic_pivot import EpisodicPivotStrategy
+from src.strategies.episodic_pivot_short import EpisodicPivotShortStrategy
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -71,6 +74,8 @@ def load_strategies() -> dict:
             strat_config.get("volume_weighted_tsmom", {})
         ),
         "chart_patterns": ChartPatternStrategy(strat_config.get("chart_patterns", {})),
+        "episodic_pivot": EpisodicPivotStrategy(strat_config.get("episodic_pivot", {})),
+        "episodic_pivot_short": EpisodicPivotShortStrategy(strat_config.get("episodic_pivot_short", {})),
     }
 
 
@@ -91,7 +96,7 @@ def load_strategy_approvals(settings: dict) -> dict:
     try:
         with open(approvals_path, "r") as f:
             payload = json.load(f)
-        return payload.get("strategies", {})
+        return payload
     except Exception as exc:
         logger.error(f"Failed to load strategy approvals: {exc}")
         return {}
@@ -100,16 +105,32 @@ def load_strategy_approvals(settings: dict) -> dict:
 def apply_strategy_approvals(
     strategies: list,
     approvals: dict,
+    symbol: str | None = None,
 ) -> list:
+    symbol_scoped = (
+        symbol is not None
+        and isinstance(approvals, dict)
+        and isinstance(approvals.get("symbols"), dict)
+    )
+    scoped_approvals = (
+        get_symbol_strategy_approvals(approvals, symbol)
+        if symbol is not None
+        else approvals
+    )
     approved_strategies = []
     for strategy in strategies:
-        if approvals and strategy.name not in approvals:
+        if symbol_scoped and strategy.name not in scoped_approvals:
+            logger.info(
+                f"Skipping unbenchmarked strategy for {symbol} in live-style backtest: {strategy.name}"
+            )
+            continue
+        if scoped_approvals and strategy.name not in scoped_approvals:
             logger.info(
                 f"Skipping unbenchmarked strategy in live-style backtest: {strategy.name}"
             )
             continue
 
-        approval = approvals.get(strategy.name, {})
+        approval = scoped_approvals.get(strategy.name, {})
         deployable_regimes = approval.get("deployable_regimes")
         deployable_market_profiles = approval.get("deployable_market_profiles")
         deployable_market_biases = approval.get("deployable_market_biases")
@@ -140,7 +161,6 @@ def run_backtest(
     symbol: str,
     days: int | None,
     strategy_name: str = "all",
-    timeframe: str | None = None,
     from_date: str | None = None,
     to_date: str | None = None,
 ):
@@ -159,15 +179,13 @@ def run_backtest(
     settings = load_settings()
     if days is None:
         days = int(settings.get("data", {}).get("lookback_days", 30))
-    if timeframe is None:
-        timeframe = str(settings.get("data", {}).get("candle_interval", "5Min"))
 
     logger.info(
-        f"═══ Backtesting {symbol} — {days} days — {strategy_name} — {timeframe} ═══"
+        f"═══ Backtesting {symbol} — {days} days — {strategy_name} ═══"
     )
     risk_config = settings.get("risk_management", {})
     data_config = dict(settings.get("data", {}))
-    data_config.update({"candle_interval": timeframe, "lookback_days": days})
+    data_config.update({"lookback_days": days})
     broker = BrokerFactory.create(
         {
             "broker": {"name": "ccxt"},
@@ -187,6 +205,7 @@ def run_backtest(
         strategies = apply_strategy_approvals(
             strategies,
             load_strategy_approvals(settings),
+            symbol=symbol,
         )
         if not strategies:
             logger.error("No benchmark-approved strategies available for live-style backtest")
@@ -195,27 +214,67 @@ def run_backtest(
             "Live-style stack: "
             + ", ".join(strategy.name for strategy in strategies)
         )
+        logger.info(
+            "Strategy timeframes: "
+            + ", ".join(
+                f"{strategy.name}={data_feed.strategy_timeframe(strategy)}"
+                for strategy in strategies
+            )
+        )
     else:
         strategies = [strategy_map[strategy_name]]
+        logger.info(
+            f"Strategy timeframe: {strategies[0].name}="
+            f"{data_feed.strategy_timeframe(strategies[0])}"
+        )
 
     if from_date or to_date:
         start = _parse_datetime(from_date) if from_date else datetime.utcnow() - timedelta(days=days)
         end = _parse_datetime(to_date) if to_date else datetime.utcnow()
-        df = data_feed.get_historical_range(
-            symbol,
-            start,
-            end,
-            strategies=strategies,
-        )
+        if strategy_name == "all":
+            df = data_feed.get_historical_range_for_strategies(
+                symbol,
+                start,
+                end,
+                strategies=strategies,
+            )
+        else:
+            df = data_feed.get_historical_range(
+                symbol,
+                start,
+                end,
+                strategies=strategies,
+                timeframe=data_feed.strategy_timeframe(strategies[0]),
+            )
     else:
-        df = data_feed.get_data(symbol, force_refresh=True, strategies=strategies)
+        if strategy_name == "all":
+            df = data_feed.refresh_for_strategies([symbol], strategies=strategies).get(
+                symbol,
+                {},
+            )
+        else:
+            df = data_feed.get_data(
+                symbol,
+                force_refresh=True,
+                strategies=strategies,
+                timeframe=data_feed.strategy_timeframe(strategies[0]),
+            )
 
-    if df.empty:
-        logger.error(f"No data for {symbol}")
-        return None
+    if isinstance(df, dict):
+        if not any(not frame.empty for frame in df.values()):
+            logger.error(f"No data for {symbol}")
+            return None
+        log_multitimeframe_summary(df)
+        reference_df = data_feed.primary_frame(df)
+    else:
+        if df.empty:
+            logger.error(f"No data for {symbol}")
+            return None
+        logger.info(f"Data: {len(df)} bars from {df.index[0]} to {df.index[-1]}")
+        reference_df = df
 
-    logger.info(f"Data: {len(df)} bars from {df.index[0]} to {df.index[-1]}")
-    log_window_profile(data_feed.regime_detector.profile_window(df))
+    if not reference_df.empty:
+        log_window_profile(data_feed.regime_detector.profile_window(reference_df))
 
     engine = BacktestEngine(
         fee_pct=0.055,
@@ -300,6 +359,17 @@ def log_result(result):
             )
 
 
+def log_multitimeframe_summary(data: dict[str, object]):
+    parts = []
+    for timeframe, frame in sorted(data.items()):
+        if hasattr(frame, "empty") and not frame.empty:
+            parts.append(
+                f"{timeframe}: {len(frame)} bars from {frame.index[0]} to {frame.index[-1]}"
+            )
+    if parts:
+        logger.info("Data windows: " + " | ".join(parts))
+
+
 def _parse_datetime(value: str) -> datetime:
     try:
         return datetime.fromisoformat(value)
@@ -326,14 +396,6 @@ def main():
     )
     parser.add_argument("--strategy", default="all", help="Strategy name or 'all'")
     parser.add_argument(
-        "--timeframe",
-        default=None,
-        help=(
-            "Candle timeframe "
-            f"(defaults to config data.candle_interval={settings.get('data', {}).get('candle_interval', '5Min')})"
-        ),
-    )
-    parser.add_argument(
         "--from",
         dest="from_date",
         help="Explicit UTC/ISO start date, e.g. 2024-01-01 or 2024-01-01T00:00:00",
@@ -349,7 +411,6 @@ def main():
         args.symbol,
         args.days,
         args.strategy,
-        args.timeframe,
         args.from_date,
         args.to_date,
     )

@@ -38,6 +38,11 @@ TIMEFRAME_MAP = {
     "1h": "1h",
     "4h": "4h",
     "1d": "1d",
+    "30Min": "30m",
+    "15Min": "15m",
+    "5Min": "5m",
+    "1Hour": "1h",
+    "4Hour": "4h",
 }
 
 

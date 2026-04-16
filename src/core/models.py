@@ -12,6 +12,13 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class StrategyType(str, enum.Enum):
+    TREND_FOLLOWING = "trend_following"
+    MEAN_REVERSION = "mean_reversion"
+    SCALPING = "scalping"
+    UNKNOWN = "unknown"
+
+
 # ─── Enums ────────────────────────────────────────────────────────────
 
 class Side(str, enum.Enum):
@@ -50,6 +57,20 @@ class MarketRegime(str, enum.Enum):
     SIDEWAYS_LOW_VOL = "sideways_low_vol"
     SIDEWAYS_HIGH_VOL = "sideways_high_vol"
     UNKNOWN = "unknown"
+
+
+class MarketBias(str, enum.Enum):
+    BULLISH = "bullish"
+    BEARISH = "bearish"
+    NEUTRAL = "neutral"
+
+
+class RegimeState(BaseModel):
+    """Combined context of market regime and macro bias."""
+    regime: MarketRegime
+    bias: MarketBias
+    is_burst: bool = False
+    is_sweep: bool = False
 
 
 class TradingMode(str, enum.Enum):

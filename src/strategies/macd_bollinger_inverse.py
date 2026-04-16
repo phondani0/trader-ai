@@ -14,11 +14,14 @@ from typing import Optional
 
 import pandas as pd
 
-from src.core.models import MarketRegime, Side, Signal, SignalType
+from src.core.models import MarketRegime, Side, Signal, SignalType, StrategyType
 from src.strategies.base import BaseStrategy
 
 
 class MACDBollingerInverseStrategy(BaseStrategy):
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.TREND_FOLLOWING
 
     @property
     def name(self) -> str:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from scripts.backtest import apply_strategy_approvals, load_strategies
-from src.core.models import MarketRegime
+from src.core.models import MarketRegime, StrategyType
 from src.strategies.base import BaseStrategy
 
 
@@ -15,6 +15,10 @@ class _DummyStrategy(BaseStrategy):
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.UNKNOWN
 
     def generate_signal(self, symbol: str, df, regime: MarketRegime):
         return None
@@ -42,6 +46,30 @@ class BacktestApprovalsTest(unittest.TestCase):
         )
 
         self.assertEqual([strategy.name for strategy in filtered], ["donchian_breakout"])
+
+    def test_apply_strategy_approvals_does_not_reuse_btc_approvals_for_other_symbols(self):
+        approved = _DummyStrategy("donchian_breakout")
+
+        filtered = apply_strategy_approvals(
+            [approved],
+            {
+                "symbols": {
+                    "BTC/USDT:USDT": {
+                        "strategies": {
+                            "donchian_breakout": {
+                                "approved": True,
+                                "deployable_regimes": ["trending_low_vol"],
+                                "deployable_market_profiles": ["trend"],
+                                "deployable_market_biases": ["bullish"],
+                            }
+                        }
+                    }
+                }
+            },
+            symbol="ETH/USDT:USDT",
+        )
+
+        self.assertEqual(filtered, [])
 
 
 if __name__ == "__main__":

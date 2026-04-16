@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta
 
 from src.core.backtest.engine import BacktestEngine
-from src.core.models import MarketRegime, SignalType, Side
+from src.core.models import MarketBias, MarketRegime, RegimeState, SignalType, Side, StrategyType
 from src.intelligence.regime_detector import RegimeDetector
 from src.strategies.base import BaseStrategy
 from tests.helpers import build_price_frame
@@ -20,6 +20,10 @@ class SingleEntryStrategy(BaseStrategy):
     @property
     def name(self) -> str:
         return "single_entry"
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.TREND_FOLLOWING
 
     def generate_signal(self, symbol, df, regime):
         if self._emitted:
@@ -61,8 +65,59 @@ class NoSignalStrategy(BaseStrategy):
     def name(self) -> str:
         return "no_signal"
 
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.UNKNOWN
+
     def generate_signal(self, symbol, df, regime):
         return None
+
+
+class TimeframeTimedEntryStrategy(BaseStrategy):
+    def __init__(
+        self,
+        params: dict,
+        *,
+        name: str,
+        entry_time: datetime,
+        side: Side = Side.BUY,
+    ):
+        super().__init__(params)
+        self._name = name
+        self.entry_time = entry_time
+        self.side = side
+        self._emitted = False
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def strategy_type(self) -> StrategyType:
+        return StrategyType.TREND_FOLLOWING
+
+    def generate_signal(self, symbol, df, regime):
+        if self._emitted or df.index[-1] != self.entry_time:
+            return None
+        self._emitted = True
+        price = float(df["close"].iloc[-1])
+        if self.side == Side.BUY:
+            stop_loss = price - 1.0
+            take_profit = price + 1.0
+        else:
+            stop_loss = price + 1.0
+            take_profit = price - 1.0
+        return self._create_signal(
+            symbol=symbol,
+            signal_type=SignalType.BUY if self.side == Side.BUY else SignalType.SELL,
+            side=self.side,
+            entry_price=price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            confidence=0.7,
+            regime=regime,
+            reason=f"{self._name} timed entry",
+        )
 
 
 class CountingRegimeDetector(RegimeDetector):
@@ -71,7 +126,10 @@ class CountingRegimeDetector(RegimeDetector):
         self.profile_window_calls = 0
 
     def detect(self, df):
-        return MarketRegime.TRENDING_HIGH_VOL
+        return RegimeState(
+            regime=MarketRegime.TRENDING_HIGH_VOL,
+            bias=MarketBias.BEARISH,
+        )
 
     def profile_window(self, df):
         self.profile_window_calls += 1
@@ -82,6 +140,17 @@ class CountingRegimeDetector(RegimeDetector):
 
     def get_allowed_strategies(self, regime):
         return ["no_signal"]
+
+
+class SelectorAllowAllRegimeDetector(RegimeDetector):
+    def detect(self, df):
+        return RegimeState(
+            regime=MarketRegime.TRENDING_LOW_VOL,
+            bias=MarketBias.BULLISH,
+        )
+
+    def get_allowed_strategies(self, regime):
+        return ["range_reversion", "donchian_breakout"]
 
 
 class BacktestEngineTest(unittest.TestCase):
@@ -228,6 +297,65 @@ class BacktestEngineTest(unittest.TestCase):
         )
 
         self.assertEqual(engine.regime_detector.profile_window_calls, 3)
+
+    def test_selector_supports_mixed_strategy_timeframes(self):
+        base_time = datetime(2024, 1, 1)
+        df_15m = build_price_frame(
+            [
+                {
+                    "timestamp": base_time + timedelta(minutes=15 * i),
+                    "open": 100 + i,
+                    "high": 102 + i,
+                    "low": 99 + i,
+                    "close": 100 + i,
+                    "volume": 1000 + i,
+                    "adx": 30,
+                    "atr_pct": 1,
+                }
+                for i in range(40)
+            ]
+        )
+        df_1h = build_price_frame(
+            [
+                {
+                    "timestamp": base_time + timedelta(hours=i),
+                    "open": 200 + i,
+                    "high": 203 + i,
+                    "low": 199 + i,
+                    "close": 200 + i,
+                    "volume": 2000 + i,
+                    "adx": 30,
+                    "atr_pct": 1,
+                }
+                for i in range(35)
+            ]
+        )
+        engine = BacktestEngine(fee_pct=0.0, slippage_pct=0.0)
+        engine.regime_detector = SelectorAllowAllRegimeDetector()
+
+        result = engine.run_selector(
+            "BTC/USDT:USDT",
+            {"15Min": df_15m, "1Hour": df_1h},
+            [
+                TimeframeTimedEntryStrategy(
+                    {"enabled": True, "regime": ["all"], "timeframe": "15Min"},
+                    name="range_reversion",
+                    entry_time=df_15m.index[30],
+                ),
+                TimeframeTimedEntryStrategy(
+                    {"enabled": True, "regime": ["all"], "timeframe": "1Hour"},
+                    name="donchian_breakout",
+                    entry_time=df_1h.index[31],
+                ),
+            ],
+            min_lookback=30,
+        )
+
+        self.assertEqual(len(result.trades), 2)
+        self.assertEqual(
+            [trade.strategy for trade in result.trades],
+            ["range_reversion", "donchian_breakout"],
+        )
 
 
 if __name__ == "__main__":
