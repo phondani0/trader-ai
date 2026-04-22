@@ -155,6 +155,14 @@ class CCXTBroker(BaseBroker):
             params["stopLoss"] = {"triggerPrice": order.stop_price}
 
         try:
+            original_quantity = float(order.quantity)
+            order.quantity = self._normalize_order_quantity(symbol, order.quantity)
+            if order.quantity != original_quantity:
+                logger.warning(
+                    f"Adjusted order quantity for {symbol} from {original_quantity:g} "
+                    f"to exchange-supported size {order.quantity:g}"
+                )
+
             try:
                 self.exchange.set_leverage(self._leverage, symbol)
             except Exception:
@@ -286,6 +294,98 @@ class CCXTBroker(BaseBroker):
             logger.error(f"Failed to fetch open orders for {symbol or 'all symbols'}: {e}")
             return []
 
+    def fetch_recent_close_evidence(
+        self,
+        symbol: Optional[str] = None,
+        since: Optional[int] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        if self.exchange_id != "bybit":
+            return []
+
+        evidence: list[dict] = []
+        market = self.exchange.market(symbol) if symbol is not None else None
+        category = "linear" if (market or {}).get("linear") else "inverse"
+        symbol_id = market["id"] if market is not None else None
+
+        execution_request: dict = {
+            "category": category,
+            "limit": limit,
+        }
+        if symbol_id is not None:
+            execution_request["symbol"] = symbol_id
+        if since is not None:
+            execution_request["startTime"] = since
+
+        try:
+            response = self.exchange.private_get_v5_execution_list(execution_request)
+            rows = (
+                response.get("result", {}).get("list", [])
+                if isinstance(response, dict)
+                else []
+            )
+            for row in rows:
+                evidence.append(
+                    {
+                        "id": row.get("orderId") or row.get("execId"),
+                        "side": str(row.get("side", "")).lower(),
+                        "average": self._extract_float(row, ["execPrice"]),
+                        "filled": self._extract_float(row, ["execQty"]),
+                        "datetime": self._ms_to_iso8601(
+                            row.get("execTime") or row.get("createdTime")
+                        ),
+                        "timestamp": self._safe_int(
+                            row.get("execTime") or row.get("createdTime")
+                        ),
+                        "info": dict(row, source="execution"),
+                    }
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to fetch execution close evidence for {symbol or 'all symbols'}: {e}"
+            )
+
+        pnl_request: dict = {
+            "category": category,
+            "limit": limit,
+        }
+        if symbol_id is not None:
+            pnl_request["symbol"] = symbol_id
+        if since is not None:
+            pnl_request["startTime"] = since
+
+        try:
+            response = self.exchange.private_get_v5_position_closed_pnl(pnl_request)
+            rows = (
+                response.get("result", {}).get("list", [])
+                if isinstance(response, dict)
+                else []
+            )
+            for row in rows:
+                raw_side = str(row.get("side", "")).lower()
+                close_side = "sell" if raw_side == "buy" else "buy" if raw_side == "sell" else raw_side
+                evidence.append(
+                    {
+                        "id": row.get("orderId"),
+                        "side": close_side,
+                        "average": self._extract_float(row, ["avgExitPrice", "orderPrice"]),
+                        "filled": self._extract_float(row, ["closedSize", "qty"]),
+                        "datetime": self._ms_to_iso8601(
+                            row.get("updatedTime") or row.get("createdTime")
+                        ),
+                        "timestamp": self._safe_int(
+                            row.get("updatedTime") or row.get("createdTime")
+                        ),
+                        "info": dict(row, source="closed_pnl"),
+                    }
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to fetch closed PnL evidence for {symbol or 'all symbols'}: {e}"
+            )
+
+        return evidence
+
     def set_position_protection(
         self,
         symbol: str,
@@ -411,6 +511,31 @@ class CCXTBroker(BaseBroker):
             return OrderStatus.REJECTED
         return OrderStatus.PENDING
 
+    def _normalize_order_quantity(self, symbol: str, quantity: float) -> float:
+        market = self.exchange.market(symbol)
+        adjusted = float(quantity)
+        limits = (market.get("limits") or {}).get("amount") or {}
+        min_qty = self._extract_float(limits, ["min"])
+        max_qty = self._extract_float(limits, ["max"])
+
+        if max_qty and adjusted > max_qty:
+            adjusted = max_qty
+
+        try:
+            adjusted = float(self.exchange.amount_to_precision(symbol, adjusted))
+        except Exception:
+            precision = (market.get("precision") or {}).get("amount")
+            if isinstance(precision, int) and precision >= 0:
+                adjusted = round(adjusted, precision)
+
+        if min_qty and adjusted < min_qty:
+            raise ValueError(
+                f"Normalized order quantity {adjusted:g} is below exchange minimum {min_qty:g}"
+            )
+        if adjusted <= 0:
+            raise ValueError("Normalized order quantity must be greater than zero")
+        return adjusted
+
     def _position_idx(
         self,
         symbol: str,
@@ -456,3 +581,19 @@ class CCXTBroker(BaseBroker):
                 except (TypeError, ValueError):
                     continue
         return 0.0
+
+    @staticmethod
+    def _safe_int(value) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _ms_to_iso8601(value) -> str | None:
+        timestamp = CCXTBroker._safe_int(value)
+        if timestamp is None:
+            return None
+        return pd.to_datetime(timestamp, unit="ms", utc=True).isoformat().replace("+00:00", "Z")

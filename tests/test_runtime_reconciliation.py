@@ -29,11 +29,13 @@ class _BrokerStub:
     def __init__(
         self,
         orders=None,
+        close_evidence=None,
         positions=None,
         open_orders=None,
         is_24_7_market=True,
     ):
         self.orders = orders or []
+        self.close_evidence = close_evidence or []
         self.positions = positions or []
         self.open_orders = open_orders or []
         self._is_24_7_market = is_24_7_market
@@ -61,6 +63,9 @@ class _BrokerStub:
 
     def fetch_recent_closed_orders(self, symbol=None, limit=20):
         return list(self.orders)
+
+    def fetch_recent_close_evidence(self, symbol=None, since=None, limit=20):
+        return list(self.close_evidence)
 
     def is_market_open(self):
         return True
@@ -176,6 +181,99 @@ class RuntimeReconciliationTest(unittest.TestCase):
         self.assertAlmostEqual(trade.quantity, 2.0)
         self.assertEqual(len(db_sink.items), 1)
         self.assertEqual(len(notifier.items), 1)
+
+    def test_record_exchange_side_close_uses_close_evidence_when_closed_orders_missing(self):
+        engine = TradingEngine.__new__(TradingEngine)
+        risk_sink = _RecordingSink()
+        db_sink = _RecordingSink()
+        notifier = _RecordingSink()
+
+        engine.broker = _BrokerStub(
+            orders=[],
+            close_evidence=[
+                {
+                    "side": "sell",
+                    "average": 94.0,
+                    "filled": 2.0,
+                    "datetime": "2026-04-12T22:10:00Z",
+                    "info": {
+                        "source": "execution",
+                        "stopOrderType": "StopLoss",
+                    },
+                }
+            ],
+        )
+        engine.risk_manager = risk_sink
+        engine.db = db_sink
+        engine.notifier = notifier
+        engine._managed_positions = {
+            "BTC/USDT:USDT": {
+                "side": Side.BUY,
+                "entry_time": datetime(2026, 4, 12, 22, 5, 38),
+                "quantity": 2.0,
+                "entry_price": 100.0,
+                "signal": SimpleNamespace(
+                    strategy_name="vwap_reversion",
+                    entry_price=100.0,
+                    stop_loss=95.0,
+                ),
+            }
+        }
+
+        engine._record_exchange_side_close("BTC/USDT:USDT")
+
+        self.assertNotIn("BTC/USDT:USDT", engine._managed_positions)
+        self.assertEqual(len(risk_sink.items), 1)
+        trade = risk_sink.items[0]
+        self.assertEqual(trade.reason_exit, "Exchange stop-loss triggered")
+        self.assertAlmostEqual(trade.exit_price, 94.0)
+
+    def test_record_exchange_side_close_forces_reconciliation_after_repeated_missing_scans(self):
+        engine = TradingEngine.__new__(TradingEngine)
+        risk_sink = _RecordingSink()
+        db_sink = _RecordingSink()
+        notifier = _RecordingSink()
+
+        engine.broker = _BrokerStub(orders=[], close_evidence=[])
+        engine.risk_manager = risk_sink
+        engine.db = db_sink
+        engine.notifier = notifier
+        engine._managed_positions = {
+            "BTC/USDT:USDT": {
+                "side": Side.BUY,
+                "entry_time": datetime(2026, 4, 12, 22, 5, 38),
+                "quantity": 2.0,
+                "entry_price": 100.0,
+                "signal": SimpleNamespace(
+                    strategy_name="vwap_reversion",
+                    entry_price=100.0,
+                    stop_loss=95.0,
+                ),
+            }
+        }
+
+        engine._record_exchange_side_close("BTC/USDT:USDT")
+        self.assertIn("BTC/USDT:USDT", engine._managed_positions)
+        self.assertEqual(
+            engine._managed_positions["BTC/USDT:USDT"]["_missing_exchange_scans"], 1
+        )
+
+        engine._record_exchange_side_close("BTC/USDT:USDT")
+        self.assertIn("BTC/USDT:USDT", engine._managed_positions)
+        self.assertEqual(
+            engine._managed_positions["BTC/USDT:USDT"]["_missing_exchange_scans"], 2
+        )
+
+        engine._record_exchange_side_close("BTC/USDT:USDT")
+
+        self.assertNotIn("BTC/USDT:USDT", engine._managed_positions)
+        self.assertEqual(len(risk_sink.items), 1)
+        trade = risk_sink.items[0]
+        self.assertEqual(
+            trade.reason_exit,
+            "Exchange-side stop-loss inferred after repeated missing-position scans",
+        )
+        self.assertAlmostEqual(trade.exit_price, 95.0)
 
     def test_managed_position_db_round_trip(self):
         with TemporaryDirectory() as tmp_dir:

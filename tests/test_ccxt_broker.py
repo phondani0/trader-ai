@@ -20,6 +20,7 @@ class _ExchangeStub:
         self.set_leverage_calls = []
         self.trading_stop_calls = []
         self.fetch_positions_result = []
+        self.market_max_qty = None
 
     def set_leverage(self, leverage, symbol):
         self.set_leverage_calls.append((leverage, symbol))
@@ -43,11 +44,18 @@ class _ExchangeStub:
         }
 
     def market(self, symbol):
-        return {
+        market = {
             "id": "BTCUSDT",
             "linear": True,
             "inverse": False,
+            "limits": {"amount": {}},
         }
+        if self.market_max_qty is not None:
+            market["limits"]["amount"]["max"] = self.market_max_qty
+        return market
+
+    def amount_to_precision(self, symbol, amount):
+        return f"{float(amount):.4f}"
 
     def fetch_positions(self, symbols=None):
         return list(self.fetch_positions_result)
@@ -136,6 +144,31 @@ class CCXTBrokerProtectionTest(unittest.TestCase):
         self.assertEqual(payload["positionIdx"], 0)
         self.assertEqual(payload["stopLoss"], "95.0")
         self.assertEqual(payload["takeProfit"], "110.0")
+
+    def test_place_order_caps_quantity_to_exchange_max(self):
+        broker = CCXTBroker.__new__(CCXTBroker)
+        broker.exchange = _ExchangeStub()
+        broker.exchange.market_max_qty = 100.0
+        broker._leverage = 5
+        broker.exchange_id = "bybit"
+
+        signal = _sample_signal()
+        order = Order(
+            symbol=signal.symbol,
+            side=Side.BUY,
+            quantity=125.6789,
+            order_type=OrderType.MARKET,
+            strategy_name=signal.strategy_name,
+            signal=signal,
+        )
+
+        result = broker.place_order(order)
+
+        self.assertEqual(result.id, "entry-1")
+        self.assertEqual(len(broker.exchange.create_order_calls), 1)
+        call = broker.exchange.create_order_calls[0]
+        self.assertEqual(call["amount"], 100.0)
+        self.assertEqual(order.quantity, 100.0)
 
 
 if __name__ == "__main__":

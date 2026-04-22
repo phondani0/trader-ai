@@ -901,20 +901,27 @@ class TradingEngine:
     def _log_no_signal_context(
         self,
         active_candidates: dict[str, dict],
-        signal_data: dict[str, pd.DataFrame],
+        signal_data: dict[str, pd.DataFrame | dict[str, pd.DataFrame]],
     ):
         """Explain why active discoveries did not convert into executable signals."""
         candidate_summaries: list[str] = []
 
         for symbol, candidate in list(active_candidates.items())[:5]:
-            df = signal_data.get(symbol)
-            if df is None or df.empty:
+            symbol_data = signal_data.get(symbol)
+            if symbol_data is None:
                 candidate_summaries.append(
                     f"{symbol}(score={candidate.get('score', 0.0):.1f}, no data)"
                 )
                 continue
 
-            diagnosis = self.signal_aggregator.diagnose_symbol(symbol, df)
+            primary_frame = self.data_feed.primary_frame(symbol_data)
+            if primary_frame.empty:
+                candidate_summaries.append(
+                    f"{symbol}(score={candidate.get('score', 0.0):.1f}, no data)"
+                )
+                continue
+
+            diagnosis = self.signal_aggregator.diagnose_symbol(symbol, symbol_data)
             regime = diagnosis["regime"]
             market_profile = diagnosis["market_profile"]
             eligible = diagnosis["eligible_strategies"]
@@ -1070,15 +1077,35 @@ class TradingEngine:
         if not managed:
             return
 
+        entry_time = managed.get("entry_time")
+        since_ms = None
+        if isinstance(entry_time, datetime):
+            since_ms = int(entry_time.timestamp() * 1000)
+
         closed_orders = self.broker.fetch_recent_closed_orders(symbol=symbol, limit=10)
-        closing_order = self._match_closing_order(managed, closed_orders)
+        close_evidence = self.broker.fetch_recent_close_evidence(
+            symbol=symbol,
+            since=since_ms,
+            limit=20,
+        )
+        closing_order = self._match_closing_order(
+            managed,
+            [*closed_orders, *close_evidence],
+        )
 
         if not closing_order:
+            missing_scans = int(managed.get("_missing_exchange_scans", 0)) + 1
+            managed["_missing_exchange_scans"] = missing_scans
+            if missing_scans >= 3:
+                self._force_record_missing_exchange_close(symbol, managed)
+                return
             logger.warning(
                 f"Position disappeared on exchange for {symbol}, but no closing order "
                 "was found yet. Keeping local tracking until a later scan."
             )
             return
+
+        managed.pop("_missing_exchange_scans", None)
 
         signal = managed.get("signal")
         entry_price = float(managed.get("entry_price") or getattr(signal, "entry_price", 0.0) or 0.0)
@@ -1126,6 +1153,46 @@ class TradingEngine:
             f"({reason})"
         )
 
+    def _force_record_missing_exchange_close(self, symbol: str, managed: dict):
+        signal = managed.get("signal")
+        entry_price = float(
+            managed.get("entry_price") or getattr(signal, "entry_price", 0.0) or 0.0
+        )
+        quantity = float(managed.get("quantity") or 0.0)
+        exit_price = float(getattr(signal, "stop_loss", 0.0) or 0.0) or entry_price
+        reason = "Exchange-side close inferred after repeated missing-position scans"
+        if getattr(signal, "stop_loss", 0.0):
+            reason = "Exchange-side stop-loss inferred after repeated missing-position scans"
+
+        trade = Trade(
+            symbol=symbol,
+            side=managed.get("side", Side.BUY),
+            quantity=quantity,
+            entry_price=entry_price,
+            exit_price=exit_price,
+            entry_time=managed.get("entry_time", datetime.utcnow()),
+            exit_time=datetime.utcnow(),
+            strategy_name=getattr(signal, "strategy_name", "unknown"),
+            reason_exit=reason,
+        )
+        trade.calculate_pnl()
+
+        self.risk_manager.record_trade(trade)
+        self.db.record_trade(trade)
+        self.notifier.notify_trade_closed(
+            symbol=trade.symbol,
+            side=trade.side.value,
+            pnl=trade.pnl,
+            pnl_pct=trade.pnl_pct,
+            reason=reason,
+        )
+        self._managed_positions.pop(symbol, None)
+        self._delete_persisted_managed_position(symbol)
+        logger.warning(
+            f"🔄 Reconciled missing exchange position for {symbol} using "
+            f"conservative inferred exit at ${exit_price:.4f} ({reason})"
+        )
+
     def _match_closing_order(self, managed: dict, closed_orders: list[dict]) -> dict | None:
         entry_time = managed.get("entry_time")
         expected_side = Side.SELL if managed.get("side") == Side.BUY else Side.BUY
@@ -1169,6 +1236,7 @@ class TradingEngine:
     @staticmethod
     def _infer_exchange_close_reason(order: dict) -> str:
         info = order.get("info", {}) if isinstance(order.get("info"), dict) else {}
+        source = str(info.get("source", "")).lower()
         stop_order_type = str(info.get("stopOrderType", "")).lower()
         create_type = str(info.get("createType", "")).lower()
         trigger_price = (
@@ -1179,6 +1247,10 @@ class TradingEngine:
 
         if "stoploss" in stop_order_type or "stoploss" in create_type:
             return "Exchange stop-loss triggered"
+        if source == "closed_pnl":
+            return "Exchange-side close reconciled from closed P&L history"
+        if source == "execution":
+            return "Exchange-side close reconciled from execution history"
         if trigger_price:
             return "Exchange trigger order executed"
         if info.get("reduceOnly") or order.get("reduceOnly"):

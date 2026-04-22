@@ -224,6 +224,21 @@ class BaseBroker(ABC):
         """
         return []
 
+    def fetch_recent_close_evidence(
+        self,
+        symbol: Optional[str] = None,
+        since: Optional[int] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Optional broker hook for close evidence beyond closed orders.
+
+        Exchanges may surface stop-loss / TP / liquidation closes through
+        execution history or closed-PnL endpoints instead of fetchClosedOrders.
+        Runtime reconciliation uses this as supplemental evidence.
+        """
+        return []
+
     def set_position_protection(
         self,
         symbol: str,
