@@ -12,7 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from src.core.backtest.models import BacktestResult, BacktestTrade
-from src.core.models import Side, MarketBias, MarketRegime, StrategyType
+from src.core.models import Side, MarketBias, StrategyType
 from src.core.timeframes import canonical_timeframe, timeframe_to_minutes
 from src.intelligence.regime_detector import RegimeDetector
 from src.intelligence.signal_aggregator import SignalAggregator

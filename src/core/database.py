@@ -87,6 +87,24 @@ class DatabaseManager:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS managed_positions (
+                    symbol TEXT PRIMARY KEY,
+                    order_id TEXT,
+                    side TEXT NOT NULL,
+                    quantity REAL NOT NULL,
+                    entry_price REAL NOT NULL,
+                    entry_time TIMESTAMP,
+                    strategy_name TEXT,
+                    stop_loss REAL,
+                    take_profit REAL,
+                    signal_payload_json TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+
             # 3. Passive parameter suggestions
             cursor.execute(
                 """
@@ -336,6 +354,85 @@ class DatabaseManager:
         )
         with self._get_connection() as conn:
             conn.execute(query, params)
+            conn.commit()
+
+    def upsert_managed_position(self, managed: Dict[str, Any]):
+        """Persist or refresh runtime-managed position metadata keyed by symbol."""
+        signal = managed.get("signal")
+        signal_payload = None
+        strategy_name = managed.get("strategy_name", "")
+        stop_loss = managed.get("stop_loss")
+        take_profit = managed.get("take_profit")
+
+        if signal is not None:
+            signal_payload = json.dumps(signal.model_dump(mode="json"), sort_keys=True)
+            strategy_name = getattr(signal, "strategy_name", strategy_name)
+            stop_loss = getattr(signal, "stop_loss", stop_loss)
+            take_profit = getattr(signal, "take_profit", take_profit)
+
+        side = managed.get("side")
+        if hasattr(side, "value"):
+            side = side.value
+
+        entry_time = managed.get("entry_time")
+        if isinstance(entry_time, datetime):
+            entry_time = entry_time.isoformat(timespec="seconds")
+
+        query = """
+            INSERT INTO managed_positions (
+                symbol,
+                order_id,
+                side,
+                quantity,
+                entry_price,
+                entry_time,
+                strategy_name,
+                stop_loss,
+                take_profit,
+                signal_payload_json,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(symbol) DO UPDATE SET
+                order_id = excluded.order_id,
+                side = excluded.side,
+                quantity = excluded.quantity,
+                entry_price = excluded.entry_price,
+                entry_time = excluded.entry_time,
+                strategy_name = excluded.strategy_name,
+                stop_loss = excluded.stop_loss,
+                take_profit = excluded.take_profit,
+                signal_payload_json = excluded.signal_payload_json,
+                updated_at = CURRENT_TIMESTAMP
+        """
+        params = (
+            managed["symbol"],
+            managed.get("order_id"),
+            side,
+            float(managed.get("quantity") or 0.0),
+            float(managed.get("entry_price") or 0.0),
+            entry_time,
+            strategy_name,
+            stop_loss,
+            take_profit,
+            signal_payload,
+        )
+        with self._get_connection() as conn:
+            conn.execute(query, params)
+            conn.commit()
+
+    def get_managed_positions(self) -> List[Dict]:
+        """Fetch persisted managed-position metadata for runtime recovery."""
+        query = "SELECT * FROM managed_positions ORDER BY symbol"
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def delete_managed_position(self, symbol: str):
+        """Delete persisted runtime metadata for a managed symbol."""
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM managed_positions WHERE symbol = ?", (symbol,))
             conn.commit()
 
     def get_recent_trades(self, days: int = 14) -> List[Dict]:

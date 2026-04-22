@@ -34,6 +34,7 @@ start = "src.main:main"
 backtest = "scripts.backtest:main"
 benchmark = "scripts.benchmark:main"
 trade = "scripts.trade:main"
+adopt-position = "scripts.adopt_position:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -46,3 +47,6 @@ packages = ["src", "scripts"]
 dev = [
     "ruff>=0.15.10",
 ]
+
+[tool.ruff]
+extend-exclude = [".agents"]

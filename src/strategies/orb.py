@@ -119,7 +119,6 @@ class ORBStrategy(BaseStrategy):
         close = curr["close"]
         volume_ratio = curr.get("volume_ratio", 1.0)
         vwap = curr.get("vwap", close)
-        atr = curr.get("atr", orb_range)
 
         if pd.isna(close) or pd.isna(vwap):
             return None

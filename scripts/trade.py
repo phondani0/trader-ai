@@ -16,7 +16,6 @@ import time
 import yaml
 from pathlib import Path
 from dotenv import load_dotenv
-from loguru import logger
 
 from src.core.broker_factory import BrokerFactory
 from src.core.models import TradingMode, Order, OrderType, Side
@@ -83,7 +82,7 @@ def main():
     if args.side == "sell" and not broker.supports_short_selling:
         pos = broker.get_position(args.symbol.replace("/", ""))
         if not pos or pos.quantity < args.qty:
-            print(f"❌ ERROR: This broker does not support short selling.")
+            print("❌ ERROR: This broker does not support short selling.")
             print(f"   You requested to sell {args.qty} {args.symbol}, "
                   f"but you have {pos.quantity if pos else 0.0} available.")
             sys.exit(1)
@@ -99,7 +98,7 @@ def main():
         strategy_name="manual_override",
     )
 
-    print(f"\nTransmitting Order...")
+    print("\nTransmitting Order...")
     try:
         res = broker.place_order(order)
         print(f"✅ SUCCESS: {args.side.upper()} {args.qty}x {args.symbol}")
@@ -113,7 +112,7 @@ def main():
     if args.round_trip and args.side == "buy":
         print("\n⏳ Round-Trip Mode: Waiting 3 seconds for buy to fill...")
         time.sleep(3)
-        print(f"\nTransmitting Reverse (SELL) Order...")
+        print("\nTransmitting Reverse (SELL) Order...")
         sell_order = Order(
             symbol=args.symbol, side=Side.SELL, quantity=args.qty,
             order_type=OrderType.MARKET, strategy_name="manual_roundtrip",

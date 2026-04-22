@@ -11,7 +11,6 @@ Usage:
 
 from __future__ import annotations
 
-from loguru import logger
 
 from src.core.base_broker import BaseBroker
 from src.core.models import TradingMode

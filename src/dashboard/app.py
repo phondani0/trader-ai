@@ -9,14 +9,10 @@ Run with: uvicorn src.dashboard.app:app --host 0.0.0.0 --port 8080
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
-from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from loguru import logger
 
 
 app = FastAPI(title="Trader AI Dashboard", version="1.0.0")

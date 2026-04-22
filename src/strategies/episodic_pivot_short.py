@@ -78,11 +78,12 @@ class EpisodicPivotShortStrategy(BaseStrategy):
             # Filter: Don't chase if the crash candle itself is > 1.5x ADR
             if bars_move > (adr * 1.5):
                 return None
-                
-            if risk <= 0: return None
-            
+
+            if risk <= 0:
+                return None
+
             take_profit = close - (risk * tp_rr_ratio)
-            
+
             return self._create_signal(
                 symbol=symbol,
                 signal_type=SignalType.SELL,

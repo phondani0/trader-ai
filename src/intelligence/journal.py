@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Dict
 
 from loguru import logger
 
@@ -92,9 +92,6 @@ class DiscoveryJournal:
         if not recent:
             return "No recent discoveries to report."
 
-        total = len(recent)
-        completed = [r for r in recent if r["status"] == "completed"]
-        
         report = [
             "\n" + "═" * 60,
             "📊 DISCOVERY PERFORMANCE REPORT (24H)",

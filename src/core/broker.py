@@ -61,6 +61,7 @@ class CCXTBroker(BaseBroker):
 
         self.mode = mode
         is_paper = mode == TradingMode.PAPER
+        self.exchange_id = exchange_id
 
         exchange_class = getattr(ccxt, exchange_id)
 
@@ -145,8 +146,13 @@ class CCXTBroker(BaseBroker):
             order_type = "market"
 
         params = {}
-        if order.stop_price:
-            params["stopLoss"] = order.stop_price
+        if order.signal:
+            if order.signal.stop_loss:
+                params["stopLoss"] = {"triggerPrice": order.signal.stop_loss}
+            if order.signal.take_profit:
+                params["takeProfit"] = {"triggerPrice": order.signal.take_profit}
+        elif order.stop_price:
+            params["stopLoss"] = {"triggerPrice": order.stop_price}
 
         try:
             try:
@@ -269,6 +275,54 @@ class CCXTBroker(BaseBroker):
             logger.error(f"Failed to fetch closed orders for {symbol or 'all symbols'}: {e}")
             return []
 
+    def fetch_open_orders(
+        self,
+        symbol: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        try:
+            return self.exchange.fetch_open_orders(symbol=symbol, limit=limit)
+        except Exception as e:
+            logger.error(f"Failed to fetch open orders for {symbol or 'all symbols'}: {e}")
+            return []
+
+    def set_position_protection(
+        self,
+        symbol: str,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        position_side: Optional[Side] = None,
+    ) -> bool:
+        if self.exchange_id != "bybit":
+            logger.warning(
+                f"Exchange-side TP/SL sync for existing positions is not implemented for {self.exchange_id}."
+            )
+            return False
+
+        market = self.exchange.market(symbol)
+        category = "linear" if market.get("linear") else "inverse"
+        payload: dict = {
+            "category": category,
+            "symbol": market["id"],
+            "tpslMode": "Full",
+            "positionIdx": self._position_idx(symbol, position_side),
+        }
+        if stop_loss is not None:
+            payload["stopLoss"] = str(stop_loss)
+        if take_profit is not None:
+            payload["takeProfit"] = str(take_profit)
+
+        try:
+            self.exchange.private_post_v5_position_trading_stop(payload)
+            logger.info(
+                f"Synced exchange TP/SL for {symbol}: "
+                f"stop_loss={stop_loss}, take_profit={take_profit}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to sync exchange TP/SL for {symbol}: {e}")
+            return False
+
     # ─── Market Data ──────────────────────────────────────────────
 
     def fetch_ohlcv(
@@ -356,6 +410,39 @@ class CCXTBroker(BaseBroker):
         elif stat == "rejected":
             return OrderStatus.REJECTED
         return OrderStatus.PENDING
+
+    def _position_idx(
+        self,
+        symbol: str,
+        position_side: Optional[Side],
+    ) -> int:
+        try:
+            positions = self.exchange.fetch_positions([symbol])
+        except Exception:
+            positions = []
+
+        for position in positions:
+            qty = float(
+                position.get("contracts", 0.0)
+                or position.get("info", {}).get("size", 0.0)
+                or 0.0
+            )
+            if qty == 0.0:
+                continue
+            raw_idx = position.get("positionIdx") or position.get("info", {}).get(
+                "positionIdx"
+            )
+            if raw_idx not in (None, ""):
+                try:
+                    return int(raw_idx)
+                except (TypeError, ValueError):
+                    break
+
+        if position_side == Side.BUY:
+            return 0
+        if position_side == Side.SELL:
+            return 0
+        return 0
 
     @staticmethod
     def _extract_float(payload: dict, keys: list[str]) -> float:

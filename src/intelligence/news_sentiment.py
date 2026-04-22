@@ -12,7 +12,6 @@ This is an optional enhancement — the bot works without it.
 
 from __future__ import annotations
 
-from typing import Optional
 from loguru import logger
 
 
@@ -41,7 +40,6 @@ class NewsSentimentEngine:
         """Load FinBERT model (lazy, downloads on first use)."""
         try:
             from transformers import AutoTokenizer, AutoModelForSequenceClassification
-            import torch
 
             model_name = "ProsusAI/finbert"
             self._tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -82,7 +80,6 @@ class NewsSentimentEngine:
             # FinBERT labels: positive, negative, neutral
             positive = float(probs[0][0])
             negative = float(probs[0][1])
-            neutral = float(probs[0][2])
 
             # Convert to -1 to +1 score
             score = positive - negative

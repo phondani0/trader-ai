@@ -27,7 +27,6 @@ from alpaca.trading.requests import (
 from alpaca.trading.enums import (
     OrderSide,
     TimeInForce,
-    OrderType as AlpacaOrderType,
     OrderStatus as AlpacaOrderStatus,
     QueryOrderStatus,
 )
@@ -261,6 +260,35 @@ class AlpacaBroker(BaseBroker):
         except Exception as e:
             logger.error(f"Failed to close all positions: {e}")
             return False
+
+    def fetch_open_orders(
+        self,
+        symbol: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        try:
+            request = GetOrdersRequest(
+                status=QueryOrderStatus.OPEN,
+                limit=limit,
+                symbols=[symbol] if symbol else None,
+            )
+            orders = self.trading_client.get_orders(filter=request)
+            return [
+                {
+                    "id": str(order.id),
+                    "symbol": order.symbol,
+                    "side": str(order.side.value if hasattr(order.side, "value") else order.side),
+                    "type": str(order.type.value if hasattr(order.type, "value") else order.type),
+                    "status": str(order.status.value if hasattr(order.status, "value") else order.status),
+                    "limit_price": float(order.limit_price) if order.limit_price else None,
+                    "stop_price": float(order.stop_price) if order.stop_price else None,
+                    "qty": float(order.qty) if order.qty else None,
+                }
+                for order in orders
+            ]
+        except Exception as e:
+            logger.error(f"Failed to fetch open orders for {symbol or 'all symbols'}: {e}")
+            return []
 
     # ─── Market Data ──────────────────────────────────────────────
 

@@ -30,6 +30,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from loguru import logger
@@ -38,7 +39,11 @@ from src.core.broker_factory import BrokerFactory
 from src.core.database import DatabaseManager
 from src.core.data_feed import DataFeed
 from src.core.models import (
+    MarketRegime,
     OrderStatus,
+    Position,
+    Signal,
+    SignalType,
     Side,
     Trade,
     TradingMode,
@@ -197,6 +202,8 @@ class TradingEngine:
         self._managed_positions: dict[
             str, dict
         ] = {}  # symbol → {signal, order_id, ...}
+        self._foreign_exchange_state_detected = False
+        self._foreign_exchange_state_signature: str | None = None
         self._bootstrapped = False
 
         logger.info(f"Capital: ${capital:,.2f}")
@@ -204,6 +211,374 @@ class TradingEngine:
         logger.info(
             f"Strategies: {', '.join(s.name for s in self.strategies if s.enabled)}"
         )
+
+    def _persist_managed_position(self, symbol: str):
+        managed = self._managed_positions.get(symbol)
+        if not managed:
+            return
+        if not hasattr(self.db, "upsert_managed_position"):
+            return
+
+        payload = dict(managed)
+        payload["symbol"] = symbol
+        try:
+            self.db.upsert_managed_position(payload)
+        except Exception as e:
+            logger.error(f"Failed to persist managed position for {symbol}: {e}")
+
+    def _delete_persisted_managed_position(self, symbol: str):
+        if not hasattr(self.db, "delete_managed_position"):
+            return
+        try:
+            self.db.delete_managed_position(symbol)
+        except Exception as e:
+            logger.error(f"Failed to delete persisted managed position for {symbol}: {e}")
+
+    @staticmethod
+    def _parse_runtime_datetime(raw_dt) -> datetime | None:
+        if not raw_dt:
+            return None
+        if isinstance(raw_dt, datetime):
+            return raw_dt
+        try:
+            return datetime.fromisoformat(str(raw_dt).replace("Z", "+00:00")).replace(
+                tzinfo=None
+            )
+        except ValueError:
+            return None
+
+    def _load_persisted_managed_positions(self) -> dict[str, dict]:
+        persisted: dict[str, dict] = {}
+        if not hasattr(self.db, "get_managed_positions"):
+            return persisted
+        try:
+            rows = self.db.get_managed_positions()
+        except Exception as e:
+            logger.error(f"Failed to load persisted managed positions: {e}")
+            return persisted
+
+        for row in rows:
+            signal = None
+            signal_payload_json = row.get("signal_payload_json")
+            if signal_payload_json:
+                try:
+                    signal = Signal.model_validate(json.loads(signal_payload_json))
+                except Exception as e:
+                    logger.error(
+                        f"Failed to deserialize persisted signal for {row.get('symbol')}: {e}"
+                    )
+
+            side_raw = row.get("side", Side.BUY.value)
+            try:
+                side = Side(side_raw)
+            except ValueError:
+                side = Side.BUY
+
+            persisted[row["symbol"]] = {
+                "order_id": row.get("order_id"),
+                "signal": signal,
+                "entry_time": self._parse_runtime_datetime(row.get("entry_time"))
+                or datetime.utcnow(),
+                "side": side,
+                "quantity": float(row.get("quantity") or 0.0),
+                "entry_price": float(
+                    row.get("entry_price")
+                    or getattr(signal, "entry_price", 0.0)
+                    or 0.0
+                ),
+            }
+        return persisted
+
+    @staticmethod
+    def _exchange_order_id(order: dict) -> str | None:
+        info = order.get("info", {}) if isinstance(order.get("info"), dict) else {}
+        raw_order_id = (
+            order.get("id")
+            or order.get("orderId")
+            or info.get("orderId")
+            or info.get("order_id")
+        )
+        if raw_order_id in (None, ""):
+            return None
+        return str(raw_order_id)
+
+    @staticmethod
+    def _exchange_flag(order: dict, *keys: str) -> bool:
+        info = order.get("info", {}) if isinstance(order.get("info"), dict) else {}
+        for key in keys:
+            for container in (order, info):
+                value = container.get(key)
+                if isinstance(value, bool):
+                    if value:
+                        return True
+                    continue
+                if value in (None, "", 0, "0", "false", "False"):
+                    continue
+                return True
+        return False
+
+    def _known_managed_order_ids(self) -> set[str]:
+        order_ids: set[str] = set()
+        for managed in self._managed_positions.values():
+            order_id = managed.get("order_id")
+            if order_id:
+                order_ids.add(str(order_id))
+        return order_ids
+
+    def _is_expected_managed_open_order(self, order: dict) -> bool:
+        symbol = str(order.get("symbol") or "")
+        managed = self._managed_positions.get(symbol)
+        if not managed:
+            return False
+
+        order_id = self._exchange_order_id(order)
+        if order_id and order_id == str(managed.get("order_id") or ""):
+            return True
+
+        if self._exchange_flag(
+            order,
+            "reduceOnly",
+            "closeOnTrigger",
+            "triggerPrice",
+            "stopLossPrice",
+            "takeProfitPrice",
+            "stopLoss",
+            "takeProfit",
+            "stopOrderType",
+        ):
+            return True
+
+        return False
+
+    def _describe_foreign_exchange_state(
+        self,
+        foreign_positions: list,
+        foreign_orders: list[dict],
+    ) -> tuple[str, str]:
+        position_bits = [
+            f"{position.symbol}:{position.side.value}:{float(position.quantity):g}"
+            for position in sorted(foreign_positions, key=lambda item: item.symbol)
+        ]
+        order_bits = []
+        for order in foreign_orders:
+            order_bits.append(
+                ":".join(
+                    [
+                        str(order.get("symbol") or "?"),
+                        str(order.get("side") or "?"),
+                        self._exchange_order_id(order) or "unknown-id",
+                    ]
+                )
+            )
+
+        signature = json.dumps(
+            {
+                "positions": position_bits,
+                "orders": sorted(order_bits),
+            },
+            sort_keys=True,
+        )
+
+        details: list[str] = []
+        if position_bits:
+            details.append("positions=" + ", ".join(position_bits))
+        if order_bits:
+            details.append("open_orders=" + ", ".join(sorted(order_bits)))
+
+        return signature, "; ".join(details)
+
+    def _set_foreign_exchange_state(
+        self,
+        foreign_positions: list,
+        foreign_orders: list[dict],
+    ):
+        if not foreign_positions and not foreign_orders:
+            if getattr(self, "_foreign_exchange_state_detected", False):
+                logger.info(
+                    "Foreign exchange state cleared. New bot entries may resume."
+                )
+            self._foreign_exchange_state_detected = False
+            self._foreign_exchange_state_signature = None
+            return
+
+        signature, details = self._describe_foreign_exchange_state(
+            foreign_positions,
+            foreign_orders,
+        )
+        already_reported = (
+            getattr(self, "_foreign_exchange_state_detected", False)
+            and getattr(self, "_foreign_exchange_state_signature", None) == signature
+        )
+        self._foreign_exchange_state_detected = True
+        self._foreign_exchange_state_signature = signature
+
+        if already_reported:
+            return
+
+        message = (
+            "Foreign exchange state detected on the bot-only account. "
+            "New bot entries are paused until the account is clean. "
+            f"{details}"
+        )
+        logger.error(message)
+        notifier = getattr(self, "notifier", None)
+        if notifier and hasattr(notifier, "notify_error"):
+            notifier.notify_error(message)
+
+    def _reconcile_foreign_exchange_state(self, positions: list):
+        open_orders = self.broker.fetch_open_orders(limit=50)
+        managed_symbols = set(self._managed_positions.keys())
+        known_order_ids = self._known_managed_order_ids()
+
+        foreign_positions = [
+            position for position in positions if position.symbol not in managed_symbols
+        ]
+
+        foreign_orders = []
+        for order in open_orders:
+            order_id = self._exchange_order_id(order)
+            if order_id and order_id in known_order_ids:
+                continue
+            if self._is_expected_managed_open_order(order):
+                continue
+            foreign_orders.append(order)
+
+        self._set_foreign_exchange_state(foreign_positions, foreign_orders)
+
+    def _note_managed_position_drift(
+        self,
+        symbol: str,
+        field_name: str,
+        old_value,
+        new_value,
+    ):
+        message = (
+            f"Managed position for {symbol} drifted from bot intent on exchange "
+            f"({field_name}: {old_value} -> {new_value}). "
+            "Local tracking was updated to exchange reality."
+        )
+        logger.warning(message)
+        notifier = getattr(self, "notifier", None)
+        if notifier and hasattr(notifier, "notify_error"):
+            notifier.notify_error(message)
+
+    def _sync_managed_positions_with_exchange(self, positions):
+        active_symbols = {position.symbol for position in positions}
+
+        for position in positions:
+            managed = self._managed_positions.get(position.symbol)
+            if managed is None:
+                continue
+
+            changed = False
+            if managed.get("side") != position.side:
+                self._note_managed_position_drift(
+                    position.symbol,
+                    "side",
+                    managed.get("side"),
+                    position.side,
+                )
+                managed["side"] = position.side
+                changed = True
+            if float(managed.get("quantity") or 0.0) != float(position.quantity):
+                self._note_managed_position_drift(
+                    position.symbol,
+                    "quantity",
+                    managed.get("quantity"),
+                    position.quantity,
+                )
+                managed["quantity"] = position.quantity
+                changed = True
+            if float(managed.get("entry_price") or 0.0) != float(position.entry_price):
+                self._note_managed_position_drift(
+                    position.symbol,
+                    "entry_price",
+                    managed.get("entry_price"),
+                    position.entry_price,
+                )
+                managed["entry_price"] = position.entry_price
+                changed = True
+
+            if changed:
+                self._persist_managed_position(position.symbol)
+
+        stale_symbols = [
+            symbol
+            for symbol in list(self._managed_positions.keys())
+            if symbol not in active_symbols
+        ]
+        for symbol in stale_symbols:
+            self._record_exchange_side_close(symbol)
+
+    def _rehydrate_managed_positions_from_exchange(self):
+        positions = self.broker.get_positions()
+        self._managed_positions = self._load_persisted_managed_positions()
+        self._sync_managed_positions_with_exchange(positions)
+        self._reconcile_foreign_exchange_state(positions)
+
+        if self._managed_positions:
+            logger.info(
+                "Runtime position recovery: "
+                + ", ".join(sorted(self._managed_positions.keys()))
+            )
+
+    def adopt_exchange_position(
+        self,
+        symbol: str,
+        strategy_name: str,
+        stop_loss: float,
+        take_profit: float,
+        reason: str = "Manual adoption of legacy exchange position",
+    ) -> dict:
+        position = self.broker.get_position(symbol)
+        if position is None:
+            raise ValueError(f"No open exchange position found for {symbol}")
+
+        protection_synced = self.broker.set_position_protection(
+            symbol=symbol,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            position_side=position.side,
+        )
+        if not protection_synced:
+            raise RuntimeError(
+                f"Failed to sync exchange TP/SL for adopted position {symbol}"
+            )
+
+        signal = Signal(
+            timestamp=datetime.utcnow(),
+            symbol=symbol,
+            strategy_name=strategy_name,
+            signal_type=SignalType.BUY if position.side == Side.BUY else SignalType.SELL,
+            side=position.side,
+            entry_price=position.entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            confidence=1.0,
+            regime=MarketRegime.UNKNOWN,
+            reason=reason,
+            metadata={
+                "adopted": True,
+                "adopted_at": datetime.utcnow().isoformat(timespec="seconds"),
+                "source": "manual_adoption",
+            },
+        )
+
+        managed = {
+            "order_id": None,
+            "signal": signal,
+            "entry_time": datetime.utcnow(),
+            "side": position.side,
+            "quantity": position.quantity,
+            "entry_price": position.entry_price,
+        }
+        self._managed_positions[symbol] = managed
+        self._persist_managed_position(symbol)
+        self._reconcile_foreign_exchange_state(self.broker.get_positions())
+        logger.info(
+            f"Adopted existing exchange position for {symbol} into managed runtime state."
+        )
+        return managed
 
     def _init_strategies(self, config: dict) -> list:
         """Initialize all strategy instances from config."""
@@ -447,6 +822,13 @@ class TradingEngine:
             if not self._enforce_risk_guards():
                 return
 
+            if getattr(self, "_foreign_exchange_state_detected", False):
+                logger.warning(
+                    "Foreign exchange state is present on the bot-only account. "
+                    "Skipping new entries until it is cleared."
+                )
+                return
+
             # 3. Check if we can open new positions
             if not self.scheduler.can_open_new_positions():
                 return
@@ -523,7 +905,6 @@ class TradingEngine:
     ):
         """Explain why active discoveries did not convert into executable signals."""
         candidate_summaries: list[str] = []
-        regime_detector = self.signal_aggregator.regime_detector
 
         for symbol, candidate in list(active_candidates.items())[:5]:
             df = signal_data.get(symbol)
@@ -575,6 +956,7 @@ class TradingEngine:
                     "quantity": order.quantity,
                     "entry_price": filled_entry_price,
                 }
+                self._persist_managed_position(order.symbol)
 
                 # Send notification
                 self.notifier.notify_trade(
@@ -634,7 +1016,8 @@ class TradingEngine:
         if positions is None:
             positions = self.broker.get_positions()
 
-        self._reconcile_exchange_closed_positions(positions)
+        self._sync_managed_positions_with_exchange(positions)
+        self._reconcile_foreign_exchange_state(positions)
 
         for pos in positions:
             if pos.symbol not in self._managed_positions:
@@ -737,6 +1120,7 @@ class TradingEngine:
             reason=reason,
         )
         self._managed_positions.pop(symbol, None)
+        self._delete_persisted_managed_position(symbol)
         logger.info(
             f"🔄 Reconciled exchange-side close for {symbol} at ${exit_price:.4f} "
             f"({reason})"
@@ -838,6 +1222,7 @@ class TradingEngine:
 
             # Remove from managed
             self._managed_positions.pop(position.symbol, None)
+            self._delete_persisted_managed_position(position.symbol)
             self._enforce_risk_guards()
 
         except Exception as e:
@@ -962,7 +1347,7 @@ class TradingEngine:
         self._running = False
 
         # Square off if market is still open
-        if self.broker.is_market_open():
+        if self.broker.is_market_open() and not self.broker.is_24_7_market:
             self.on_square_off()
 
         if self.scheduler.scheduler.running:
@@ -975,6 +1360,7 @@ class TradingEngine:
             return
 
         self.on_pre_market()
+        self._rehydrate_managed_positions_from_exchange()
         if self.config.get("discovery", {}).get("enabled", True):
             self.market_scanner.scan_for_momentum()
         self._enforce_risk_guards()

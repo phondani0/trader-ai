@@ -14,7 +14,6 @@ Capabilities (not conditionals):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import datetime
 from typing import Optional
 
 import pandas as pd
@@ -211,3 +210,31 @@ class BaseBroker(ABC):
         exchange-managed stop losses.
         """
         return []
+
+    def fetch_open_orders(
+        self,
+        symbol: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """
+        Optional broker hook for inspecting currently open orders.
+
+        Runtime reconciliation uses this to detect foreign/manual pending orders
+        on accounts that should be bot-only.
+        """
+        return []
+
+    def set_position_protection(
+        self,
+        symbol: str,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        position_side: Optional[Side] = None,
+    ) -> bool:
+        """
+        Optional broker hook for syncing TP/SL on an already-open exchange position.
+
+        This is used for one-time adoption or repair of legacy positions that were
+        opened before managed runtime metadata existed.
+        """
+        return False

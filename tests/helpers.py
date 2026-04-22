@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 
 import pandas as pd
 
 from src.core.base_broker import BaseBroker
-from src.core.models import Order, OrderType, OrderStatus, Position, Side
+from src.core.models import Order, OrderType, OrderStatus, Position
 
 
 class StubBroker(BaseBroker):

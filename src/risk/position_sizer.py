@@ -6,7 +6,6 @@ Utility for calculating optimal position sizes using different methods.
 
 from __future__ import annotations
 
-from loguru import logger
 
 
 class PositionSizer:

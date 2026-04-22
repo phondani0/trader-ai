@@ -78,6 +78,7 @@ Run commands with `uv run <command>`.
 | `benchmark` | Stress-test strategies across curated real-market windows; each strategy uses its own timeframe from `config/strategies.yaml` while the reference market-profile window uses `config/settings.yaml` | `uv run benchmark --strategy supertrend` |
 | `backtest` | Run a single strategy or the live-style multi-strategy selector on a symbol/date window using strategy-configured timeframes from `config/strategies.yaml` | `uv run backtest --symbol BTC/USDT:USDT --from 2024-01-01 --to 2024-03-31` |
 | `trade` | Manual override for connectivity tests or emergency exits | `uv run trade --symbol BTC/USDT:USDT --side buy --qty 0.01` |
+| `adopt-position` | Adopt an already-open exchange position into managed bot state and attach/update exchange-side SL and TP protection | `uv run adopt-position --symbol BTC/USDT:USDT --strategy donchian_breakout --stop-loss 61250 --take-profit 64800 --mode live` |
 
 ## Runtime Cadence
 
@@ -88,6 +89,7 @@ For the default CCXT crypto path:
 - Discovery journal review runs every 30 minutes.
 - Daily summary runs at `00:05 UTC`.
 - Daily risk reset runs at `00:10 UTC`.
+- Normal process restarts do not auto-square-off crypto positions; live exposure is recovered from the exchange and matched against persisted local strategy metadata.
 
 For the optional Alpaca adapter:
 
@@ -109,6 +111,10 @@ For the optional Alpaca adapter:
 | Backtest slippage baseline | 0.1% |
 
 Benchmark approvals can now block fragile strategies from live startup based on regime-aware ROI, expectancy, profit factor, trade count, and drawdown thresholds.
+
+In live crypto mode, the exchange is treated as the source of truth for open exposure. SQLite persists the bot's managed-position metadata so take-profit logic and trade attribution can resume cleanly after restarts while still respecting manual exchange-side closes or size changes.
+
+If you already have a legacy bot-opened position that predates managed-position recovery, use `uv run adopt-position ...` once to bring it under runtime management. New CCXT Bybit entries now place exchange-side stop-loss and take-profit protection alongside the entry order when the exchange supports attached TP/SL.
 
 The benchmark output now includes:
 
@@ -205,6 +211,7 @@ trader-ai/
 │   ├── notifications/
 │   └── dashboard/
 ├── scripts/
+│   ├── adopt_position.py
 │   ├── backtest.py
 │   ├── benchmark.py
 │   └── trade.py
