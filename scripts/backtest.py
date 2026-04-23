@@ -337,6 +337,17 @@ def log_result(result):
     logger.info(f"Final Equity: ${result.final_equity:,.2f}")
     if result.killed_by_drawdown:
         logger.info(f"Drawdown Kill-Switch: YES ({result.kill_switch_reason})")
+    logger.info(f"{'-' * 60}")
+    sharpe_str = f"{result.sharpe_ratio:.3f}" if result.sharpe_ratio != float("inf") else "inf"
+    sortino_str = f"{result.sortino_ratio:.3f}" if result.sortino_ratio != float("inf") else "inf"
+    calmar_str = f"{result.calmar_ratio:.3f}" if result.calmar_ratio != float("inf") else "inf"
+    logger.info(f"Sharpe Ratio:  {sharpe_str}  (target: >1.5)")
+    logger.info(f"Sortino Ratio: {sortino_str}  (target: >2.0)")
+    logger.info(f"Calmar Ratio:  {calmar_str}  (target: >1.0)")
+    if result.annualized_return_pct:
+        logger.info(f"Ann. Return:   {result.annualized_return_pct:+.2f}%")
+    if result.annualized_volatility_pct:
+        logger.info(f"Ann. Volatility: {result.annualized_volatility_pct:.2f}%")
     logger.info(f"{'═' * 60}")
 
     if result.strategy_breakdown:

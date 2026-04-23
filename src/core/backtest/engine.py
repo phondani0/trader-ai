@@ -8,10 +8,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
+import numpy as np
+
 import pandas as pd
 from loguru import logger
 
 from src.core.backtest.models import BacktestResult, BacktestTrade
+from src.core.backtest.monte_carlo import MonteCarloAnalyzer
 from src.core.models import Side, MarketBias, StrategyType
 from src.core.timeframes import canonical_timeframe, timeframe_to_minutes
 from src.intelligence.regime_detector import RegimeDetector
@@ -440,6 +443,7 @@ class BacktestEngine:
         *,
         killed_by_drawdown: bool = False,
         kill_reason: str = "",
+        run_monte_carlo: bool = False,
     ) -> BacktestResult:
         """
         Calculate aggregate performance metrics for a set of simulated trades.
@@ -456,6 +460,7 @@ class BacktestEngine:
 
         if not trades:
             result.final_equity = self.initial_capital
+            result.equity_curve = [self.initial_capital]
             return result
 
         equity = self.initial_capital
@@ -473,6 +478,7 @@ class BacktestEngine:
             elif trade.pnl_pct < 0:
                 losers.append(abs(trade.pnl_pct))
 
+        result.equity_curve = equity_curve
         result.final_equity = equity
         result.net_roi_pct = ((equity / self.initial_capital) - 1) * 100
         result.gross_roi_pct = gross_pnl_sum
@@ -493,7 +499,85 @@ class BacktestEngine:
         result.regime_breakdown = self._build_breakdown(trades, key="regime")
         result.strategy_breakdown = self._build_breakdown(trades, key="strategy")
 
+        # Risk-adjusted metrics (Sharpe, Sortino, Calmar)
+        result.sharpe_ratio, result.sortino_ratio, result.calmar_ratio = (
+            self._compute_risk_metrics(equity_curve, period_start, period_end)
+        )
+        if result.sharpe_ratio != 0.0:
+            total_return = result.net_roi_pct / 100
+            days = max((period_end - period_start).days, 1)
+            ann_factor = 365 / days
+            result.annualized_return_pct = ((1 + total_return) ** ann_factor - 1) * 100
+            returns = np.diff(equity_curve) / equity_curve[:-1]
+            result.annualized_volatility_pct = (
+                float(np.std(returns, ddof=1) * np.sqrt(365 / max(days / len(returns), 1)) * 100)
+                if len(returns) > 1
+                else 0.0
+            )
+
+        if run_monte_carlo and len(trades) >= 5:
+            trade_returns = [trade.pnl_pct for trade in trades]
+            mc_analyzer = MonteCarloAnalyzer(n_simulations=1000, confidence=0.95)
+            mc_results = mc_analyzer.analyze_drawdowns(trade_returns)
+            result.mc_expected_mdd_pct = mc_results["expected_max_dd_pct"]
+            result.mc_worst_95_mdd_pct = mc_results["worst_95pct_mdd"]
+
         return result
+
+    @staticmethod
+    def _compute_risk_metrics(
+        equity_curve: list[float],
+        period_start: datetime,
+        period_end: datetime,
+        risk_free_rate: float = 0.04,
+    ) -> tuple[float, float, float]:
+        """
+        Compute Sharpe, Sortino, and Calmar ratios from an equity curve.
+
+        Uses crypto's 365-day trading year for annualization.
+        """
+        if len(equity_curve) < 3:
+            return 0.0, 0.0, 0.0
+
+        eq = np.array(equity_curve, dtype=float)
+        returns = np.diff(eq) / eq[:-1]
+
+        if len(returns) < 2 or np.std(returns, ddof=1) == 0:
+            return 0.0, 0.0, 0.0
+
+        days = max((period_end - period_start).days, 1)
+        trades_per_year = len(returns) * (365 / days)
+
+        mean_return = float(np.mean(returns))
+        std_return = float(np.std(returns, ddof=1))
+
+        # Annualized return and volatility
+        ann_return = (1 + mean_return) ** trades_per_year - 1
+        ann_vol = std_return * np.sqrt(trades_per_year)
+
+        # Sharpe
+        sharpe = (ann_return - risk_free_rate) / ann_vol if ann_vol > 0 else 0.0
+
+        # Sortino (downside deviation only)
+        downside = returns[returns < 0]
+        if len(downside) > 0:
+            downside_std = float(np.std(downside, ddof=1))
+            ann_downside_vol = downside_std * np.sqrt(trades_per_year)
+            sortino = (
+                (ann_return - risk_free_rate) / ann_downside_vol
+                if ann_downside_vol > 0
+                else 0.0
+            )
+        else:
+            sortino = float("inf") if ann_return > risk_free_rate else 0.0
+
+        # Calmar (annualized return / max drawdown)
+        rolling_max = np.maximum.accumulate(eq)
+        drawdowns = (eq - rolling_max) / rolling_max
+        max_dd = float(np.min(drawdowns))
+        calmar = ann_return / abs(max_dd) if max_dd != 0 else 0.0
+
+        return round(sharpe, 3), round(sortino, 3), round(calmar, 3)
 
     def _resolve_exit_price(
         self,

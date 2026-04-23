@@ -50,6 +50,18 @@ class BacktestResult:
     regime_breakdown: Dict = field(default_factory=dict)
     strategy_breakdown: Dict = field(default_factory=dict)
 
+    # Institutional-grade risk-adjusted metrics
+    equity_curve: List[float] = field(default_factory=list)
+    sharpe_ratio: float = 0.0
+    sortino_ratio: float = 0.0
+    calmar_ratio: float = 0.0
+    annualized_return_pct: float = 0.0
+    annualized_volatility_pct: float = 0.0
+
+    # Monte Carlo simulation metrics
+    mc_expected_mdd_pct: float = 0.0
+    mc_worst_95_mdd_pct: float = 0.0
+
     def to_dict(self) -> Dict:
         """Helper for JSON/CSV export."""
         return {
@@ -60,6 +72,11 @@ class BacktestResult:
             "mdd": self.max_drawdown_pct,
             "expectancy_pct": self.expectancy_pct,
             "profit_factor": self.profit_factor,
+            "sharpe_ratio": self.sharpe_ratio,
+            "sortino_ratio": self.sortino_ratio,
+            "calmar_ratio": self.calmar_ratio,
+            "mc_expected_mdd_pct": self.mc_expected_mdd_pct,
+            "mc_worst_95_mdd_pct": self.mc_worst_95_mdd_pct,
             "killed_by_drawdown": self.killed_by_drawdown,
             "trades": len(self.trades),
         }

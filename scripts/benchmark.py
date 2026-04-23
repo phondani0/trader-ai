@@ -211,6 +211,13 @@ def result_metrics(summary) -> dict:
         ),
         "max_drawdown_pct": round(summary.max_drawdown_pct, 4),
         "win_rate_pct": round(summary.win_rate_pct, 4),
+        "sharpe_ratio": round(summary.sharpe_ratio, 3),
+        "sortino_ratio": (
+            "inf" if summary.sortino_ratio == float("inf") else round(summary.sortino_ratio, 3)
+        ),
+        "calmar_ratio": round(summary.calmar_ratio, 3),
+        "mc_expected_mdd_pct": round(summary.mc_expected_mdd_pct, 4),
+        "mc_worst_95_mdd_pct": round(summary.mc_worst_95_mdd_pct, 4),
     }
 
 
@@ -222,6 +229,11 @@ def empty_metrics() -> dict:
         "profit_factor": 0.0,
         "max_drawdown_pct": 0.0,
         "win_rate_pct": 0.0,
+        "sharpe_ratio": 0.0,
+        "sortino_ratio": 0.0,
+        "calmar_ratio": 0.0,
+        "mc_expected_mdd_pct": 0.0,
+        "mc_worst_95_mdd_pct": 0.0,
     }
 
 
@@ -553,6 +565,12 @@ def run_benchmark(
                         else f"{result.profit_factor:.2f}"
                     ),
                     "MDD": f"{result.max_drawdown_pct:.1f}%",
+                    "Sharpe": f"{result.sharpe_ratio:.2f}",
+                    "Sortino": (
+                        "inf"
+                        if result.sortino_ratio == float("inf")
+                        else f"{result.sortino_ratio:.2f}"
+                    ),
                     "Killed": "YES" if result.killed_by_drawdown else "NO",
                 }
             )
@@ -563,11 +581,12 @@ def run_benchmark(
                 if result.profit_factor == float("inf")
                 else f"{result.profit_factor:.2f}"
             )
+            sharpe_display = f"{result.sharpe_ratio:.2f}"
             print(
                 f"  {status} {strategy.name:<15} | ROI: {result.net_roi_pct:>7.2f}% | "
                 f"Win Rate: {result.win_rate_pct:>5.1f}% | "
                 f"Expectancy: {result.expectancy_pct:>6.2f}% | "
-                f"PF: {profit_factor:>5} | Trades: {len(result.trades):>3}"
+                f"PF: {profit_factor:>5} | Sharpe: {sharpe_display:>6} | Trades: {len(result.trades):>3}"
             )
 
         benchmark_windows.append(window_record)
@@ -628,12 +647,17 @@ def run_benchmark(
         display_metrics = (
             approval["deployable_metrics"] if approval["approved"] else approval["global_metrics"]
         )
+        sharpe_val = display_metrics.get('sharpe_ratio', 0.0)
+        sortino_val = display_metrics.get('sortino_ratio', 0.0)
+        sharpe_s = f"{sharpe_val:.2f}" if sharpe_val != "inf" else "inf"
+        sortino_s = f"{sortino_val:.2f}" if sortino_val != "inf" else "inf"
         print(
             f"  {strategy_name:<15} | {verdict:<8} | ROI: {display_metrics['net_roi_pct']:>7.2f}% | "
             f"Expectancy: {display_metrics['expectancy_pct']:>6.2f}% | "
             f"PF: {display_metrics['profit_factor']:<6} | "
             f"MDD: {display_metrics['max_drawdown_pct']:>6.2f}% | "
-            f"Deployable Regimes: {deployable} | "
+            f"Sharpe: {sharpe_s:>6} | Sortino: {sortino_s:>6} | "
+            f"Deployable: {deployable} | "
             f"Reason: {approval['reason']}"
         )
     print("═" * 120)
