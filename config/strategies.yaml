@@ -95,6 +95,9 @@ supertrend:
   stop_buffer_atr: 0.8
   take_profit_rr_ratio: 2.2
   max_position_pct: 15
+  param_grid:
+    atr_multiplier: [2.0, 2.5, 3.0]
+    ema_period: [10, 20, 30]
 
 orb:
   enabled: true
