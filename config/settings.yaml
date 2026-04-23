@@ -68,6 +68,8 @@ discovery:
 benchmarking:
   approvals_path: data/strategy_approvals.json
   enforce_approvals: true
+  refresh_on_start: true
+  max_approval_age_hours: 24
   min_trades: 3
   min_net_roi_pct: 0.0
   min_profit_factor: 1.0

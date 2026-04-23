@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +37,66 @@ from src.strategies.volume_weighted_tsmom import VolumeWeightedTSMomentumStrateg
 from src.strategies.vwap_reversion import VWAPReversionStrategy
 
 PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def resolve_approvals_path(config: dict) -> Path:
+    benchmark_cfg = config.get("benchmarking", {})
+    approvals_rel = benchmark_cfg.get("approvals_path", "data/strategy_approvals.json")
+    approvals_path = Path(approvals_rel)
+    if not approvals_path.is_absolute():
+        approvals_path = PROJECT_ROOT / approvals_path
+    return approvals_path
+
+
+def _parse_generated_at(raw_value) -> datetime | None:
+    if not raw_value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def ensure_strategy_approvals(
+    config: dict,
+    runner= None,
+    now: datetime | None = None,
+) -> bool:
+    benchmark_cfg = config.get("benchmarking", {})
+    if not benchmark_cfg.get("enforce_approvals", True):
+        return False
+    if not benchmark_cfg.get("refresh_on_start", False):
+        return False
+
+    approvals_path = resolve_approvals_path(config)
+    max_age_hours = float(benchmark_cfg.get("max_approval_age_hours", 24))
+    runner = runner or run_benchmark
+    now = now or datetime.utcnow()
+
+    refresh_required = not approvals_path.exists()
+    if not refresh_required:
+        try:
+            with open(approvals_path, "r") as f:
+                payload = json.load(f)
+        except Exception:
+            refresh_required = True
+        else:
+            generated_at = _parse_generated_at(payload.get("generated_at"))
+            if generated_at is None:
+                refresh_required = True
+            else:
+                refresh_required = (now - generated_at) > timedelta(hours=max_age_hours)
+
+    if not refresh_required:
+        return False
+
+    runner("all")
+    return True
 
 
 def load_settings() -> dict:
@@ -543,9 +603,7 @@ def run_benchmark(
         benchmark_cfg,
         benchmark_windows,
     )
-    approvals_path = PROJECT_ROOT / benchmark_cfg.get(
-        "approvals_path", "data/strategy_approvals.json"
-    )
+    approvals_path = resolve_approvals_path(settings)
     approvals_path.parent.mkdir(parents=True, exist_ok=True)
     if strategy_filter and strategy_filter != "all" and approvals_path.exists():
         try:

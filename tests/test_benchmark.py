@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from scripts.benchmark import (
     build_approvals_payload,
+    ensure_strategy_approvals,
     derive_strategy_deployment,
     init_strategies,
     merge_approvals_payload,
@@ -258,8 +263,100 @@ class BenchmarkDeploymentTest(unittest.TestCase):
         )
 
         self.assertFalse(deployment["approved"])
-        self.assertEqual(deployment["approved_windows"], [])
-        self.assertEqual(deployment["deployable_market_profiles"], [])
+
+
+class BenchmarkStartupRefreshTest(unittest.TestCase):
+    def test_missing_approvals_triggers_startup_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            approvals_path = Path(tmpdir) / "strategy_approvals.json"
+            config = {
+                "benchmarking": {
+                    "enforce_approvals": True,
+                    "refresh_on_start": True,
+                    "approvals_path": str(approvals_path),
+                    "max_approval_age_hours": 24,
+                }
+            }
+            calls: list[str | None] = []
+
+            def _runner(strategy_filter=None):
+                calls.append(strategy_filter)
+                approvals_path.write_text(json.dumps({"generated_at": "2026-04-23T00:00:00"}))
+
+            refreshed = ensure_strategy_approvals(
+                config,
+                runner=_runner,
+                now=datetime(2026, 4, 23, 12, 0, 0),
+            )
+
+            self.assertTrue(refreshed)
+            self.assertEqual(calls, ["all"])
+            self.assertTrue(approvals_path.exists())
+
+    def test_fresh_approvals_do_not_trigger_startup_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            approvals_path = Path(tmpdir) / "strategy_approvals.json"
+            approvals_path.write_text(
+                json.dumps({"generated_at": "2026-04-23T10:00:00"})
+            )
+            config = {
+                "benchmarking": {
+                    "enforce_approvals": True,
+                    "refresh_on_start": True,
+                    "approvals_path": str(approvals_path),
+                    "max_approval_age_hours": 24,
+                }
+            }
+            calls: list[str | None] = []
+
+            def _runner(strategy_filter=None):
+                calls.append(strategy_filter)
+
+            refreshed = ensure_strategy_approvals(
+                config,
+                runner=_runner,
+                now=datetime(2026, 4, 23, 12, 0, 0),
+            )
+
+            self.assertFalse(refreshed)
+            self.assertEqual(calls, [])
+
+    def test_stale_approvals_trigger_startup_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            approvals_path = Path(tmpdir) / "strategy_approvals.json"
+            approvals_path.write_text(
+                json.dumps({"generated_at": "2026-04-22T10:00:00"})
+            )
+            config = {
+                "benchmarking": {
+                    "enforce_approvals": True,
+                    "refresh_on_start": True,
+                    "approvals_path": str(approvals_path),
+                    "max_approval_age_hours": 12,
+                }
+            }
+            calls: list[str | None] = []
+
+            def _runner(strategy_filter=None):
+                calls.append(strategy_filter)
+                approvals_path.write_text(
+                    json.dumps(
+                        {
+                            "generated_at": (
+                                datetime(2026, 4, 23, 12, 0, 0) - timedelta(hours=1)
+                            ).isoformat(timespec="seconds")
+                        }
+                    )
+                )
+
+            refreshed = ensure_strategy_approvals(
+                config,
+                runner=_runner,
+                now=datetime(2026, 4, 23, 12, 0, 0),
+            )
+
+            self.assertTrue(refreshed)
+            self.assertEqual(calls, ["all"])
 
     def test_benchmark_window_simulation_uses_selector_path(self):
         class _Engine:

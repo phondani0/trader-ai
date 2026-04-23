@@ -31,7 +31,7 @@ jobs:
       run: |
         echo "${{ secrets.SERVER_ENV_FILE }}" | ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "cat > /home/${{ secrets.DEPLOY_USER }}/projects/trader-ai/.env"
 
-    - name: Build, Benchmark & Restart Trader AI
+    - name: Build & Restart Trader AI
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
           "cd /home/${{ secrets.DEPLOY_USER }}/projects/trader-ai && \
@@ -40,8 +40,6 @@ jobs:
            export PATH=\"\$HOME/.local/bin:\$PATH\" && \
            # Sync dependencies
            uv sync --frozen && \
-           # Regenerate benchmark-derived approvals used by runtime gating
-           uv run benchmark && \
            # Restart with PM2
            pm2 restart trader-ai || pm2 start \"uv run start\" --name trader-ai --time"
     

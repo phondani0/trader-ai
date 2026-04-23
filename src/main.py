@@ -181,6 +181,8 @@ class TradingEngine:
             broker=self.broker, config=config, journal=self.journal
         )
 
+        self._ensure_strategy_approvals_ready()
+
         # Initialize Strategies
         strategy_configs = config
         self.strategies = self._init_strategies(strategy_configs)
@@ -211,6 +213,25 @@ class TradingEngine:
         logger.info(
             f"Strategies: {', '.join(s.name for s in self.strategies if s.enabled)}"
         )
+
+    def _ensure_strategy_approvals_ready(self):
+        benchmark_cfg = self.config.get("benchmarking", {})
+        if not benchmark_cfg.get("enforce_approvals", True):
+            return
+        if not benchmark_cfg.get("refresh_on_start", False):
+            return
+
+        from scripts.benchmark import ensure_strategy_approvals, resolve_approvals_path
+
+        approvals_path = resolve_approvals_path(self.config)
+        logger.info(
+            f"Checking benchmark approvals at startup: {approvals_path}"
+        )
+        refreshed = ensure_strategy_approvals(self.config)
+        if refreshed:
+            logger.info("Benchmark approvals refreshed on startup.")
+        elif approvals_path.exists():
+            logger.info("Using existing benchmark approvals.")
 
     def _persist_managed_position(self, symbol: str):
         managed = self._managed_positions.get(symbol)
