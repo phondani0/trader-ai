@@ -198,6 +198,7 @@ def summarize_rollup(engine, symbol: str, rollup: dict):
         trades=rollup["trades"],
         killed_by_drawdown=rollup["killed_by_drawdown"],
         kill_reason=" | ".join(dict.fromkeys(rollup["kill_reasons"])),
+        run_monte_carlo=True,
     )
 
 
@@ -651,11 +652,13 @@ def run_benchmark(
         sortino_val = display_metrics.get('sortino_ratio', 0.0)
         sharpe_s = f"{sharpe_val:.2f}" if sharpe_val != "inf" else "inf"
         sortino_s = f"{sortino_val:.2f}" if sortino_val != "inf" else "inf"
+        mc_mdd_s = f"{display_metrics.get('mc_worst_95_mdd_pct', 0.0):.2f}%"
         print(
             f"  {strategy_name:<15} | {verdict:<8} | ROI: {display_metrics['net_roi_pct']:>7.2f}% | "
             f"Expectancy: {display_metrics['expectancy_pct']:>6.2f}% | "
             f"PF: {display_metrics['profit_factor']:<6} | "
             f"MDD: {display_metrics['max_drawdown_pct']:>6.2f}% | "
+            f"MC 95% MDD: {mc_mdd_s:>7} | "
             f"Sharpe: {sharpe_s:>6} | Sortino: {sortino_s:>6} | "
             f"Deployable: {deployable} | "
             f"Reason: {approval['reason']}"
