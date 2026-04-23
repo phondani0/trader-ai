@@ -492,10 +492,23 @@ class BacktestEngine:
         elif winners:
             result.profit_factor = float("inf")
 
-        eq_series = pd.Series(equity_curve)
+        timestamps = [period_start] + [trade.exit_time for trade in trades]
+        eq_series = pd.Series(equity_curve, index=timestamps)
         rolling_max = eq_series.cummax()
         drawdowns = (eq_series - rolling_max) / rolling_max
         result.max_drawdown_pct = drawdowns.min() * 100
+        
+        underwater = drawdowns < 0
+        if underwater.any():
+            peaks = eq_series[drawdowns == 0].index
+            if len(peaks) > 1:
+                durations = (peaks[1:] - peaks[:-1]).max().total_seconds() / 86400.0
+                current_underwater = (timestamps[-1] - peaks[-1]).total_seconds() / 86400.0
+                result.max_drawdown_duration_days = max(durations, current_underwater)
+            elif len(peaks) == 1:
+                result.max_drawdown_duration_days = (timestamps[-1] - peaks[0]).total_seconds() / 86400.0
+        else:
+            result.max_drawdown_duration_days = 0.0
         result.regime_breakdown = self._build_breakdown(trades, key="regime")
         result.strategy_breakdown = self._build_breakdown(trades, key="strategy")
 

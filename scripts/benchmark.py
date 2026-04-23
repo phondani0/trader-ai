@@ -600,8 +600,21 @@ def run_benchmark(
         pivot = matrix_df.pivot(index="Strategy", columns="Window", values="Net ROI")
         print(pivot.to_string())
 
+    from src.core.backtest.plot import plot_equity_curve
+    plots_dir = PROJECT_ROOT / "data" / "plots"
+
     market_profile_capabilities: dict[str, dict] = {}
     for strategy in strategies:
+        # Plot the global summary for the strategy (across all windows)
+        global_rollup = strategy_rollups.get(strategy.name)
+        if global_rollup:
+            global_summary = summarize_rollup(engine, strategy.name, global_rollup)
+            plot_equity_curve(
+                global_summary, 
+                output_dir=plots_dir, 
+                filename=f"benchmark_{strategy.name}_global.png"
+            )
+
         capabilities: dict[str, dict] = {}
         for profile_name, rollup in market_profile_rollups[strategy.name].items():
             summary = summarize_rollup(engine, strategy.name, rollup)

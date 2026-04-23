@@ -62,6 +62,9 @@ class BacktestResult:
     mc_expected_mdd_pct: float = 0.0
     mc_worst_95_mdd_pct: float = 0.0
 
+    # Drawdown metrics
+    max_drawdown_duration_days: float = 0.0
+
     def to_dict(self) -> Dict:
         """Helper for JSON/CSV export."""
         return {
@@ -70,6 +73,7 @@ class BacktestResult:
             "net_roi": self.net_roi_pct,
             "win_rate": self.win_rate_pct,
             "mdd": self.max_drawdown_pct,
+            "mdd_duration_days": self.max_drawdown_duration_days,
             "expectancy_pct": self.expectancy_pct,
             "profit_factor": self.profit_factor,
             "sharpe_ratio": self.sharpe_ratio,
