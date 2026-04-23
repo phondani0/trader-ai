@@ -209,7 +209,22 @@ def main():
     )
     
     print_wfa_results(results)
-
+    
+    if results and "param_history" in results:
+        from src.core.backtest.plot import plot_parameter_heatmap
+        plots_dir = PROJECT_ROOT / "data" / "plots" / "heatmaps"
+        
+        # Plot heatmaps for each split
+        for split_idx, record in enumerate(results["param_history"]):
+            if "grid_results" in record and record["grid_results"]:
+                filename = f"wfa_{args.strategy}_split_{split_idx}.png"
+                plot_parameter_heatmap(
+                    record["grid_results"],
+                    output_dir=plots_dir,
+                    filename=filename,
+                    metric_name=args.metric
+                )
+        logger.info(f"✅ Generated {len(results['param_history'])} parameter sensitivity heatmaps in {plots_dir}")
 
 if __name__ == "__main__":
     main()

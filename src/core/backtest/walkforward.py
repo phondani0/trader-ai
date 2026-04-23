@@ -101,7 +101,7 @@ class WalkForwardOptimizer:
         base_params: dict,
         param_grid: dict[str, list],
         optimize_metric: str = "sortino_ratio",
-    ) -> tuple[dict, BacktestResult]:
+    ) -> tuple[dict, BacktestResult, list[dict]]:
         """
         Run a grid search to find the optimal parameter combination for a single window.
         
@@ -112,16 +112,17 @@ class WalkForwardOptimizer:
             optimize_metric: The attribute of BacktestResult to maximize.
             
         Returns:
-            Tuple of (best_params, best_result).
+            Tuple of (best_params, best_result, all_results).
         """
         best_params = base_params.copy()
         best_metric_val = -float("inf")
         best_result = None
+        all_results = []
 
         if not param_grid:
             strategy = strategy_factory(base_params)
             result = self.engine.run(symbol, df, strategy)
-            return base_params, result
+            return base_params, result, [{"params": base_params, "metric": getattr(result, optimize_metric, 0.0)}]
 
         keys = list(param_grid.keys())
         values = list(param_grid.values())
@@ -135,6 +136,10 @@ class WalkForwardOptimizer:
             result = self.engine.run(symbol, df, strategy)
             
             metric_val = getattr(result, optimize_metric, -float("inf"))
+            all_results.append({
+                "params": current_params.copy(),
+                "metric": metric_val if metric_val != -float("inf") else 0.0
+            })
             
             if metric_val > best_metric_val:
                 best_metric_val = metric_val
@@ -145,8 +150,9 @@ class WalkForwardOptimizer:
             # Fallback if all combinations fail or produce no trades
             strategy = strategy_factory(base_params)
             best_result = self.engine.run(symbol, df, strategy)
+            all_results.append({"params": base_params, "metric": getattr(best_result, optimize_metric, 0.0)})
             
-        return best_params, best_result
+        return best_params, best_result, all_results
 
     def run_walk_forward(
         self,
@@ -179,7 +185,7 @@ class WalkForwardOptimizer:
             logger.info(f"WFA Split {i+1}/{len(splits)} | Train: {split.train_start.date()} to {split.train_end.date()}")
             
             # Step 1: Optimize on Train data (In-Sample)
-            best_params, is_result = self.grid_search(
+            best_params, is_result, grid_results = self.grid_search(
                 symbol,
                 split.train_data,
                 strategy_factory,
@@ -213,6 +219,7 @@ class WalkForwardOptimizer:
                 "is_metric": is_metric,
                 "oos_metric": oos_metric,
                 "degradation_pct": degradation,
+                "grid_results": grid_results,
             })
             in_sample_results.append(is_result)
             out_of_sample_results.append(oos_result)

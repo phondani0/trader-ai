@@ -1,14 +1,17 @@
 """
 Backtesting Visualization Utilities.
 
-Generates equity curve plots and drawdown charts for backtest results.
+Generates equity curve plots, drawdown charts, and parameter sensitivity heatmaps.
 """
 
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict
 
 import matplotlib.pyplot as plt
+import seaborn as sns
 import pandas as pd
+import numpy as np
 
 from src.core.backtest.models import BacktestResult
 
@@ -68,6 +71,74 @@ def plot_equity_curve(result: BacktestResult, output_dir: str | Path, filename: 
     ax2.set_ylabel("Drawdown (%)", fontsize=12)
     ax2.set_xlabel("Date", fontsize=12)
     ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(filepath, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    return filepath
+
+
+def plot_parameter_heatmap(
+    grid_results: List[Dict], 
+    output_dir: str | Path, 
+    filename: str,
+    metric_name: str = "Sortino Ratio"
+):
+    """
+    Plot a heatmap of parameter grid search results.
+    Assumes there are exactly 2 parameters being optimized. If there are >2,
+    it picks the two with the most unique values, or just the first two.
+    """
+    if not grid_results:
+        return
+        
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    filepath = output_dir / filename
+    
+    # Extract parameter keys dynamically
+    param_keys = list(grid_results[0]["params"].keys())
+    if len(param_keys) < 2:
+        # Not enough parameters to plot a 2D heatmap
+        return
+        
+    # Find the two parameters with the highest cardinality
+    cardinality = {}
+    for k in param_keys:
+        cardinality[k] = len(set(str(r["params"][k]) for r in grid_results))
+        
+    sorted_keys = sorted(param_keys, key=lambda k: cardinality[k], reverse=True)
+    x_param = sorted_keys[0]
+    y_param = sorted_keys[1]
+    
+    # Prepare dataframe
+    data = []
+    for r in grid_results:
+        data.append({
+            x_param: r["params"][x_param],
+            y_param: r["params"][y_param],
+            "metric": r["metric"]
+        })
+        
+    df = pd.DataFrame(data)
+    
+    # Pivot for heatmap
+    # If there are >2 parameters, we take the mean of the metric for the x/y pair
+    pivot_df = df.pivot_table(index=y_param, columns=x_param, values="metric", aggfunc=np.mean)
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(
+        pivot_df, 
+        annot=True, 
+        cmap="RdYlGn", 
+        fmt=".2f", 
+        center=0,
+        cbar_kws={'label': metric_name}
+    )
+    plt.title(f"Parameter Sensitivity ({metric_name})", fontsize=14, pad=15)
+    plt.ylabel(y_param, fontsize=12)
+    plt.xlabel(x_param, fontsize=12)
     
     plt.tight_layout()
     plt.savefig(filepath, dpi=150, bbox_inches='tight')

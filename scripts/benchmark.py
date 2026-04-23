@@ -601,11 +601,13 @@ def run_benchmark(
         print(pivot.to_string())
 
     from src.core.backtest.plot import plot_equity_curve
+    from src.core.backtest.export import export_trades_to_csv
     plots_dir = PROJECT_ROOT / "data" / "plots"
+    exports_dir = PROJECT_ROOT / "data" / "exports"
 
     market_profile_capabilities: dict[str, dict] = {}
     for strategy in strategies:
-        # Plot the global summary for the strategy (across all windows)
+        # Process the global summary for the strategy (across all windows)
         global_rollup = strategy_rollups.get(strategy.name)
         if global_rollup:
             global_summary = summarize_rollup(engine, strategy.name, global_rollup)
@@ -613,6 +615,10 @@ def run_benchmark(
                 global_summary, 
                 output_dir=plots_dir, 
                 filename=f"benchmark_{strategy.name}_global.png"
+            )
+            export_trades_to_csv(
+                global_summary.trades,
+                exports_dir / f"benchmark_{strategy.name}_global_trades.csv"
             )
 
         capabilities: dict[str, dict] = {}
