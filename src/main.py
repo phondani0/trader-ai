@@ -1532,16 +1532,25 @@ def main():
     (PROJECT_ROOT / "data").mkdir(exist_ok=True)
     (PROJECT_ROOT / "logs").mkdir(exist_ok=True)
 
+    # Register early signal handler so PM2 restarts don't produce ugly tracebacks
+    def _early_shutdown(sig, frame):
+        logger.info(f"Received signal {sig}, shutting down gracefully...")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _early_shutdown)
+    signal.signal(signal.SIGTERM, _early_shutdown)
+
     # Initialize and run
     engine = TradingEngine(config=config, mode=mode)
 
-    # Handle signals for graceful shutdown
-    def signal_handler(sig, frame):
+    # Upgrade to full shutdown handler now that the engine exists
+    def _engine_shutdown(sig, frame):
+        logger.info(f"Received signal {sig}, shutting down gracefully...")
         engine.shutdown()
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, _engine_shutdown)
+    signal.signal(signal.SIGTERM, _engine_shutdown)
 
     if args.once:
         engine.run_once()
