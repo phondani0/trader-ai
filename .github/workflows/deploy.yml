@@ -40,6 +40,5 @@ jobs:
            export PATH=\"\$HOME/.local/bin:\$PATH\" && \
            # Sync dependencies
            uv sync --frozen && \
-           # Restart with PM2
-           pm2 restart trader-ai || pm2 start \"uv run start\" --name trader-ai --time"
-    
+           # Restart with PM2 (pm2 save prevents duplicate process bug)
+           pm2 restart trader-ai --update-env 2>/dev/null || pm2 start \"uv run start\" --name trader-ai --time && pm2 save"
