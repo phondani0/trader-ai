@@ -210,7 +210,15 @@ class BacktestEngine:
         cached_market_profile: str | None = None
         cached_market_bias: str | None = None
 
-        for i in range(min_lookback, len(df)):
+        from tqdm import tqdm
+        
+        for i in tqdm(
+            range(min_lookback, len(df)),
+            desc=f"Simulating {strategy_label[:20]}",
+            leave=False,
+            dynamic_ncols=True,
+            unit="bar"
+        ):
             window = df.iloc[: i + 1]
             current_bar = df.iloc[i]
 
@@ -343,8 +351,16 @@ class BacktestEngine:
         cached_market_profile: str | None = None
         cached_market_bias: str | None = None
 
+        from tqdm import tqdm
+
         bar_count = 0
-        for timestamp in timeline:
+        for timestamp in tqdm(
+            timeline,
+            desc=f"Simulating {strategy.name[:20] if strategies and (strategy := strategies[0]) else 'Multi-TF'}",
+            leave=False,
+            dynamic_ncols=True,
+            unit="bar"
+        ):
             execution_window = execution_frame.loc[execution_frame.index <= timestamp]
             if execution_window.empty:
                 continue
