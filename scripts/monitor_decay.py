@@ -66,7 +66,8 @@ def main():
     decay_alerts = []
     
     # Iterate through approved strategies
-    for strategy_name, data in approvals.items():
+    strategies_data = approvals.get("strategies", {})
+    for strategy_name, data in strategies_data.items():
         if not data.get("approved_regimes"):
             continue
             
