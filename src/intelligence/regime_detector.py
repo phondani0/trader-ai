@@ -154,10 +154,15 @@ class RegimeDetector:
             if total_regime_obs
             else MarketRegime.UNKNOWN.value
         )
-        regime_mix_pct = {
-            regime: (count / total_regime_obs) * 100
-            for regime, count in regime_counts.items()
-        }
+        regime_mix_pct = (
+            {
+                regime: (count / total_regime_obs) * 100
+                for regime, count in regime_counts.items()
+                if count > 0
+            }
+            if total_regime_obs
+            else {}
+        )
 
         breakout_rate_pct = 0.0
         if len(df) >= 21:
