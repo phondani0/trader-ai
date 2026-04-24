@@ -558,7 +558,7 @@ def run_benchmark(
                     "Strategy": strategy.name,
                     "Trades": len(result.trades),
                     "Win Rate": f"{result.win_rate_pct:.1f}%",
-                    "Net ROI": f"{result.net_roi_pct:+.2f}%",
+                    "Net ROI": f"{'✅' if approved_for_window else '❌'} {result.net_roi_pct:+.2f}%",
                     "Expectancy": f"{result.expectancy_pct:+.2f}%",
                     "Profit Factor": (
                         "inf"

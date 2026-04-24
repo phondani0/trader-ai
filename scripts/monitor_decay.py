@@ -17,9 +17,10 @@ from loguru import logger
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.core.database import SessionLocal, TradeRecord
+from src.core.database import DatabaseManager
 from src.core.backtest.models import BacktestTrade, BacktestResult
 from src.core.backtest.engine import BacktestEngine
+from src.core.models import Side
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
@@ -32,34 +33,28 @@ def load_approvals() -> dict:
         return json.load(f)
 
 def load_live_trades(strategy: str, symbol: str, days: int = 30) -> list[BacktestTrade]:
-    session = SessionLocal()
-    cutoff = datetime.utcnow() - timedelta(days=days)
-    try:
-        records = session.query(TradeRecord).filter(
-            TradeRecord.strategy == strategy,
-            TradeRecord.symbol == symbol,
-            TradeRecord.exit_time >= cutoff
-        ).all()
-        
-        # Convert DB records to BacktestTrade for engine compatibility
-        trades = []
-        for r in records:
-            trades.append(BacktestTrade(
-                symbol=r.symbol,
-                side=r.side,
-                entry_time=r.entry_time,
-                exit_time=r.exit_time,
-                entry_price=r.entry_price,
-                exit_price=r.exit_price,
-                pnl_pct=r.pnl_pct,
-                pnl_usdt=r.pnl_usdt,
-                regime=r.regime,
-                strategy=r.strategy,
-                signal_id=r.signal_id
-            ))
-        return trades
-    finally:
-        session.close()
+    db = DatabaseManager()
+    records = db.get_recent_trades(days=days)
+    
+    # Convert DB records to BacktestTrade for engine compatibility
+    trades = []
+    for r in records:
+        if r["strategy_name"] != strategy or r["symbol"] != symbol:
+            continue
+            
+        trades.append(BacktestTrade(
+            symbol=r["symbol"],
+            side=Side.BUY if r["side"].upper() == "BUY" else Side.SELL,
+            entry_time=datetime.fromisoformat(r["entry_time"]),
+            exit_time=datetime.fromisoformat(r["exit_time"]),
+            entry_price=r["entry_price"],
+            exit_price=r["exit_price"],
+            pnl_pct=r["pnl_pct"],
+            regime=r["regime"],
+            strategy=r["strategy_name"],
+            reason=r.get("reason_entry", "")
+        ))
+    return trades
 
 def main():
     logger.info("Starting Alpha Decay Monitor...")

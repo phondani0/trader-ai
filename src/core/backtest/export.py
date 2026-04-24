@@ -23,7 +23,7 @@ def export_trades_to_csv(trades: List[BacktestTrade], filepath: str | Path):
         
     headers = [
         "symbol", "side", "entry_price", "exit_price", "entry_time", "exit_time",
-        "pnl_pct", "regime", "strategy", "signal_id", "kill_switch_triggered"
+        "pnl_pct", "regime", "strategy", "reason"
     ]
     
     with open(filepath, "w", newline="") as f:
@@ -41,7 +41,6 @@ def export_trades_to_csv(trades: List[BacktestTrade], filepath: str | Path):
                 "pnl_pct": trade.pnl_pct,
                 "regime": trade.regime,
                 "strategy": trade.strategy,
-                "signal_id": trade.signal_id,
-                "kill_switch_triggered": trade.kill_switch_triggered,
+                "reason": getattr(trade, "reason", ""),
             }
             writer.writerow(row)
