@@ -339,6 +339,11 @@ class BacktestEngine:
             regime_detector=self.regime_detector,
         )
 
+        market_profile_refresh_bars = 12
+        cached_market_profile: str | None = None
+        cached_market_bias: str | None = None
+
+        bar_count = 0
         for timestamp in timeline:
             execution_window = execution_frame.loc[execution_frame.index <= timestamp]
             if execution_window.empty:
@@ -381,6 +386,7 @@ class BacktestEngine:
             for timeframe, frame in active_frames.items():
                 if timestamp not in frame.index:
                     continue
+                # Instead of a heavy .loc each time on a huge df, we might just slice. But loc is fine for now if cached.
                 window = frame.loc[:timestamp]
                 if len(window) < min_lookback:
                     continue
@@ -389,9 +395,20 @@ class BacktestEngine:
             if not fresh_windows:
                 continue
 
+            # Update cached market profile every market_profile_refresh_bars of the execution timeframe
+            if cached_market_profile is None or bar_count % market_profile_refresh_bars == 0:
+                profile_window = aggregator.market_profile_window(fresh_windows)
+                market_context = self.regime_detector.profile_window(profile_window)
+                cached_market_profile = market_context.get("detected_market_profile")
+                cached_market_bias = market_context.get("market_bias")
+            
+            bar_count += 1
+
             signals = aggregator.generate_signals(
                 {symbol: fresh_windows},
                 log_signals=False,
+                market_profiles={symbol: cached_market_profile} if cached_market_profile else None,
+                market_biases={symbol: cached_market_bias} if cached_market_bias else None,
             )
             if not signals:
                 continue
