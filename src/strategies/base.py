@@ -96,11 +96,10 @@ class BaseStrategy(ABC):
 
         if symbol is not None and self._benchmark_symbol_approvals:
             symbol_approval = self._benchmark_symbol_approvals.get(symbol)
-            if symbol_approval is None:
-                return False
-            approved_regimes = symbol_approval.get("regimes")
-            if approved_regimes is not None:
-                return regime in approved_regimes
+            if symbol_approval is not None:
+                approved_regimes = symbol_approval.get("regimes")
+                if approved_regimes is not None:
+                    return regime in approved_regimes
 
         if self._benchmark_approved_regimes is not None:
             return regime in self._benchmark_approved_regimes
@@ -175,13 +174,12 @@ class BaseStrategy(ABC):
         """Check whether this strategy is approved for the current macro profile."""
         if symbol is not None and self._benchmark_symbol_approvals:
             symbol_approval = self._benchmark_symbol_approvals.get(symbol)
-            if symbol_approval is None:
-                return False
-            approved_profiles = symbol_approval.get("market_profiles")
-            if approved_profiles is not None:
-                if not market_profile:
-                    return False
-                return market_profile in approved_profiles
+            if symbol_approval is not None:
+                approved_profiles = symbol_approval.get("market_profiles")
+                if approved_profiles is not None:
+                    if not market_profile:
+                        return False
+                    return market_profile in approved_profiles
         if self._benchmark_approved_market_profiles is None:
             return True
         if not market_profile:
@@ -207,13 +205,12 @@ class BaseStrategy(ABC):
         """Check whether this strategy is approved for the current macro bias."""
         if symbol is not None and self._benchmark_symbol_approvals:
             symbol_approval = self._benchmark_symbol_approvals.get(symbol)
-            if symbol_approval is None:
-                return False
-            approved_biases = symbol_approval.get("market_biases")
-            if approved_biases is not None:
-                if not market_bias:
-                    return False
-                return market_bias in approved_biases
+            if symbol_approval is not None:
+                approved_biases = symbol_approval.get("market_biases")
+                if approved_biases is not None:
+                    if not market_bias:
+                        return False
+                    return market_bias in approved_biases
         if self._benchmark_approved_market_biases is None:
             return True
         if not market_bias:

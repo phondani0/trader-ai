@@ -63,6 +63,13 @@ class BenchmarkDeploymentTest(unittest.TestCase):
                 self.profit_factor = pf
                 self.max_drawdown_pct = mdd
                 self.win_rate_pct = 50.0
+                self.sharpe_ratio = 1.0
+                self.sortino_ratio = 1.0
+                self.calmar_ratio = 1.0
+                self.mc_expected_mdd_pct = -5.0
+                self.mc_worst_95_mdd_pct = -10.0
+                self.kill_switch_reason = None
+                self.killed_by_drawdown = False
 
         class _Engine:
             def summarize(
@@ -73,6 +80,7 @@ class BenchmarkDeploymentTest(unittest.TestCase):
                 trades,
                 killed_by_drawdown=False,
                 kill_reason="",
+                **kwargs,
             ):
                 roi = sum(trades)
                 return _Summary(
@@ -156,6 +164,13 @@ class BenchmarkDeploymentTest(unittest.TestCase):
                 self.profit_factor = pf
                 self.max_drawdown_pct = mdd
                 self.win_rate_pct = 50.0
+                self.sharpe_ratio = 1.0
+                self.sortino_ratio = 1.0
+                self.calmar_ratio = 1.0
+                self.mc_expected_mdd_pct = -5.0
+                self.mc_worst_95_mdd_pct = -10.0
+                self.kill_switch_reason = None
+                self.killed_by_drawdown = False
 
         class _Engine:
             def summarize(
@@ -166,6 +181,7 @@ class BenchmarkDeploymentTest(unittest.TestCase):
                 trades,
                 killed_by_drawdown=False,
                 kill_reason="",
+                **kwargs,
             ):
                 roi = sum(trades)
                 return _Summary(

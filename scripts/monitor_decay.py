@@ -9,16 +9,14 @@ benchmarks established during Walk-Forward Analysis.
 import sys
 from pathlib import Path
 import json
-from datetime import datetime, timedelta
-import pandas as pd
-import numpy as np
+from datetime import datetime
 from loguru import logger
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.database import DatabaseManager
-from src.core.backtest.models import BacktestTrade, BacktestResult
+from src.core.backtest.models import BacktestTrade
 from src.core.backtest.engine import BacktestEngine
 from src.core.models import Side
 

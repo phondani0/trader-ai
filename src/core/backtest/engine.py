@@ -413,7 +413,7 @@ class BacktestEngine:
 
             # Update cached market profile every market_profile_refresh_bars of the execution timeframe
             if cached_market_profile is None or bar_count % market_profile_refresh_bars == 0:
-                profile_window = aggregator.market_profile_window(fresh_windows)
+                profile_window = aggregator.market_profile_window(execution_window)
                 market_context = self.regime_detector.profile_window(profile_window)
                 cached_market_profile = market_context.get("detected_market_profile")
                 cached_market_bias = market_context.get("market_bias")

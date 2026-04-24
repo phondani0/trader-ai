@@ -131,22 +131,22 @@ class RegimeDetector:
         ).mean()
         regime_counts: Counter = Counter()
 
-        for idx in df.index:
-            adx = df.at[idx, "adx"] if "adx" in df.columns else float("nan")
-            atr_pct = df.at[idx, "atr_pct"] if "atr_pct" in df.columns else float("nan")
-            atr_avg = rolling_atr_avg.loc[idx] if idx in rolling_atr_avg.index else float("nan")
-            if pd.isna(adx) or pd.isna(atr_pct) or pd.isna(atr_avg):
-                continue
-            is_trending = adx > self.adx_trending_threshold
-            is_high_vol = atr_pct > atr_avg
-            if is_trending and not is_high_vol:
-                regime_counts[MarketRegime.TRENDING_LOW_VOL.value] += 1
-            elif is_trending and is_high_vol:
-                regime_counts[MarketRegime.TRENDING_HIGH_VOL.value] += 1
-            elif not is_trending and not is_high_vol:
-                regime_counts[MarketRegime.SIDEWAYS_LOW_VOL.value] += 1
-            else:
-                regime_counts[MarketRegime.SIDEWAYS_HIGH_VOL.value] += 1
+        adx_col = df.get("adx")
+        atr_pct_col = df.get("atr_pct")
+        
+        if adx_col is not None and atr_pct_col is not None:
+            mask_valid = adx_col.notna() & atr_pct_col.notna() & rolling_atr_avg.notna()
+            adx_valid = adx_col[mask_valid]
+            atr_pct_valid = atr_pct_col[mask_valid]
+            atr_avg_valid = rolling_atr_avg[mask_valid]
+            
+            is_trending = adx_valid > self.adx_trending_threshold
+            is_high_vol = atr_pct_valid > atr_avg_valid
+            
+            regime_counts[MarketRegime.TRENDING_LOW_VOL.value] = int((is_trending & ~is_high_vol).sum())
+            regime_counts[MarketRegime.TRENDING_HIGH_VOL.value] = int((is_trending & is_high_vol).sum())
+            regime_counts[MarketRegime.SIDEWAYS_LOW_VOL.value] = int((~is_trending & ~is_high_vol).sum())
+            regime_counts[MarketRegime.SIDEWAYS_HIGH_VOL.value] = int((~is_trending & is_high_vol).sum())
 
         total_regime_obs = sum(regime_counts.values())
         dominant_regime = (

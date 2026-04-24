@@ -197,6 +197,34 @@ class SignalAggregatorDiagnosticsTest(unittest.TestCase):
         self.assertEqual(diagnosis["generated_signals"], [])
 
     def test_diagnose_symbol_respects_symbol_specific_approvals(self):
+        """A strategy with only BTC approval should block on a BTC-specific regime mismatch."""
+        strategy = NoEntryStrategy(
+            {"enabled": True, "regime": [MarketRegime.TRENDING_LOW_VOL.value]}
+        )
+        strategy.set_symbol_benchmark_approval(
+            "BTC/USDT:USDT",
+            regimes=["trending_high_vol"],  # Only approved for high vol on BTC
+            market_profiles=["trend"],
+            market_biases=["bullish"],
+        )
+        aggregator = SignalAggregator(
+            strategies=[strategy],
+            regime_detector=RegimeDetector(),
+        )
+
+        # Asking about BTC with a non-approved regime → should be blocked by benchmark_regime_mismatch
+        diagnosis = aggregator.diagnose_symbol(
+            "BTC/USDT:USDT",
+            _build_regime_frame(),  # Detector returns TRENDING_LOW_VOL, not TRENDING_HIGH_VOL
+            market_profile="trend",
+            market_bias="bullish",
+        )
+
+        self.assertEqual(diagnosis["status"], "fully_gated")
+        self.assertIn("benchmark_regime_mismatch", diagnosis["blocked_reasons"])
+
+    def test_unknown_symbol_falls_back_to_global_approvals(self):
+        """An unknown symbol (not in symbol approvals) should fall through to global regime approvals."""
         strategy = NoEntryStrategy(
             {"enabled": True, "regime": [MarketRegime.TRENDING_LOW_VOL.value]}
         )
@@ -206,20 +234,23 @@ class SignalAggregatorDiagnosticsTest(unittest.TestCase):
             market_profiles=["trend"],
             market_biases=["bullish"],
         )
+        # Set global approval for trending_low_vol
+        strategy.set_benchmark_approved_regimes(["trending_low_vol"])
+        strategy.set_benchmark_approved_market_profiles(["trend"])
         aggregator = SignalAggregator(
             strategies=[strategy],
             regime_detector=RegimeDetector(),
         )
 
+        # DOGE is not in symbol approvals → falls back to global approvals → should be eligible
         diagnosis = aggregator.diagnose_symbol(
-            "ETH/USDT:USDT",
+            "DOGE/USDT:USDT",
             _build_regime_frame(),
             market_profile="trend",
             market_bias="bullish",
         )
 
-        self.assertEqual(diagnosis["status"], "fully_gated")
-        self.assertIn("benchmark_regime_mismatch", diagnosis["blocked_reasons"])
+        self.assertIn("supertrend", diagnosis["eligible_strategies"])
 
     def test_generate_signals_routes_each_strategy_to_its_configured_timeframe(self):
         base_time = datetime.utcnow() - timedelta(hours=40)
