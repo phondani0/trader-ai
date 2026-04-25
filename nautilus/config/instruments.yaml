@@ -1,0 +1,4 @@
+default_instrument:
+  symbol: "EUR/USD"
+  venue: SIM
+  asset_class: fx

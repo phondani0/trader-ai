@@ -1,0 +1,9 @@
+venue: SIM
+bar_type: "EUR/USD.SIM-1-MINUTE-LAST-EXTERNAL"
+starting_balance: "1000000 USD"
+trade_size: "100000"
+fast_ema_period: 10
+slow_ema_period: 20
+bars_count: 10000
+random_seed: 42
+log_level: ERROR
