@@ -193,6 +193,76 @@ class BacktestEngineTest(unittest.TestCase):
         self.assertTrue(result.killed_by_drawdown)
         self.assertIn("drawdown", result.kill_switch_reason)
 
+    def test_run_closes_trade_after_max_hold_bars(self):
+        base_time = datetime(2024, 1, 1)
+        df = build_price_frame(
+            [
+                {
+                    "timestamp": base_time + timedelta(minutes=15 * i),
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": 100,
+                    "volume": 1000,
+                    "adx": 30,
+                    "atr_pct": 1,
+                }
+                for i in range(8)
+            ]
+        )
+        strategy = SingleEntryStrategy(
+            {
+                "enabled": True,
+                "regime": ["all"],
+                "timeframe": "15Min",
+                "max_hold_bars": 2,
+            },
+            take_profit=130.0,
+            stop_loss=80.0,
+        )
+        engine = BacktestEngine(fee_pct=0.0, slippage_pct=0.0)
+
+        result = engine.run("BTC/USDT:USDT", df, strategy, min_lookback=2)
+
+        self.assertEqual(len(result.trades), 1)
+        self.assertIn("Max hold", result.trades[0].reason)
+
+    def test_run_closes_losing_trade_after_stale_exit_bars(self):
+        base_time = datetime(2024, 1, 1)
+        df = build_price_frame(
+            [
+                {
+                    "timestamp": base_time + timedelta(minutes=15 * i),
+                    "open": 100,
+                    "high": 101,
+                    "low": 99,
+                    "close": close,
+                    "volume": 1000,
+                    "adx": 30,
+                    "atr_pct": 1,
+                }
+                for i, close in enumerate([100, 100, 100, 99, 98, 98, 98])
+            ]
+        )
+        strategy = SingleEntryStrategy(
+            {
+                "enabled": True,
+                "regime": ["all"],
+                "timeframe": "15Min",
+                "stale_exit_bars": 2,
+                "stale_exit_min_pnl_pct": 0.0,
+            },
+            take_profit=130.0,
+            stop_loss=80.0,
+        )
+        engine = BacktestEngine(fee_pct=0.0, slippage_pct=0.0)
+
+        result = engine.run("BTC/USDT:USDT", df, strategy, min_lookback=2)
+
+        self.assertEqual(len(result.trades), 1)
+        self.assertLess(result.trades[0].pnl_pct, 0)
+        self.assertIn("Stale trade", result.trades[0].reason)
+
     def test_selector_mode_uses_one_best_signal_across_strategies(self):
         base_time = datetime(2024, 1, 1)
         df = build_price_frame(

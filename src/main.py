@@ -50,6 +50,7 @@ from src.core.models import (
 )
 from src.core.strategy_approvals import get_global_strategy_approvals
 from src.core.scheduler import MarketScheduler
+from src.core.timeframes import timeframe_to_minutes
 from src.intelligence.journal import DiscoveryJournal
 from src.intelligence.regime_detector import RegimeDetector
 from src.intelligence.scanner import MarketScanner
@@ -592,6 +593,7 @@ class TradingEngine:
             "side": position.side,
             "quantity": position.quantity,
             "entry_price": position.entry_price,
+            **self._resolve_trade_management_params(strategy_name),
         }
         self._managed_positions[symbol] = managed
         self._persist_managed_position(symbol)
@@ -638,6 +640,16 @@ class TradingEngine:
                 deployable_market_biases = symbol_strategy_approval.get(
                     "deployable_market_biases"
                 )
+                selector_metrics = (
+                    symbol_strategy_approval.get("deployable_metrics")
+                    or symbol_strategy_approval.get("metrics")
+                    or symbol_strategy_approval.get("global_metrics")
+                )
+                strategy.set_symbol_benchmark_selector_metrics(
+                    symbol,
+                    selector_metrics,
+                    approved=symbol_strategy_approval.get("approved"),
+                )
                 if deployable_regimes:
                     strategy.set_symbol_benchmark_approval(
                         symbol,
@@ -671,6 +683,15 @@ class TradingEngine:
             deployable_regimes = approval.get("deployable_regimes")
             deployable_market_profiles = approval.get("deployable_market_profiles")
             deployable_market_biases = approval.get("deployable_market_biases")
+            selector_metrics = (
+                approval.get("deployable_metrics")
+                or approval.get("metrics")
+                or approval.get("global_metrics")
+            )
+            strategy.set_benchmark_selector_metrics(
+                selector_metrics,
+                approved=approval.get("approved"),
+            )
             if deployable_regimes is not None:
                 strategy.set_benchmark_approved_regimes(deployable_regimes)
             if deployable_market_profiles is not None:
@@ -968,6 +989,48 @@ class TradingEngine:
             f"Active discoveries: {', '.join(candidate_summaries)}"
         )
 
+    def _resolve_trade_management_params(
+        self, strategy_name: str | None
+    ) -> dict[str, float | int]:
+        config = getattr(self, "config", {}) or {}
+        default_timeframe = config.get("data", {}).get("candle_interval", "15Min")
+        params: dict[str, float | int] = {
+            "timeframe_minutes": timeframe_to_minutes(default_timeframe),
+            "max_hold_bars": 0,
+            "stale_exit_bars": 0,
+            "stale_exit_min_pnl_pct": 0.0,
+        }
+        if not strategy_name:
+            return params
+
+        for strategy in getattr(self, "strategies", []):
+            if strategy.name != strategy_name:
+                continue
+            params["timeframe_minutes"] = timeframe_to_minutes(
+                getattr(strategy, "timeframe", None) or default_timeframe
+            )
+            params["max_hold_bars"] = int(strategy.params.get("max_hold_bars", 0) or 0)
+            params["stale_exit_bars"] = int(
+                strategy.params.get("stale_exit_bars", 0) or 0
+            )
+            params["stale_exit_min_pnl_pct"] = float(
+                strategy.params.get("stale_exit_min_pnl_pct", 0.0) or 0.0
+            )
+            break
+        return params
+
+    @staticmethod
+    def _position_age_bars(managed: dict) -> int:
+        entry_time = managed.get("entry_time")
+        timeframe_minutes = int(managed.get("timeframe_minutes", 0) or 0)
+        if not isinstance(entry_time, datetime) or timeframe_minutes <= 0:
+            return 0
+        elapsed_minutes = max(
+            0.0,
+            (datetime.utcnow() - entry_time).total_seconds() / 60,
+        )
+        return int(elapsed_minutes // timeframe_minutes)
+
     def _execute_order(self, order):
         """Execute a validated order through the broker."""
         try:
@@ -975,6 +1038,9 @@ class TradingEngine:
 
             if result.status in (OrderStatus.FILLED, OrderStatus.PENDING):
                 filled_entry_price = result.filled_price or order.signal.entry_price
+                management_params = self._resolve_trade_management_params(
+                    order.strategy_name
+                )
                 # Track the position
                 self._managed_positions[order.symbol] = {
                     "order_id": result.id,
@@ -983,6 +1049,7 @@ class TradingEngine:
                     "side": order.side,
                     "quantity": order.quantity,
                     "entry_price": filled_entry_price,
+                    **management_params,
                 }
                 self._persist_managed_position(order.symbol)
 
@@ -1078,6 +1145,35 @@ class TradingEngine:
                         f"🎯 Take-profit hit for {pos.symbol} at ${current_price:.2f}"
                     )
                     self._close_position(pos, "Take-profit target reached")
+                    continue
+
+            age_bars = self._position_age_bars(managed)
+            stale_exit_bars = int(managed.get("stale_exit_bars", 0) or 0)
+            stale_exit_min_pnl_pct = float(
+                managed.get("stale_exit_min_pnl_pct", 0.0) or 0.0
+            )
+            if stale_exit_bars > 0 and age_bars >= stale_exit_bars:
+                if pos.unrealized_pnl_pct <= stale_exit_min_pnl_pct:
+                    logger.info(
+                        f"⏳ Stale trade exit for {pos.symbol} after {age_bars} bars "
+                        f"at ${current_price:.2f} | PnL {pos.unrealized_pnl_pct:.2f}%"
+                    )
+                    self._close_position(
+                        pos,
+                        (
+                            f"Stale trade exit after {age_bars} bars "
+                            f"(PnL {pos.unrealized_pnl_pct:.2f}%)"
+                        ),
+                    )
+                    continue
+
+            max_hold_bars = int(managed.get("max_hold_bars", 0) or 0)
+            if max_hold_bars > 0 and age_bars >= max_hold_bars:
+                logger.info(
+                    f"⌛ Max hold exit for {pos.symbol} after {age_bars} bars "
+                    f"at ${current_price:.2f}"
+                )
+                self._close_position(pos, f"Max hold reached after {age_bars} bars")
 
     def _reconcile_exchange_closed_positions(self, positions: list[Position]):
         """

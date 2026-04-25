@@ -324,6 +324,52 @@ class SignalAggregatorDiagnosticsTest(unittest.TestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0].strategy_name, "donchian_breakout")
 
+    def test_generate_signals_prefers_benchmark_stronger_strategy_over_raw_confidence(self):
+        stronger = RecordingSignalStrategy(
+            {"enabled": True, "regime": ["all"]},
+            name="donchian_breakout",
+            confidence=0.6,
+        )
+        stronger.set_benchmark_selector_metrics(
+            {
+                "trades": 20,
+                "net_roi_pct": 120.0,
+                "expectancy_pct": 5.0,
+                "profit_factor": 2.8,
+            },
+            approved=True,
+        )
+
+        weaker = RecordingSignalStrategy(
+            {"enabled": True, "regime": ["all"]},
+            name="range_reversion",
+            confidence=0.9,
+        )
+        weaker.set_benchmark_selector_metrics(
+            {
+                "trades": 5,
+                "net_roi_pct": 0.2,
+                "expectancy_pct": 0.1,
+                "profit_factor": 1.01,
+            },
+            approved=True,
+        )
+
+        aggregator = SignalAggregator(
+            strategies=[stronger, weaker],
+            regime_detector=AllowAllTestRegimeDetector(),
+        )
+
+        signals = aggregator.generate_signals(
+            {"BTC/USDT:USDT": _build_regime_frame()},
+            log_signals=False,
+            market_profiles={"BTC/USDT:USDT": "trend"},
+            market_biases={"BTC/USDT:USDT": "bullish"},
+        )
+
+        self.assertEqual(len(signals), 1)
+        self.assertEqual(signals[0].strategy_name, "donchian_breakout")
+
 
 if __name__ == "__main__":
     unittest.main()

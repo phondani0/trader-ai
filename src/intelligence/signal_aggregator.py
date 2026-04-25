@@ -37,6 +37,7 @@ class SignalAggregator:
     ):
         self.strategies = strategies
         self.regime_detector = regime_detector
+        self._strategy_by_name = {strategy.name: strategy for strategy in strategies}
         self._active_strategies: list[str] = [s.name for s in strategies if s.enabled]
         self._market_profile_lookback_days = 45
         self._last_processed_bars: dict[tuple[str, str], pd.Timestamp] = {}
@@ -495,10 +496,7 @@ class SignalAggregator:
         sell_signals = [s for s in signals if s.side == Side.SELL]
 
         if buy_signals and sell_signals:
-            if len(buy_signals) >= len(sell_signals):
-                best = max(buy_signals, key=lambda s: s.confidence)
-            else:
-                best = max(sell_signals, key=lambda s: s.confidence)
+            best = max(signals, key=self._signal_priority_key)
             if log_signals:
                 logger.warning(
                     f"⚠️ Conflicting signals for {best.symbol}: "
@@ -508,7 +506,7 @@ class SignalAggregator:
             return best
 
         all_same_dir = buy_signals or sell_signals
-        best = max(all_same_dir, key=lambda s: s.confidence)
+        best = max(all_same_dir, key=self._signal_priority_key)
 
         confluence_boost = min(0.15, 0.05 * (len(all_same_dir) - 1))
         best.confidence = min(1.0, best.confidence + confluence_boost)
@@ -524,3 +522,8 @@ class SignalAggregator:
             )
 
         return best
+
+    def _signal_priority_key(self, signal: Signal) -> tuple[int, float, float, float, float, float]:
+        strategy = self._strategy_by_name.get(signal.strategy_name)
+        selector_rank = strategy.selector_rank(signal.symbol) if strategy else (0, 0.0, 0.0, 0.0, 0.0)
+        return (*selector_rank, signal.confidence)

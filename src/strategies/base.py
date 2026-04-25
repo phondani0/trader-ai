@@ -55,6 +55,8 @@ class BaseStrategy(ABC):
         self._benchmark_approved_market_profiles: set[str] | None = None
         self._benchmark_approved_market_biases: set[str] | None = None
         self._benchmark_symbol_approvals: dict[str, dict[str, set | None]] = {}
+        self._benchmark_selector_metrics: dict[str, float | int] | None = None
+        self._benchmark_symbol_selector_metrics: dict[str, dict[str, float | int]] = {}
 
     @property
     @abstractmethod
@@ -166,6 +168,42 @@ class BaseStrategy(ABC):
 
         self._benchmark_symbol_approvals[symbol] = approval
 
+    def set_benchmark_selector_metrics(
+        self,
+        metrics: dict | None,
+        *,
+        approved: bool | None = None,
+    ):
+        if not metrics:
+            self._benchmark_selector_metrics = None
+            return
+        self._benchmark_selector_metrics = self._normalize_selector_metrics(
+            metrics,
+            approved=approved,
+        )
+
+    def set_symbol_benchmark_selector_metrics(
+        self,
+        symbol: str,
+        metrics: dict | None,
+        *,
+        approved: bool | None = None,
+    ):
+        if not metrics:
+            self._benchmark_symbol_selector_metrics.pop(symbol, None)
+            return
+        self._benchmark_symbol_selector_metrics[symbol] = self._normalize_selector_metrics(
+            metrics,
+            approved=approved,
+        )
+
+    def selector_rank(self, symbol: str | None = None) -> tuple[int, float, float, float, float]:
+        if symbol is not None:
+            symbol_metrics = self._benchmark_symbol_selector_metrics.get(symbol)
+            if symbol_metrics is not None:
+                return self._selector_rank_tuple(symbol_metrics)
+        return self._selector_rank_tuple(self._benchmark_selector_metrics)
+
     def allows_market_profile(
         self,
         market_profile: str | None,
@@ -276,6 +314,34 @@ class BaseStrategy(ABC):
 
     def __repr__(self):
         return f"<{self.__class__.__name__}(name={self.name}, enabled={self.enabled})>"
+
+    @staticmethod
+    def _normalize_selector_metrics(
+        metrics: dict,
+        *,
+        approved: bool | None = None,
+    ) -> dict[str, float | int]:
+        return {
+            "approved": int(bool(approved)),
+            "profit_factor": float(metrics.get("profit_factor", 0.0) or 0.0),
+            "expectancy_pct": float(metrics.get("expectancy_pct", 0.0) or 0.0),
+            "net_roi_pct": float(metrics.get("net_roi_pct", 0.0) or 0.0),
+            "trades": float(metrics.get("trades", 0.0) or 0.0),
+        }
+
+    @staticmethod
+    def _selector_rank_tuple(
+        metrics: dict[str, float | int] | None,
+    ) -> tuple[int, float, float, float, float]:
+        if not metrics:
+            return (0, 0.0, 0.0, 0.0, 0.0)
+        return (
+            int(metrics.get("approved", 0) or 0),
+            float(metrics.get("profit_factor", 0.0) or 0.0),
+            float(metrics.get("expectancy_pct", 0.0) or 0.0),
+            float(metrics.get("net_roi_pct", 0.0) or 0.0),
+            float(metrics.get("trades", 0.0) or 0.0),
+        )
 
     @staticmethod
     def ema_col(period: int) -> str:

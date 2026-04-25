@@ -112,11 +112,22 @@ class BacktestEngine:
                                 "regime": regime.value,
                                 "reason": signal.reason,
                                 "strategy": strategy.name,
+                                **self._trade_management_params(
+                                    strategy.params,
+                                    getattr(strategy, "timeframe", None),
+                                ),
                             }
                 else:
                     exit_price = self._resolve_exit_price(current_pos, current_bar)
+                    reason_suffix = ""
                     if exit_price is None:
-                        continue
+                        exit_price, reason_suffix = self._resolve_management_exit(
+                            current_pos,
+                            current_bar,
+                            window.index[-1],
+                        )
+                        if exit_price is None:
+                            continue
 
                     trade = self._create_trade_record(
                         symbol,
@@ -124,6 +135,7 @@ class BacktestEngine:
                         self._apply_exit_friction(current_pos["side"], exit_price),
                         window.index[-1],
                         strategy.name,
+                        reason_suffix,
                     )
                     trades.append(trade)
                     current_positions[strategy.name] = None
@@ -206,6 +218,7 @@ class BacktestEngine:
             strategies=strategies,
             regime_detector=self.regime_detector,
         )
+        strategy_map = {strategy.name: strategy for strategy in strategies}
         market_profile_refresh_bars = 12
         cached_market_profile: str | None = None
         cached_market_bias: str | None = None
@@ -224,6 +237,13 @@ class BacktestEngine:
 
             if current_position is not None:
                 exit_price = self._resolve_exit_price(current_position, current_bar)
+                reason_suffix = ""
+                if exit_price is None:
+                    exit_price, reason_suffix = self._resolve_management_exit(
+                        current_position,
+                        current_bar,
+                        window.index[-1],
+                    )
                 if exit_price is not None:
                     trade = self._create_trade_record(
                         symbol,
@@ -231,6 +251,7 @@ class BacktestEngine:
                         self._apply_exit_friction(current_position["side"], exit_price),
                         window.index[-1],
                         current_position["strategy"],
+                        reason_suffix,
                     )
                     trades.append(trade)
                     current_position = None
@@ -282,6 +303,10 @@ class BacktestEngine:
                 "regime": signal.regime.value,
                 "reason": signal.reason,
                 "strategy": signal.strategy_name,
+                **self._trade_management_params(
+                    strategy_map[signal.strategy_name].params,
+                    getattr(strategy_map[signal.strategy_name], "timeframe", None),
+                ),
             }
 
         if current_position is not None:
@@ -346,6 +371,7 @@ class BacktestEngine:
             strategies=strategies,
             regime_detector=self.regime_detector,
         )
+        strategy_map = {strategy.name: strategy for strategy in strategies}
 
         market_profile_refresh_bars = 12
         cached_market_profile: str | None = None
@@ -368,6 +394,13 @@ class BacktestEngine:
 
             if current_position is not None:
                 exit_price = self._resolve_exit_price(current_position, current_bar)
+                reason_suffix = ""
+                if exit_price is None:
+                    exit_price, reason_suffix = self._resolve_management_exit(
+                        current_position,
+                        current_bar,
+                        timestamp,
+                    )
                 if exit_price is not None:
                     trade = self._create_trade_record(
                         symbol,
@@ -375,6 +408,7 @@ class BacktestEngine:
                         self._apply_exit_friction(current_position["side"], exit_price),
                         timestamp,
                         current_position["strategy"],
+                        reason_suffix,
                     )
                     trades.append(trade)
                     current_position = None
@@ -442,6 +476,10 @@ class BacktestEngine:
                 "regime": signal.regime.value,
                 "reason": signal.reason,
                 "strategy": signal.strategy_name,
+                **self._trade_management_params(
+                    strategy_map[signal.strategy_name].params,
+                    getattr(strategy_map[signal.strategy_name], "timeframe", None),
+                ),
             }
 
         if current_position is not None:
@@ -648,6 +686,64 @@ class BacktestEngine:
         if current_pos["take_profit"] and low <= current_pos["take_profit"]:
             return current_pos["take_profit"]
         return None
+
+    @staticmethod
+    def _trade_management_params(
+        params: dict,
+        timeframe: str | None,
+    ) -> dict[str, float | int]:
+        resolved_timeframe = timeframe or "15Min"
+        return {
+            "timeframe_minutes": timeframe_to_minutes(resolved_timeframe),
+            "max_hold_bars": int(params.get("max_hold_bars", 0) or 0),
+            "stale_exit_bars": int(params.get("stale_exit_bars", 0) or 0),
+            "stale_exit_min_pnl_pct": float(
+                params.get("stale_exit_min_pnl_pct", 0.0) or 0.0
+            ),
+        }
+
+    @staticmethod
+    def _position_age_bars(current_pos: dict, current_time) -> int:
+        entry_time = current_pos.get("entry_time")
+        timeframe_minutes = int(current_pos.get("timeframe_minutes", 0) or 0)
+        if entry_time is None or timeframe_minutes <= 0:
+            return 0
+        elapsed_minutes = max(
+            0.0,
+            (pd.Timestamp(current_time) - pd.Timestamp(entry_time)).total_seconds() / 60,
+        )
+        return int(elapsed_minutes // timeframe_minutes)
+
+    def _resolve_management_exit(
+        self,
+        current_pos: dict,
+        current_bar: pd.Series,
+        current_time,
+    ) -> tuple[float | None, str]:
+        age_bars = self._position_age_bars(current_pos, current_time)
+        close = float(current_bar["close"])
+
+        stale_exit_bars = int(current_pos.get("stale_exit_bars", 0) or 0)
+        stale_exit_min_pnl_pct = float(
+            current_pos.get("stale_exit_min_pnl_pct", 0.0) or 0.0
+        )
+        if stale_exit_bars > 0 and age_bars >= stale_exit_bars:
+            if current_pos["side"] == Side.BUY:
+                pnl_pct = (
+                    (close - current_pos["entry_price"]) / current_pos["entry_price"]
+                ) * 100
+            else:
+                pnl_pct = (
+                    (current_pos["entry_price"] - close) / current_pos["entry_price"]
+                ) * 100
+            if pnl_pct <= stale_exit_min_pnl_pct:
+                return close, f" | Stale trade exit after {age_bars} bars"
+
+        max_hold_bars = int(current_pos.get("max_hold_bars", 0) or 0)
+        if max_hold_bars > 0 and age_bars >= max_hold_bars:
+            return close, f" | Max hold reached after {age_bars} bars"
+
+        return None, ""
 
     def _create_trade_record(
         self,

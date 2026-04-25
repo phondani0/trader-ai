@@ -134,6 +134,15 @@ def apply_strategy_approvals(
         deployable_regimes = approval.get("deployable_regimes")
         deployable_market_profiles = approval.get("deployable_market_profiles")
         deployable_market_biases = approval.get("deployable_market_biases")
+        selector_metrics = (
+            approval.get("deployable_metrics")
+            or approval.get("metrics")
+            or approval.get("global_metrics")
+        )
+        strategy.set_benchmark_selector_metrics(
+            selector_metrics,
+            approved=approval.get("approved"),
+        )
         if deployable_regimes is not None:
             strategy.set_benchmark_approved_regimes(deployable_regimes)
         if deployable_market_profiles is not None:
