@@ -1,79 +1,88 @@
 # Trader AI
 
-This repository is now a `NautilusTrader`-first crypto research and paper-trading workspace.
+`Trader AI` is now a single-project `NautilusTrader` workspace for `15m` crypto research and paper-trading workflows.
 
-The old custom runtime, benchmark engine, and legacy strategy stack are no longer the product direction. The root commands now dispatch into the isolated Nautilus subproject under [nautilus](/Users/ankit/Work/Projects/solo/trader-ai/nautilus).
+The old custom runtime and benchmark stack are gone. The repo now has one application package under [src/trader_ai](/Users/ankit/Work/Projects/solo/trader-ai/src/trader_ai), one config directory under [config](/Users/ankit/Work/Projects/solo/trader-ai/config), one cache directory under [data/cache](/Users/ankit/Work/Projects/solo/trader-ai/data/cache), and one test suite under [tests](/Users/ankit/Work/Projects/solo/trader-ai/tests).
 
-## Quick Start
-
-Install the root wrapper environment:
+## Setup
 
 ```bash
 uv sync
 ```
 
-Install the Nautilus subproject:
+## Commands
+
+Run everything from the repo root.
 
 ```bash
-cd nautilus
-uv sync
-```
-
-## Root Commands
-
-Run these from the repo root:
-
-```bash
-uv run backtest --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt
+uv run backtest --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/btc_backtest
 uv run benchmark
-uv run start
+uv run compare-strategies --instrument btcusdt_perp_binance --data-source ccxt --strategies volume_spike_trend nautilus_ema_cross demo_ema_cross --output-dir output/compare_btc
+uv run research --instruments btcusdt_perp_binance ethusdt_perp_binance --strategies volume_spike_trend nautilus_ema_cross --data-source ccxt --output-dir output/research
+uv run parameter-sweep --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --fast-periods 5 8 10 --slow-periods 21 34 55 --output-dir output/sweep_btc
+uv run walk-forward --bars-csv tests/fixtures/btcusdt_15m.csv --train-bars 256 --test-bars 128 --step-bars 128 --output-path output/walk_forward_windows.json
+uv run papertrade --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/paper_bootstrap
+uv run start --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/paper_bootstrap
 ```
 
-What they do:
+Command roles:
 
-- `backtest` runs `nautilus-backtest`
-- `benchmark` runs `nautilus-compare-strategies`
-- `start` runs `nautilus-papertrade`
-
-The wrappers execute inside `nautilus/`, so the actual trading and research implementation lives there.
-
-## Nautilus Subproject
-
-The full app is in [nautilus/README.md](/Users/ankit/Work/Projects/solo/trader-ai/nautilus/README.md).
-
-Key Nautilus commands:
-
-```bash
-cd nautilus
-uv run nautilus-backtest
-uv run nautilus-backtest --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/btc_spike
-uv run nautilus-compare-strategies --instrument btcusdt_perp_binance --data-source ccxt --strategies volume_spike_trend nautilus_ema_cross demo_ema_cross --output-dir output/compare_btc
-uv run nautilus-parameter-sweep --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --fast-periods 5 8 10 --slow-periods 21 34 55 --output-dir output/sweep_btc
-uv run nautilus-papertrade --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/paper_bootstrap
-uv run nautilus-walk-forward --bars-csv tests/fixtures/btcusdt_15m.csv --train-bars 256 --test-bars 128 --step-bars 128 --output-path output/walk_forward_windows.json
-```
+- `backtest`: one strategy on one instrument
+- `benchmark`: default comparison run for the core strategy set
+- `compare-strategies`: compare multiple strategies on one instrument
+- `research`: batch research across many instruments and strategies
+- `parameter-sweep`: grid search one strategy over EMA periods
+- `walk-forward`: generate rolling train/test windows from bar CSVs
+- `papertrade` and `start`: generate the paper-trading bootstrap manifest and env template
 
 ## Strategy Set
 
-Supported Nautilus-native strategies:
+Supported native strategies:
 
 - `volume_spike_trend`
 - `nautilus_ema_cross`
 - `demo_ema_cross`
 
-The target operating lane is `15m` crypto research on liquid perpetuals.
+The core target lane is liquid crypto perpetuals on `15m` bars.
+
+## Layout
+
+```text
+trader-ai/
+├── config/
+│   ├── instruments.yaml
+│   └── settings.yaml
+├── data/
+│   └── cache/
+├── src/
+│   └── trader_ai/
+│       ├── cli/
+│       ├── runners/
+│       ├── strategies/
+│       ├── config.py
+│       ├── data.py
+│       └── reports.py
+├── tests/
+│   ├── fixtures/
+│   └── test_*.py
+├── pyproject.toml
+└── README.md
+```
+
+## Outputs
+
+Backtests and research runs emit:
+
+- interactive HTML tearsheets
+- `summary.json`
+- `monthly_returns.csv`
+- `positions.csv`
+- `fills.csv`
+- `account.csv`
+- leaderboard files for compare and sweep runs
 
 ## Verification
 
-Root wrapper tests:
-
 ```bash
-python3 -m unittest tests.test_nautilus_pivot
-```
-
-Nautilus tests:
-
-```bash
-cd nautilus
 uv run python -m unittest discover -s tests
 ```
