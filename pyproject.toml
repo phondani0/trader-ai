@@ -1,21 +1,33 @@
 [project]
 name = "trader-ai"
 version = "1.0.0"
-description = "NautilusTrader-first crypto research and paper-trading workspace"
-requires-python = ">=3.12"
-dependencies = []
+description = "Single-project NautilusTrader workspace for 15 minute crypto research and paper trading"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "ccxt>=4.5.18",
+    "nautilus_trader",
+    "numpy>=2.0.2",
+    "pandas>=2.3.3",
+    "plotly>=6.3.1",
+    "pyyaml>=6.0.3",
+]
 
 [project.scripts]
-start = "scripts.start:main"
-backtest = "scripts.backtest:main"
-benchmark = "scripts.benchmark:main"
+backtest = "trader_ai.cli.backtest:main"
+benchmark = "trader_ai.cli.benchmark:main"
+compare-strategies = "trader_ai.cli.compare_strategies:main"
+papertrade = "trader_ai.cli.papertrade:main"
+parameter-sweep = "trader_ai.cli.parameter_sweep:main"
+research = "trader_ai.cli.batch_research:main"
+start = "trader_ai.cli.papertrade:main"
+walk-forward = "trader_ai.cli.walk_forward:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["scripts"]
+packages = ["src/trader_ai"]
 
 [dependency-groups]
 dev = [

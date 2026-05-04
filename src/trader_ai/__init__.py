@@ -1,0 +1,1 @@
+"""Isolated NautilusTrader spike package."""

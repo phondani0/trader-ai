@@ -1,0 +1,45 @@
+synthetic_fx:
+  provider: test
+  template: default_fx_ccy
+  symbol: "EUR/USD"
+  venue: SIM
+  bar_type: "EUR/USD.SIM-1-MINUTE-LAST-EXTERNAL"
+  asset_class: fx
+  starting_balance: "1000000 USD"
+  trade_size: "100000"
+
+btcusdt_perp_binance:
+  provider: test
+  template: btcusdt_perp_binance
+  venue: BINANCE
+  bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
+  asset_class: crypto_perpetual
+  starting_balance: "100000 USDT"
+  trade_size: "0.010"
+  ccxt_exchange: binanceusdm
+  ccxt_symbol: "BTC/USDT:USDT"
+  ccxt_timeframe: 15m
+
+ethusdt_perp_binance:
+  provider: test
+  template: ethusdt_perp_binance
+  venue: BINANCE
+  bar_type: "ETHUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
+  asset_class: crypto_perpetual
+  starting_balance: "100000 USDT"
+  trade_size: "0.100"
+  ccxt_exchange: binanceusdm
+  ccxt_symbol: "ETH/USDT:USDT"
+  ccxt_timeframe: 15m
+
+xrpusdt_linear_bybit:
+  provider: test
+  template: xrpusdt_linear_bybit
+  venue: BYBIT
+  bar_type: "XRPUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL"
+  asset_class: crypto_perpetual
+  starting_balance: "100000 USDT"
+  trade_size: "100"
+  ccxt_exchange: bybit
+  ccxt_symbol: "XRP/USDT:USDT"
+  ccxt_timeframe: 15m
