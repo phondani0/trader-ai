@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Isolated NautilusTrader spike inside trader-ai"
 requires-python = ">=3.12,<3.15"
 dependencies = [
+    "ccxt>=4.5.18",
     "nautilus_trader",
     "numpy>=2.0.2",
     "pandas>=2.3.3",
@@ -13,7 +14,11 @@ dependencies = [
 
 [project.scripts]
 nautilus-backtest = "nautilus_app.cli.backtest:main"
+nautilus-batch-research = "nautilus_app.cli.batch_research:main"
+nautilus-compare-strategies = "nautilus_app.cli.compare_strategies:main"
+nautilus-parameter-sweep = "nautilus_app.cli.parameter_sweep:main"
 nautilus-papertrade = "nautilus_app.cli.papertrade:main"
+nautilus-walk-forward = "nautilus_app.cli.walk_forward:main"
 
 [build-system]
 requires = ["hatchling"]

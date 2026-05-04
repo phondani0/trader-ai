@@ -1,16 +1,8 @@
-# NautilusTrader Spike
+# NautilusTrader App
 
-This subproject is an isolated NautilusTrader experiment inside the main `trader-ai` repository.
+This subproject is the only active trading and research engine in the repository.
 
-It does not reuse the current bot runtime or backtest engine. The goal is to evaluate NautilusTrader on its own merits before any migration decision.
-
-## Scope
-
-Current spike goals:
-
-- install NautilusTrader cleanly in an isolated subproject
-- run a minimal synthetic-data backtest based on the official quickstart pattern
-- keep strategy code and config separate from the current bot
+It is intentionally isolated from the repo root so strategy work, reports, and framework dependencies stay inside one clear boundary.
 
 ## Setup
 
@@ -19,26 +11,93 @@ cd nautilus
 uv sync
 ```
 
-## Run
+## Default Modes
+
+- synthetic demo backtest for fast local verification
+- `15m` crypto research via CCXT for real market work
+- paper-trading bootstrap generation for deployment planning
+
+## Commands
+
+### Backtest
 
 ```bash
 uv run nautilus-backtest
+uv run nautilus-backtest --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/btc_spike
 ```
 
-This runs a self-contained synthetic EUR/USD 1-minute EMA-cross demo backtest. No external market-data download is required for the first spike.
-It also writes an interactive HTML tearsheet to:
-
-```text
-nautilus/output/demo_backtest_tearsheet.html
-```
-
-## Paper Trading
+### Compare Strategies
 
 ```bash
-uv run nautilus-papertrade
+uv run nautilus-compare-strategies \
+  --instrument btcusdt_perp_binance \
+  --data-source ccxt \
+  --strategies volume_spike_trend nautilus_ema_cross demo_ema_cross \
+  --output-dir output/compare_btc
 ```
 
-Paper trading is intentionally not wired yet. This spike is backtest-first.
+### Parameter Sweep
+
+```bash
+uv run nautilus-parameter-sweep \
+  --instrument btcusdt_perp_binance \
+  --strategy volume_spike_trend \
+  --data-source ccxt \
+  --fast-periods 5 8 10 \
+  --slow-periods 21 34 55 \
+  --output-dir output/sweep_btc
+```
+
+### Batch Research
+
+```bash
+uv run nautilus-batch-research \
+  --instruments btcusdt_perp_binance ethusdt_perp_binance \
+  --strategies volume_spike_trend nautilus_ema_cross \
+  --data-source ccxt \
+  --output-dir output/batch_crypto
+```
+
+### Walk-Forward Windows
+
+```bash
+uv run nautilus-walk-forward \
+  --bars-csv tests/fixtures/btcusdt_15m.csv \
+  --train-bars 256 \
+  --test-bars 128 \
+  --step-bars 128 \
+  --output-path output/walk_forward_windows.json
+```
+
+### Paper Bootstrap
+
+```bash
+uv run nautilus-papertrade \
+  --instrument btcusdt_perp_binance \
+  --strategy volume_spike_trend \
+  --data-source ccxt \
+  --output-dir output/paper_bootstrap
+```
+
+This generates deployment metadata and a runtime env template. It is not yet a continuous live loop.
+
+## Outputs
+
+Backtests and research runs emit:
+
+- interactive HTML tearsheets
+- `summary.json`
+- `monthly_returns.csv`
+- `positions.csv`
+- `fills.csv`
+- `account.csv`
+- leaderboard files for compare and sweep runs
+
+## Current Strategy Set
+
+- `volume_spike_trend`
+- `nautilus_ema_cross`
+- `demo_ema_cross`
 
 ## Tests
 

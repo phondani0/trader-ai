@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-
-def main():
-    print(
-        "Paper trading is not wired yet. "
-        "This spike is backtest-first; add a Nautilus paper/live runner next."
-    )
-
+from nautilus_app.cli.papertrade import main
 
 if __name__ == "__main__":
     main()

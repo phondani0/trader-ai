@@ -1,3 +1,6 @@
+instrument_name: synthetic_fx
+strategy_name: demo_ema_cross
+data_source: synthetic
 venue: SIM
 bar_type: "EUR/USD.SIM-1-MINUTE-LAST-EXTERNAL"
 starting_balance: "1000000 USD"
@@ -7,3 +10,4 @@ slow_ema_period: 20
 bars_count: 10000
 random_seed: 42
 log_level: ERROR
+ccxt_limit: 4000
