@@ -1,10 +1,10 @@
-instrument_name: synthetic_fx
-strategy_name: demo_ema_cross
-data_source: synthetic
-venue: SIM
-bar_type: "EUR/USD.SIM-1-MINUTE-LAST-EXTERNAL"
-starting_balance: "1000000 USD"
-trade_size: "100000"
+instrument_name: btcusdt_perp_binance
+strategy_name: adaptive_trend_rider
+data_source: ccxt
+venue: BINANCE
+bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
+starting_balance: "100000.0 USDT"
+trade_size: "1.0"
 fast_ema_period: 10
 slow_ema_period: 20
 bars_count: 10000
