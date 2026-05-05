@@ -16,6 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cache-dir", default=None)
     parser.add_argument("--fast-ema-period", type=int, default=None)
     parser.add_argument("--slow-ema-period", type=int, default=None)
+    parser.add_argument("--ccxt-limit", type=int, default=None)
     return parser
 
 
@@ -31,6 +32,7 @@ def main():
         cache_dir=args.cache_dir,
         fast_ema_period=args.fast_ema_period,
         slow_ema_period=args.slow_ema_period,
+        ccxt_limit=args.ccxt_limit,
     )
     print("NautilusTrader backtest completed")
     for key, value in result.items():

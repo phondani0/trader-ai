@@ -10,4 +10,4 @@ slow_ema_period: 20
 bars_count: 10000
 random_seed: 42
 log_level: ERROR
-ccxt_limit: 4000
+ccxt_limit: 15000
