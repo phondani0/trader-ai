@@ -11,12 +11,14 @@ from trader_ai.strategies.adaptive_trend_rider import AdaptiveTrendRiderConfig
 from trader_ai.strategies.adaptive_trend_rider import AdaptiveTrendRiderStrategy
 from trader_ai.strategies.macd_demo import DemoEMACrossConfig
 from trader_ai.strategies.macd_demo import DemoEMACrossStrategy
+from trader_ai.strategies.squeeze_breakout import SqueezeBreakoutConfig
+from trader_ai.strategies.squeeze_breakout import SqueezeBreakoutStrategy
 from trader_ai.strategies.volume_spike_trend import VolumeSpikeTrendConfig
 from trader_ai.strategies.volume_spike_trend import VolumeSpikeTrendStrategy
 
 
 def list_strategies() -> list[str]:
-    return ["adaptive_trend_rider", "demo_ema_cross", "nautilus_ema_cross", "volume_spike_trend"]
+    return ["adaptive_trend_rider", "demo_ema_cross", "nautilus_ema_cross", "squeeze_breakout", "volume_spike_trend"]
 
 
 def create_strategy(
@@ -54,6 +56,16 @@ def create_strategy(
             slow_ema_period=slow_ema_period,
         )
         return DemoEMACrossStrategy(config)
+
+    if name == "squeeze_breakout":
+        config = SqueezeBreakoutConfig(
+            instrument_id=instrument_id,
+            bar_type=bar_type,
+            trade_size=trade_size,
+            fast_ema_period=fast_ema_period,
+            slow_ema_period=slow_ema_period,
+        )
+        return SqueezeBreakoutStrategy(config)
 
     if name == "nautilus_ema_cross":
         config = EMACrossConfig(
