@@ -20,7 +20,7 @@ class StrategyRegistryTest(unittest.TestCase):
         names = list_strategies()
         self.assertEqual(
             names,
-            ["adaptive_trend_rider", "demo_ema_cross", "nautilus_ema_cross", "volume_spike_trend"],
+            ["adaptive_trend_rider", "demo_ema_cross", "nautilus_ema_cross", "squeeze_breakout", "volume_spike_trend"],
         )
 
     def test_registry_builds_official_nautilus_ema_cross_strategy(self):
