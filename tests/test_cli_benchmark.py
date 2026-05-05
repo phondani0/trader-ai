@@ -47,7 +47,7 @@ class BenchmarkCliTest(unittest.TestCase):
         self.assertEqual(args.strategies, ["demo_ema_cross", "volume_spike_trend"])
         self.assertEqual(
             DEFAULT_STRATEGIES,
-            ["volume_spike_trend", "nautilus_ema_cross", "demo_ema_cross"],
+            ["adaptive_trend_rider", "volume_spike_trend", "nautilus_ema_cross", "demo_ema_cross"],
         )
 
 
