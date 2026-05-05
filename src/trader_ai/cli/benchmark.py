@@ -8,6 +8,7 @@ from trader_ai.runners.compare_strategies import run_strategy_comparison
 DEFAULT_INSTRUMENT = "btcusdt_perp_binance"
 DEFAULT_DATA_SOURCE = "ccxt"
 DEFAULT_STRATEGIES = [
+    "adaptive_trend_rider",
     "volume_spike_trend",
     "nautilus_ema_cross",
     "demo_ema_cross",
