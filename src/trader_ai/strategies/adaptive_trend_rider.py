@@ -13,7 +13,7 @@ from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
-
+from live_trader.core.database import DatabaseManager
 class AdaptiveTrendRiderConfig(StrategyConfig, frozen=True):
     instrument_id: InstrumentId
     bar_type: BarType
@@ -37,11 +37,14 @@ class AdaptiveTrendRiderConfig(StrategyConfig, frozen=True):
     cooldown_bars: int = 8
     ema_spread_min: float = 0.002
     trend_confirm_bars: int = 3
+    use_discovery_journal: bool = False
+    ccxt_symbol: str = ""
 
 
 class AdaptiveTrendRiderStrategy(Strategy):
     def __init__(self, config: AdaptiveTrendRiderConfig):
         super().__init__(config)
+        self.db = DatabaseManager() if config.use_discovery_journal else None
         self.fast_ema = ExponentialMovingAverage(config.fast_ema_period)
         self.slow_ema = ExponentialMovingAverage(config.slow_ema_period)
         self.rsi = RelativeStrengthIndex(config.rsi_period)
@@ -115,6 +118,13 @@ class AdaptiveTrendRiderStrategy(Strategy):
     def _evaluate_entry(self, bar: Bar):
         if self._trend_bars < self.config.trend_confirm_bars:
             return
+
+        # Discovery Journal Interlock
+        if self.config.use_discovery_journal and self.db and self.config.ccxt_symbol:
+            pending = self.db.get_pending_discoveries()
+            is_hot = any(p["symbol"] == self.config.ccxt_symbol for p in pending)
+            if not is_hot:
+                return
 
         current_atr = self.atr.value
         atr_ma = sum(self._atr_history) / len(self._atr_history)

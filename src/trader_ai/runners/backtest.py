@@ -57,6 +57,7 @@ def build_backtest_components(
     strategy_name: str | None = None,
     fast_ema_period: int | None = None,
     slow_ema_period: int | None = None,
+    is_live: bool = False,
 ) -> BacktestComponents:
     instruments = load_instruments(INSTRUMENTS_PATH)
     resolved_name = instrument_name or settings.instrument_name
@@ -72,6 +73,8 @@ def build_backtest_components(
         trade_size=instrument_spec.trade_size or settings.trade_size,
         fast_ema_period=fast_ema_period or settings.fast_ema_period,
         slow_ema_period=slow_ema_period or settings.slow_ema_period,
+        use_discovery_journal=is_live,
+        ccxt_symbol=instrument_spec.ccxt_symbol,
     )
     return BacktestComponents(
         venue=venue,

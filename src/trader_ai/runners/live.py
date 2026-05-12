@@ -77,6 +77,7 @@ def build_live_node(
         settings,
         instrument_name=instrument_name,
         strategy_name=strategy_name,
+        is_live=True,
     )
     
     # 1. Configure the TradingNode

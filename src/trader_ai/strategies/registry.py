@@ -29,6 +29,8 @@ def create_strategy(
     trade_size,
     fast_ema_period: int,
     slow_ema_period: int,
+    use_discovery_journal: bool = False,
+    ccxt_symbol: str = "",
 ):
     if isinstance(instrument_id, str):
         instrument_id = InstrumentId.from_str(instrument_id)
@@ -44,6 +46,8 @@ def create_strategy(
             trade_size=trade_size,
             fast_ema_period=fast_ema_period,
             slow_ema_period=slow_ema_period,
+            use_discovery_journal=use_discovery_journal,
+            ccxt_symbol=ccxt_symbol,
         )
         return AdaptiveTrendRiderStrategy(config)
 
@@ -84,6 +88,8 @@ def create_strategy(
             trade_size=trade_size,
             fast_ema_period=fast_ema_period,
             slow_ema_period=slow_ema_period,
+            use_discovery_journal=use_discovery_journal,
+            ccxt_symbol=ccxt_symbol,
         )
         return VolumeSpikeTrendStrategy(config)
 

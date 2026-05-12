@@ -14,6 +14,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
 
+from live_trader.core.database import DatabaseManager
+
 class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     instrument_id: InstrumentId
     bar_type: BarType
@@ -33,11 +35,14 @@ class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     trailing_activation_atr_mult: float = 2.0
     max_hold_bars: int = 64
     cooldown_bars: int = 12
+    use_discovery_journal: bool = False
+    ccxt_symbol: str = ""
 
 
 class VolumeSpikeTrendStrategy(Strategy):
     def __init__(self, config: VolumeSpikeTrendConfig):
         super().__init__(config)
+        self.db = DatabaseManager() if config.use_discovery_journal else None
         self.fast_ema = ExponentialMovingAverage(config.fast_ema_period)
         self.slow_ema = ExponentialMovingAverage(config.slow_ema_period)
         self.rsi = RelativeStrengthIndex(config.rsi_period)
@@ -85,6 +90,13 @@ class VolumeSpikeTrendStrategy(Strategy):
         )
 
     def _evaluate_entry(self, bar: Bar):
+        # Discovery Journal Interlock
+        if self.config.use_discovery_journal and self.db and self.config.ccxt_symbol:
+            pending = self.db.get_pending_discoveries()
+            is_hot = any(p["symbol"] == self.config.ccxt_symbol for p in pending)
+            if not is_hot:
+                return
+
         avg_volume = sum(self._volumes) / len(self._volumes)
         is_spike = bar.volume.as_double() >= avg_volume * self.config.volume_multiplier
         if not is_spike:
