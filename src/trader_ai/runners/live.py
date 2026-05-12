@@ -21,22 +21,36 @@ from nautilus_trader.config import (
 )
 from nautilus_trader.live.node import TradingNode
 
+import ccxt
 from trader_ai.config import load_settings
 from trader_ai.runners.backtest import build_backtest_components
 
+from live_trader.core.database import DatabaseManager
+from live_trader.intelligence.journal import DiscoveryJournal
+from live_trader.intelligence.scanner import MarketScanner
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+# Global state for sidecars
+_db: DatabaseManager | None = None
+_journal: DiscoveryJournal | None = None
+_scanner: MarketScanner | None = None
+
 
 def _trigger_discovery_scan():
     """Sidecar task: Run MarketScanner V2."""
     from loguru import logger
-    logger.info("Running scheduled MarketScanner discovery...")
-    # Will be wired to MarketScanner.scan_for_momentum() in main.py
+    if _scanner:
+        logger.info("Running scheduled MarketScanner discovery...")
+        _scanner.scan_for_momentum()
+
 
 def _trigger_journal_review():
     """Sidecar task: Run DiscoveryJournal audit."""
     from loguru import logger
-    logger.info("Running scheduled DiscoveryJournal review...")
-    # Will be wired to DiscoveryJournal.review_discoveries() in main.py
+    if _journal:
+        logger.info("Running scheduled DiscoveryJournal review...")
+        _journal.update_performance()
 
 def build_live_node(
     settings_path: str | Path | None,
@@ -50,6 +64,14 @@ def build_live_node(
         else load_settings(PROJECT_ROOT / "config" / "settings.yaml")
     )
     
+    # Initialize the Sidecars
+    global _db, _journal, _scanner
+    if _db is None:
+        _db = DatabaseManager()
+        exchange = ccxt.binanceusdm()
+        _journal = DiscoveryJournal(exchange, _db, settings.model_dump() if hasattr(settings, "model_dump") else settings)
+        _scanner = MarketScanner(exchange, settings.model_dump() if hasattr(settings, "model_dump") else settings, _journal)
+
     # Reuse the same strategy/instrument builder as backtesting
     components = build_backtest_components(
         settings,
