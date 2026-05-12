@@ -19,7 +19,7 @@ compare-strategies = "trader_ai.cli.compare_strategies:main"
 papertrade = "trader_ai.cli.papertrade:main"
 parameter-sweep = "trader_ai.cli.parameter_sweep:main"
 research = "trader_ai.cli.batch_research:main"
-start = "trader_ai.cli.papertrade:main"
+start = "trader_ai.cli.live:main"
 walk-forward = "trader_ai.cli.walk_forward:main"
 
 [build-system]
