@@ -12,8 +12,10 @@ from typing import Dict
 from loguru import logger
 
 from src.core.database import DatabaseManager
-from src.core.base_broker import BaseBroker
 
+
+
+import ccxt
 
 class DiscoveryJournal:
     """
@@ -21,8 +23,8 @@ class DiscoveryJournal:
     Records snapshots and evaluates accuracy at 1h, 4h, and 24h intervals.
     """
 
-    def __init__(self, broker: BaseBroker, db: DatabaseManager, config: dict | None = None):
-        self.broker = broker
+    def __init__(self, exchange: ccxt.Exchange, db: DatabaseManager, config: dict | None = None):
+        self.exchange = exchange
         self.db = db
         self.config = config or {}
 
@@ -54,7 +56,7 @@ class DiscoveryJournal:
             discovery_time = self._parse_timestamp(entry["discovery_time"])
 
             # Fetch current price
-            current_ticker = self.broker.fetch_ticker(symbol)
+            current_ticker = self.exchange.fetch_ticker(symbol)
             current_price = current_ticker.get("last", 0.0)
             if not current_price:
                 continue

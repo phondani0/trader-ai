@@ -16,7 +16,9 @@ from typing import Dict, List
 import pandas as pd
 from loguru import logger
 
-from src.core.base_broker import BaseBroker
+
+import ccxt
+
 from src.intelligence.journal import DiscoveryJournal
 
 _TIMEFRAME_MAP = {
@@ -37,11 +39,11 @@ class MarketScanner:
 
     def __init__(
         self,
-        broker: BaseBroker,
+        exchange: ccxt.Exchange,
         config: dict,
         journal: DiscoveryJournal | None = None,
     ):
-        self.broker = broker
+        self.exchange = exchange
         self.config = config
         self.journal = journal
 
@@ -104,7 +106,7 @@ class MarketScanner:
         logger.info("🔍 Starting market scan for dynamic momentum and breakouts...")
 
         try:
-            tickers = self.broker.fetch_tickers()
+            tickers = self.exchange.fetch_tickers()
             if not tickers:
                 return []
 
@@ -292,11 +294,12 @@ class MarketScanner:
         min_bars: int,
     ) -> Dict | None:
         try:
-            df = self.broker.fetch_ohlcv(
+            ohlcv = self.exchange.fetch_ohlcv(
                 symbol,
                 timeframe=self.feature_timeframe,
                 limit=max(self.feature_window_bars, min_bars),
             )
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         except Exception as exc:
             logger.debug(f"Failed to fetch intraday candles for {symbol}: {exc}")
             return None
