@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from nautilus_trader.adapters.binance.config import (
@@ -24,6 +25,18 @@ from trader_ai.config import load_settings
 from trader_ai.runners.backtest import build_backtest_components
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+def _trigger_discovery_scan():
+    """Sidecar task: Run MarketScanner V2."""
+    from loguru import logger
+    logger.info("Running scheduled MarketScanner discovery...")
+    # Will be wired to MarketScanner.scan_for_momentum() in main.py
+
+def _trigger_journal_review():
+    """Sidecar task: Run DiscoveryJournal audit."""
+    from loguru import logger
+    logger.info("Running scheduled DiscoveryJournal review...")
+    # Will be wired to DiscoveryJournal.review_discoveries() in main.py
 
 def build_live_node(
     settings_path: str | Path | None,
@@ -105,6 +118,20 @@ def build_live_node(
     # 4. Add the Strategy
     node.trader.add_strategy(components.strategy)
     
+    # 5. Wire the sidecar tasks (Scanner and Journal) to the Node's Clock
+    discovery_interval = int(settings.discovery.get("interval_minutes", 10))
+    node.clock.set_alert(
+        name="discovery_scan",
+        interval=timedelta(minutes=discovery_interval),
+        callback=_trigger_discovery_scan,
+    )
+    
+    node.clock.set_alert(
+        name="journal_review",
+        interval=timedelta(minutes=30),
+        callback=_trigger_journal_review,
+    )
+    
     return node
 
 def run_live(
@@ -119,5 +146,5 @@ def run_live(
         strategy_name=strategy_name,
     )
     
-    # Block forever while asyncio loop handles WebSocket events
+    # Block forever while asyncio loop handles WebSocket events and timers
     node.run()
