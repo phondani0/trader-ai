@@ -52,6 +52,15 @@ def _trigger_journal_review():
         logger.info("Running scheduled DiscoveryJournal review...")
         _journal.update_performance()
 
+from nautilus_trader.adapters.bybit.config import (
+    BybitDataClientConfig,
+    BybitExecClientConfig,
+)
+from nautilus_trader.adapters.bybit.factories import (
+    BybitLiveDataClientFactory,
+    BybitLiveExecClientFactory,
+)
+
 def build_live_node(
     settings_path: str | Path | None,
     instrument_name: str | None = None,
@@ -64,14 +73,6 @@ def build_live_node(
         else load_settings(PROJECT_ROOT / "config" / "settings.yaml")
     )
     
-    # Initialize the Sidecars
-    global _db, _journal, _scanner
-    if _db is None:
-        _db = DatabaseManager()
-        exchange = ccxt.binanceusdm()
-        _journal = DiscoveryJournal(exchange, _db, settings.model_dump() if hasattr(settings, "model_dump") else settings)
-        _scanner = MarketScanner(exchange, settings.model_dump() if hasattr(settings, "model_dump") else settings, _journal)
-
     # Reuse the same strategy/instrument builder as backtesting
     components = build_backtest_components(
         settings,
@@ -80,6 +81,16 @@ def build_live_node(
         is_live=True,
     )
     
+    # Initialize the Sidecars
+    global _db, _journal, _scanner
+    if _db is None:
+        _db = DatabaseManager()
+        exchange_name = components.instrument_spec.ccxt_exchange or "binanceusdm"
+        exchange_class = getattr(ccxt, exchange_name)
+        exchange = exchange_class()
+        _journal = DiscoveryJournal(exchange, _db, settings.model_dump() if hasattr(settings, "model_dump") else settings)
+        _scanner = MarketScanner(exchange, settings.model_dump() if hasattr(settings, "model_dump") else settings, _journal)
+
     # 1. Configure the TradingNode
     node_config = TradingNodeConfig(
         data_engine=LiveDataEngineConfig(
@@ -100,43 +111,90 @@ def build_live_node(
     api_key = os.environ.get("EXCHANGE_API_KEY", "")
     api_secret = os.environ.get("EXCHANGE_SECRET_KEY", "")
     
-    # Use testnet URL if in paper mode
-    base_uri = "wss://stream.binancefuture.com" if is_paper else "wss://fstream.binance.com"
-    api_url = "https://testnet.binancefuture.com" if is_paper else "https://fapi.binance.com"
-    
-    # 2. Add the Binance Data Client
-    data_client_config = BinanceDataClientConfig(
-        base_uri=base_uri,
-        instrument_provider=components.instrument_provider,
-        api_key=api_key,
-        api_secret=api_secret,
-    )
-    
-    data_client = BinanceLiveDataClientFactory.create(
-        config=data_client_config,
-        msgbus=node.msgbus,
-        cache=node.cache,
-        clock=node.clock,
-        loop=asyncio.get_event_loop(),
-    )
-    node.add_data_client(data_client)
-    
-    # 3. Add the Binance Execution Client
-    exec_client_config = BinanceExecClientConfig(
-        base_uri=api_url,
-        api_key=api_key,
-        api_secret=api_secret,
-        instrument_provider=components.instrument_provider,
-    )
-    
-    exec_client = BinanceLiveExecClientFactory.create(
-        config=exec_client_config,
-        msgbus=node.msgbus,
-        cache=node.cache,
-        clock=node.clock,
-        loop=asyncio.get_event_loop(),
-    )
-    node.add_exec_client(exec_client)
+    venue_str = components.venue.value.upper()
+    if venue_str == "BINANCE":
+        # Check environment for URL overrides, fallback to defaults
+        base_uri = os.environ.get(
+            "EXCHANGE_WSS_URL",
+            "wss://stream.binancefuture.com" if is_paper else "wss://fstream.binance.com"
+        )
+        api_url = os.environ.get(
+            "EXCHANGE_REST_URL",
+            "https://testnet.binancefuture.com" if is_paper else "https://fapi.binance.com"
+        )
+        
+        data_client_config = BinanceDataClientConfig(
+            base_uri=base_uri,
+            instrument_provider=components.instrument_provider,
+            api_key=api_key,
+            api_secret=api_secret,
+        )
+        data_client = BinanceLiveDataClientFactory.create(
+            config=data_client_config,
+            msgbus=node.msgbus,
+            cache=node.cache,
+            clock=node.clock,
+            loop=asyncio.get_event_loop(),
+        )
+        node.add_data_client(data_client)
+        
+        exec_client_config = BinanceExecClientConfig(
+            base_uri=api_url,
+            api_key=api_key,
+            api_secret=api_secret,
+            instrument_provider=components.instrument_provider,
+        )
+        exec_client = BinanceLiveExecClientFactory.create(
+            config=exec_client_config,
+            msgbus=node.msgbus,
+            cache=node.cache,
+            clock=node.clock,
+            loop=asyncio.get_event_loop(),
+        )
+        node.add_exec_client(exec_client)
+        
+    elif venue_str == "BYBIT":
+        # Check environment for URL overrides, fallback to defaults
+        base_uri = os.environ.get(
+            "EXCHANGE_WSS_URL",
+            "wss://stream-demo.bybit.com/v5/public/linear" if is_paper else "wss://stream.bybit.com/v5/public/linear"
+        )
+        api_url = os.environ.get(
+            "EXCHANGE_REST_URL",
+            "https://api-demo.bybit.com" if is_paper else "https://api.bybit.com"
+        )
+        
+        data_client_config = BybitDataClientConfig(
+            base_uri=base_uri,
+            instrument_provider=components.instrument_provider,
+            api_key=api_key,
+            api_secret=api_secret,
+        )
+        data_client = BybitLiveDataClientFactory.create(
+            config=data_client_config,
+            msgbus=node.msgbus,
+            cache=node.cache,
+            clock=node.clock,
+            loop=asyncio.get_event_loop(),
+        )
+        node.add_data_client(data_client)
+        
+        exec_client_config = BybitExecClientConfig(
+            base_uri=api_url,
+            api_key=api_key,
+            api_secret=api_secret,
+            instrument_provider=components.instrument_provider,
+        )
+        exec_client = BybitLiveExecClientFactory.create(
+            config=exec_client_config,
+            msgbus=node.msgbus,
+            cache=node.cache,
+            clock=node.clock,
+            loop=asyncio.get_event_loop(),
+        )
+        node.add_exec_client(exec_client)
+    else:
+        raise ValueError(f"Unsupported venue for live trading: {venue_str}")
     
     # 4. Add the Strategy
     node.trader.add_strategy(components.strategy)
