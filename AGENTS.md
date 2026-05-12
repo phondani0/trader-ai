@@ -4,6 +4,31 @@ You are a **Principal Python Engineer and Strategic Lead** specializing in auton
 
 ---
 
+## 🏗️ System Architecture: Two Codebases, One Mission
+
+This project has **two distinct layers**. Understanding this split is critical before touching any code.
+
+### Layer 1: Research & Backtesting (THIS repo — `trader-ai`)
+- **Location:** `/Users/ankit/Work/Projects/solo/trader-ai` (local) / GitHub
+- **Runtime:** `uv run backtest`, `uv run benchmark`, `uv run papertrade`
+- **Engine:** NautilusTrader (institutional-grade event-driven backtester)
+- **Purpose:** Strategy research, backtesting, benchmarking, and paper trading
+- **CI/CD:** GitHub Actions (`.github/workflows/deploy.yml`) — runs tests on every push to `main`. **Does NOT auto-deploy to server.**
+- **Strategies:** `adaptive_trend_rider`, `squeeze_breakout`, `volume_spike_trend`, `demo_ema_cross`
+
+### Layer 2: Live Trading Bot (Ubuntu Server — PM2 process `trader-ai`)
+- **Location:** `/home/ubuntu/trader-ai/` on the Ubuntu VPS
+- **Runtime:** PM2 (`pm2 start`, `pm2 restart trader-ai`)
+- **Engine:** Custom Python app (`src/main.py`) with CCXT, loguru, SQLite
+- **Purpose:** Real-money live trading on Bybit/Binance perpetual futures
+- **Key modules:** `src/intelligence/scanner.py`, `src/risk/kill_switch.py`, `src/core/scheduler.py`
+- **Deployment:** Manual SSH + git pull on the server. CI does NOT deploy this.
+
+> [!IMPORTANT]
+> When the user reports issues with the live bot (PM2 logs, trades not executing, kill switch), you are dealing with **Layer 2** — a separate codebase that is NOT in this local repo. Always SSH or ask for the relevant source files from the server.
+
+---
+
 ## 🚀 The Vision: Autonomous Crypto Alpha
 Our goal is to build a high-fidelity crypto trading system that trades on the user's behalf with **very high quality prediction**. We do not want a bot that enters 10 coins and takes 10 losses; we want a partner that waits for the "High quality" setup.
 
@@ -39,10 +64,12 @@ To maintain consistency, all agents must respect these core technical choices:
 ---
 
 ## 📊 State of the Union (Strategy Status)
-Based on our April 2024 Regime Matrix Benchmarking:
-- **🏆 VWAP Reversion:** Robust. Earns +1.5% in choppy/volatile regimes. High confidence.
-- **⚠️ Supertrend:** Fragile. Vulnerable to false momentum signals in sideways markets.
-- **❌ MACD Bollinger:** Defunct. Lost 44% in choppy markets. Do NOT activate without a fundamental rewrite.
+Based on benchmarking on 15,000 bars (~156 days) of BTCUSDT-PERP on Binance:
+- **🏆 demo_ema_cross (Momentum EMA):** Best. 19.3% return, PF 1.77, 49% WR, R:R 1.87. ATR trailing stops + RSI + ATR expansion gate to avoid chop.
+- **✅ volume_spike_trend:** Solid. 11.1% return, PF 1.34, 44% WR, R:R 1.73. High-conviction volume spike (3x avg) + RSI bounds + ATR trailing stops.
+- **✅ adaptive_trend_rider:** Steady. 6.0% return. Conservative but robust.
+- **⚠️ squeeze_breakout:** Selective. 4.3% return, only 20 fills in 156 days. Very high-conviction but rare setups.
+- **❌ nautilus_ema_cross (legacy):** Defunct. -7.6% return. Always-in flip-flop with no stops. Do NOT activate.
 
 ---
 
@@ -52,6 +79,7 @@ Based on our April 2024 Regime Matrix Benchmarking:
 - **Documentation Sync:** Every CLI command change in `pyproject.toml` MUST be reflected in `README.md`.
 - **Proactivity:** Evaluate decisions for **Business Risk**. If a user asks for a feature that increases risk (e.g., removing Stop Loss), push back and provide a safer alternative.
 - **Minimalist Code:** Avoid "noisy" comments. Code should be self-documenting. Use comments only for complex algorithmic logic.
+- **Commit Gate:** Always ask the user for permission before running `git commit`. Never auto-commit.
 
 ---
 
