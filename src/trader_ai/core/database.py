@@ -13,9 +13,23 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from src.core.models import Trade
+from dataclasses import dataclass
 
-
+@dataclass
+class Trade:
+    symbol: str
+    side: str
+    quantity: float
+    entry_price: float
+    exit_price: float
+    entry_time: datetime
+    exit_time: datetime
+    pnl: float
+    pnl_pct: float
+    strategy_name: str
+    regime: Any
+    reason_entry: str
+    reason_exit: str
 class DatabaseManager:
     """
     SQLite database manager for persistent trading records.

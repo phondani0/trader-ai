@@ -11,7 +11,7 @@ from typing import Optional
 
 from loguru import logger
 
-from src.core.models import Signal, Order, Position, OrderType, Trade
+from trader_ai.core.models import Signal, Order, Position, OrderType, Trade
 
 
 class RiskManager:

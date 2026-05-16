@@ -25,9 +25,9 @@ import ccxt
 from trader_ai.config import load_settings
 from trader_ai.runners.backtest import build_backtest_components
 
-from live_trader.core.database import DatabaseManager
-from live_trader.intelligence.journal import DiscoveryJournal
-from live_trader.intelligence.scanner import MarketScanner
+from trader_ai.core.database import DatabaseManager
+from trader_ai.intelligence.journal import DiscoveryJournal
+from trader_ai.intelligence.scanner import MarketScanner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 

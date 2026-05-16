@@ -61,8 +61,8 @@ class BacktestRunnerTest(unittest.TestCase):
             self.assertTrue(Path(result["monthly_returns_path"]).exists())
 
             summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
-            self.assertEqual(summary["strategy"], "demo_ema_cross")
-            self.assertEqual(summary["data_source"], "synthetic")
+            self.assertEqual(summary["strategy"], "adaptive_trend_rider")
+            self.assertEqual(summary["data_source"], "ccxt")
             self.assertIn("instrument_id", summary)
             self.assertIn("monthly_returns_path", summary)
 

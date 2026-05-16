@@ -19,7 +19,7 @@ from loguru import logger
 
 import ccxt
 
-from src.intelligence.journal import DiscoveryJournal
+from trader_ai.intelligence.journal import DiscoveryJournal
 
 _TIMEFRAME_MAP = {
     "1Min": "1m",

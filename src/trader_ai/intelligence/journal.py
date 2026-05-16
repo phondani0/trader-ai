@@ -11,7 +11,7 @@ from typing import Dict
 
 from loguru import logger
 
-from src.core.database import DatabaseManager
+from trader_ai.core.database import DatabaseManager
 
 
 

@@ -14,7 +14,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
 
-from live_trader.core.database import DatabaseManager
+from trader_ai.core.database import DatabaseManager
 
 class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     instrument_id: InstrumentId

@@ -12,10 +12,10 @@ from typing import Optional
 import pandas as pd
 from loguru import logger
 
-from src.core.models import Signal, Side, MarketRegime
-from src.core.timeframes import canonical_timeframe
-from src.intelligence.regime_detector import RegimeDetector
-from src.strategies.base import BaseStrategy
+from trader_ai.core.models import Signal, Side, MarketRegime
+from trader_ai.core.timeframes import canonical_timeframe
+from trader_ai.intelligence.regime_detector import RegimeDetector
+from trader_ai.strategies.base import BaseStrategy
 
 
 class SignalAggregator:

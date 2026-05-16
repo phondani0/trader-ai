@@ -18,7 +18,13 @@ from trader_ai.strategies.volume_spike_trend import VolumeSpikeTrendStrategy
 
 
 def list_strategies() -> list[str]:
-    return ["adaptive_trend_rider", "demo_ema_cross", "nautilus_ema_cross", "squeeze_breakout", "volume_spike_trend"]
+    return [
+        "adaptive_trend_rider",
+        "demo_ema_cross",
+        "nautilus_ema_cross",
+        "squeeze_breakout",
+        "volume_spike_trend",
+    ]
 
 
 def create_strategy(

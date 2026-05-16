@@ -16,7 +16,7 @@ from collections import Counter
 
 import pandas as pd
 
-from src.core.models import MarketRegime, MarketBias, RegimeState
+from trader_ai.core.models import MarketRegime, MarketBias, RegimeState
 
 
 class RegimeDetector:
