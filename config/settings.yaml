@@ -1,8 +1,8 @@
-instrument_name: btcusdt_perp_binance
+instrument_name: xrpusdt_linear_bybit
 strategy_name: adaptive_trend_rider
 data_source: ccxt
-venue: BINANCE
-bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
+venue: BYBIT
+bar_type: "XRPUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL"
 starting_balance: "100000.0 USDT"
 trade_size: "1.0"
 fast_ema_period: 10

@@ -44,6 +44,7 @@ class BacktestComponents:
     strategy_name: str
     strategy_config: object
     instrument_spec: InstrumentSpec
+    strategy: object = None
 
 
 def load_default_settings() -> NautilusSettings:
@@ -83,6 +84,7 @@ def build_backtest_components(
         strategy_name=resolved_strategy_name,
         strategy_config=strategy.config,
         instrument_spec=instrument_spec,
+        strategy=strategy,
     )
 
 
