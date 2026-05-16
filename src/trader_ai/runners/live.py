@@ -15,6 +15,15 @@ from nautilus_trader.adapters.binance.factories import (
     BinanceLiveDataClientFactory,
     BinanceLiveExecClientFactory,
 )
+from nautilus_trader.adapters.bybit.config import (
+    BybitDataClientConfig,
+    BybitEnvironment,
+    BybitExecClientConfig,
+)
+from nautilus_trader.adapters.bybit.factories import (
+    BybitLiveDataClientFactory,
+    BybitLiveExecClientFactory,
+)
 from nautilus_trader.config import (
     LiveDataEngineConfig,
     LiveExecEngineConfig,
@@ -53,17 +62,6 @@ def _trigger_journal_review():
     if _journal:
         logger.info("Running scheduled DiscoveryJournal review...")
         _journal.update_performance()
-
-
-from nautilus_trader.adapters.bybit.config import (
-    BybitDataClientConfig,
-    BybitEnvironment,
-    BybitExecClientConfig,
-)
-from nautilus_trader.adapters.bybit.factories import (
-    BybitLiveDataClientFactory,
-    BybitLiveExecClientFactory,
-)
 
 
 def build_live_node(

@@ -18,8 +18,8 @@ class ConfigLoadingTest(unittest.TestCase):
     def test_load_settings_reads_expected_defaults(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
 
-        self.assertEqual(settings.venue, "BINANCE")
-        self.assertEqual(settings.bar_type, "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL")
+        self.assertEqual(settings.venue, "BYBIT")
+        self.assertEqual(settings.bar_type, "XRPUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL")
         self.assertEqual(settings.trade_size, "1.0")
         self.assertEqual(settings.fast_ema_period, 10)
         self.assertEqual(settings.slow_ema_period, 20)

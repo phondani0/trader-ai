@@ -33,6 +33,7 @@ packages = ["src/trader_ai"]
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.15.10",
@@ -40,3 +41,6 @@ dev = [
 
 [tool.ruff]
 extend-exclude = [".agents"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]
