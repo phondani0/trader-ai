@@ -50,7 +50,7 @@ class BacktestRunnerTest(unittest.TestCase):
 
     def test_run_backtest_returns_html_report_path(self):
         with TemporaryDirectory() as tmpdir:
-            result = run_backtest(output_dir=tmpdir)
+            result = run_backtest(output_dir=tmpdir, data_source="synthetic")
             self.assertIn("tearsheet_path", result)
             self.assertTrue(str(result["tearsheet_path"]).endswith(".html"))
             self.assertTrue(Path(result["tearsheet_path"]).exists())
@@ -62,7 +62,7 @@ class BacktestRunnerTest(unittest.TestCase):
 
             summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
             self.assertEqual(summary["strategy"], "adaptive_trend_rider")
-            self.assertEqual(summary["data_source"], "ccxt")
+            self.assertEqual(summary["data_source"], "synthetic")
             self.assertIn("instrument_id", summary)
             self.assertIn("monthly_returns_path", summary)
 
