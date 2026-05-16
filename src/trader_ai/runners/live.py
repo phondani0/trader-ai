@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
 
@@ -88,8 +89,8 @@ def build_live_node(
         exchange_name = components.instrument_spec.ccxt_exchange or "binanceusdm"
         exchange_class = getattr(ccxt, exchange_name)
         exchange = exchange_class()
-        _journal = DiscoveryJournal(exchange, _db, settings.model_dump() if hasattr(settings, "model_dump") else settings)
-        _scanner = MarketScanner(exchange, settings.model_dump() if hasattr(settings, "model_dump") else settings, _journal)
+        _journal = DiscoveryJournal(exchange, _db, asdict(settings))
+        _scanner = MarketScanner(exchange, asdict(settings), _journal)
 
     # 1. Configure the TradingNode
     node_config = TradingNodeConfig(
