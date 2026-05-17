@@ -46,7 +46,7 @@ _journal: DiscoveryJournal | None = None
 _scanner: MarketScanner | None = None
 
 
-def _trigger_discovery_scan():
+def _trigger_discovery_scan(_event: object | None = None) -> None:
     """Sidecar task: Run MarketScanner V2."""
     from loguru import logger
 
@@ -55,7 +55,7 @@ def _trigger_discovery_scan():
         _scanner.scan_for_momentum()
 
 
-def _trigger_journal_review():
+def _trigger_journal_review(_event: object | None = None) -> None:
     """Sidecar task: Run DiscoveryJournal audit."""
     from loguru import logger
 
