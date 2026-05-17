@@ -38,8 +38,8 @@ class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     use_discovery_journal: bool = False
     discovery_gate: str = "off"
     ccxt_symbol: str = ""
-    warmup_diagnostics: bool = True
-    warmup_log_interval_bars: int = 10
+    readiness_diagnostics: bool = True
+    readiness_log_interval_bars: int = 10
 
 
 class VolumeSpikeTrendStrategy(Strategy):
@@ -65,7 +65,8 @@ class VolumeSpikeTrendStrategy(Strategy):
         self._bars_in_position: int = 0
         self._cooldown_remaining: int = 0
         self._bars_seen: int = 0
-        self._last_warmup_log_bar: int = 0
+        self._last_readiness_log_bar: int = 0
+        self._last_startup_backfill_close_ns: int | None = None
 
     def on_start(self):
         self.register_indicator_for_bars(self.config.bar_type, self.fast_ema)
@@ -75,11 +76,14 @@ class VolumeSpikeTrendStrategy(Strategy):
         self.subscribe_bars(self.config.bar_type)
 
     def on_bar(self, bar: Bar):
+        if self._is_startup_backfilled_bar(bar):
+            return
+
         self._bars_seen += 1
         self._volumes.append(bar.volume.as_double())
 
         if not self._indicators_ready():
-            self._log_warmup_status()
+            self._log_readiness_status()
             return
 
         if self._cooldown_remaining > 0:
@@ -94,7 +98,12 @@ class VolumeSpikeTrendStrategy(Strategy):
         self.close_all_positions(self.config.instrument_id)
         self._reset_position_state()
 
-    def warmup_with_bars(self, bars: list[Bar]) -> None:
+    def seed_startup_backfill(
+        self,
+        bars: list[Bar],
+        *,
+        last_replayed_close_ns: int | None = None,
+    ) -> None:
         for bar in bars:
             self.fast_ema.handle_bar(bar)
             self.slow_ema.handle_bar(bar)
@@ -102,6 +111,13 @@ class VolumeSpikeTrendStrategy(Strategy):
             self.atr.handle_bar(bar)
             self._bars_seen += 1
             self._volumes.append(bar.volume.as_double())
+        self._last_startup_backfill_close_ns = last_replayed_close_ns
+
+    def _is_startup_backfilled_bar(self, bar: Bar) -> bool:
+        return (
+            self._last_startup_backfill_close_ns is not None
+            and bar.ts_event <= self._last_startup_backfill_close_ns
+        )
 
     def _indicators_ready(self) -> bool:
         return (
@@ -112,7 +128,7 @@ class VolumeSpikeTrendStrategy(Strategy):
             and len(self._volumes) >= self.config.volume_window
         )
 
-    def _warmup_status(self) -> dict[str, int | bool]:
+    def _readiness_status(self) -> dict[str, int | bool]:
         return {
             "indicators_initialized": (
                 self.fast_ema.initialized
@@ -124,23 +140,23 @@ class VolumeSpikeTrendStrategy(Strategy):
             "volume_required": self.config.volume_window,
         }
 
-    def _log_warmup_status(self) -> None:
-        if not self.config.warmup_diagnostics:
+    def _log_readiness_status(self) -> None:
+        if not self.config.readiness_diagnostics:
             return
-        if self._last_warmup_log_bar and (
-            self._bars_seen - self._last_warmup_log_bar
-            < self.config.warmup_log_interval_bars
+        if self._last_readiness_log_bar and (
+            self._bars_seen - self._last_readiness_log_bar
+            < self.config.readiness_log_interval_bars
         ):
             return
 
-        status = self._warmup_status()
+        status = self._readiness_status()
         self.log.info(
-            "Warmup pending "
+            "Readiness pending "
             f"{self.config.instrument_id}: "
             f"indicators_initialized={status['indicators_initialized']}, "
             f"volume={status['volume_bars']}/{status['volume_required']}"
         )
-        self._last_warmup_log_bar = self._bars_seen
+        self._last_readiness_log_bar = self._bars_seen
 
     def _evaluate_entry(self, bar: Bar):
         if self._journal_blocks_entry():

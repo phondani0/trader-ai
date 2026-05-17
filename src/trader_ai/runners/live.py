@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
@@ -118,15 +119,17 @@ def build_live_components(
     return components
 
 
-def warmup_live_components(
+def startup_backfill_live_components(
     components: list[BacktestComponents],
     *,
     cache_dir: str | Path,
     bars_limit: int,
     loader=load_ccxt_bars,
+    now_ns: int | None = None,
 ) -> list[dict[str, object]]:
     from loguru import logger
 
+    resolved_now_ns = time.time_ns() if now_ns is None else now_ns
     reports: list[dict[str, object]] = []
     for component in components:
         try:
@@ -138,25 +141,41 @@ def warmup_live_components(
                 bar_type=component.bar_type,
                 limit=bars_limit,
             )
-            warmup = getattr(component.strategy, "warmup_with_bars", None)
-            if not callable(warmup):
+            timeframe_ns = _timeframe_to_ns(component.instrument_spec.ccxt_timeframe)
+            bars = _closed_startup_backfill_bars(
+                bars,
+                timeframe_ns=timeframe_ns,
+                now_ns=resolved_now_ns,
+            )
+            last_replayed_close_ns = (
+                bars[-1].ts_event + timeframe_ns if bars else None
+            )
+            seed_startup_backfill = getattr(
+                component.strategy,
+                "seed_startup_backfill",
+                None,
+            )
+            if not callable(seed_startup_backfill):
                 reports.append(
                     {
                         "instrument": component.instrument_name,
                         "strategy": component.strategy_name,
                         "bars": len(bars),
                         "ready": False,
-                        "error": "strategy does not support historical warmup",
+                        "error": "strategy does not support startup backfill",
                     }
                 )
                 logger.warning(
-                    "Historical warmup skipped for "
+                    "Startup backfill skipped for "
                     f"{component.strategy_name}/{component.instrument_name}: "
-                    "strategy does not support historical warmup"
+                    "strategy does not support startup backfill"
                 )
                 continue
 
-            warmup(bars)
+            seed_startup_backfill(
+                bars,
+                last_replayed_close_ns=last_replayed_close_ns,
+            )
             ready = (
                 bool(component.strategy._indicators_ready())
                 if hasattr(component.strategy, "_indicators_ready")
@@ -172,7 +191,7 @@ def warmup_live_components(
                 }
             )
             logger.info(
-                "Historical warmup replayed "
+                "Startup backfill replayed "
                 f"{len(bars)} bars for "
                 f"{component.strategy_name}/{component.instrument_name}; "
                 f"ready={ready}"
@@ -188,11 +207,37 @@ def warmup_live_components(
                 }
             )
             logger.warning(
-                "Historical warmup failed for "
+                "Startup backfill failed for "
                 f"{component.strategy_name}/{component.instrument_name}: {exc}"
             )
 
     return reports
+
+
+def _closed_startup_backfill_bars(
+    bars: list,
+    *,
+    timeframe_ns: int,
+    now_ns: int,
+) -> list:
+    return [bar for bar in bars if bar.ts_event + timeframe_ns <= now_ns]
+
+
+def _timeframe_to_ns(raw_timeframe: str | None) -> int:
+    if not raw_timeframe:
+        return 15 * 60 * 1_000_000_000
+
+    unit = raw_timeframe[-1].lower()
+    amount = int(raw_timeframe[:-1])
+    multipliers = {
+        "s": 1_000_000_000,
+        "m": 60 * 1_000_000_000,
+        "h": 60 * 60 * 1_000_000_000,
+        "d": 24 * 60 * 60 * 1_000_000_000,
+    }
+    if unit not in multipliers:
+        raise ValueError(f"Unsupported CCXT timeframe: {raw_timeframe}")
+    return amount * multipliers[unit]
 
 
 def build_live_node(
@@ -307,7 +352,7 @@ def build_live_node(
         node.trader.add_strategy(component.strategy)
 
     if settings.startup_backfill_enabled:
-        warmup_live_components(
+        startup_backfill_live_components(
             components,
             cache_dir=DEFAULT_CACHE_DIR,
             bars_limit=settings.startup_backfill_bars,
