@@ -35,6 +35,7 @@ from nautilus_trader.live.node import TradingNode
 from trader_ai.config import load_settings
 from trader_ai.config import load_strategy_configs
 from trader_ai.core.database import DatabaseManager
+from trader_ai.data import load_ccxt_bars
 from trader_ai.intelligence.journal import DiscoveryJournal
 from trader_ai.intelligence.scanner import MarketScanner
 from trader_ai.runners.backtest import BacktestComponents
@@ -42,6 +43,7 @@ from trader_ai.runners.backtest import build_backtest_components
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 STRATEGIES_PATH = PROJECT_ROOT / "config" / "strategies.yaml"
+DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 
 # Global state for sidecars
 _db: DatabaseManager | None = None
@@ -114,6 +116,83 @@ def build_live_components(
         )
 
     return components
+
+
+def warmup_live_components(
+    components: list[BacktestComponents],
+    *,
+    cache_dir: str | Path,
+    bars_limit: int,
+    loader=load_ccxt_bars,
+) -> list[dict[str, object]]:
+    from loguru import logger
+
+    reports: list[dict[str, object]] = []
+    for component in components:
+        try:
+            bars = loader(
+                cache_dir=cache_dir,
+                instrument_name=component.instrument_name,
+                instrument_spec=component.instrument_spec,
+                instrument=component.instrument,
+                bar_type=component.bar_type,
+                limit=bars_limit,
+            )
+            warmup = getattr(component.strategy, "warmup_with_bars", None)
+            if not callable(warmup):
+                reports.append(
+                    {
+                        "instrument": component.instrument_name,
+                        "strategy": component.strategy_name,
+                        "bars": len(bars),
+                        "ready": False,
+                        "error": "strategy does not support historical warmup",
+                    }
+                )
+                logger.warning(
+                    "Historical warmup skipped for "
+                    f"{component.strategy_name}/{component.instrument_name}: "
+                    "strategy does not support historical warmup"
+                )
+                continue
+
+            warmup(bars)
+            ready = (
+                bool(component.strategy._indicators_ready())
+                if hasattr(component.strategy, "_indicators_ready")
+                else False
+            )
+            reports.append(
+                {
+                    "instrument": component.instrument_name,
+                    "strategy": component.strategy_name,
+                    "bars": len(bars),
+                    "ready": ready,
+                    "error": None,
+                }
+            )
+            logger.info(
+                "Historical warmup replayed "
+                f"{len(bars)} bars for "
+                f"{component.strategy_name}/{component.instrument_name}; "
+                f"ready={ready}"
+            )
+        except Exception as exc:
+            reports.append(
+                {
+                    "instrument": component.instrument_name,
+                    "strategy": component.strategy_name,
+                    "bars": 0,
+                    "ready": False,
+                    "error": str(exc),
+                }
+            )
+            logger.warning(
+                "Historical warmup failed for "
+                f"{component.strategy_name}/{component.instrument_name}: {exc}"
+            )
+
+    return reports
 
 
 def build_live_node(
@@ -226,6 +305,13 @@ def build_live_node(
     # 4. Add the Strategy
     for component in components:
         node.trader.add_strategy(component.strategy)
+
+    if settings.startup_backfill_enabled:
+        warmup_live_components(
+            components,
+            cache_dir=DEFAULT_CACHE_DIR,
+            bars_limit=settings.startup_backfill_bars,
+        )
 
     # 5. Wire the sidecar tasks (Scanner and Journal) to the Node's Clock
     discovery_interval = getattr(settings, "discovery_interval", 10)

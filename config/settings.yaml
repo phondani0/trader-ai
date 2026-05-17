@@ -11,3 +11,5 @@ bars_count: 10000
 random_seed: 42
 log_level: ERROR
 ccxt_limit: 15000
+startup_backfill_enabled: true
+startup_backfill_bars: 120

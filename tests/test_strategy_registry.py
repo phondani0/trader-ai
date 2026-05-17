@@ -106,6 +106,56 @@ class StrategyRegistryTest(unittest.TestCase):
 
         self.assertTrue(strategy._journal_blocks_entry())
 
+    def test_adaptive_trend_rider_reports_warmup_status(self):
+        strategy = create_strategy(
+            name="adaptive_trend_rider",
+            instrument_id="BTCUSDT-PERP.BINANCE",
+            bar_type="BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL",
+            trade_size="0.010",
+            fast_ema_period=8,
+            slow_ema_period=21,
+            params={
+                "volume_window": 20,
+                "atr_ma_period": 50,
+                "warmup_log_interval_bars": 5,
+            },
+        )
+        strategy._volumes.extend([1.0] * 7)
+        strategy._atr_history.extend([1.0] * 11)
+
+        self.assertEqual(
+            strategy._warmup_status(),
+            {
+                "indicators_initialized": False,
+                "volume_bars": 7,
+                "volume_required": 20,
+                "atr_history_bars": 11,
+                "atr_history_required": 50,
+            },
+        )
+        self.assertEqual(strategy.config.warmup_log_interval_bars, 5)
+
+    def test_volume_spike_trend_reports_warmup_status(self):
+        strategy = create_strategy(
+            name="volume_spike_trend",
+            instrument_id="BTCUSDT-PERP.BINANCE",
+            bar_type="BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL",
+            trade_size="0.010",
+            fast_ema_period=8,
+            slow_ema_period=21,
+            params={"volume_window": 20},
+        )
+        strategy._volumes.extend([1.0] * 9)
+
+        self.assertEqual(
+            strategy._warmup_status(),
+            {
+                "indicators_initialized": False,
+                "volume_bars": 9,
+                "volume_required": 20,
+            },
+        )
+
     def test_registry_rejects_unknown_strategy_names(self):
         with self.assertRaises(ValueError):
             create_strategy(

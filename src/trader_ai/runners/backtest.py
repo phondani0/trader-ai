@@ -49,6 +49,7 @@ class BacktestComponents:
     venue: Venue
     instrument: object
     bar_type: BarType
+    instrument_name: str
     strategy_name: str
     strategy_config: object
     instrument_spec: InstrumentSpec
@@ -96,6 +97,7 @@ def build_backtest_components(
         venue=venue,
         instrument=instrument,
         bar_type=bar_type,
+        instrument_name=resolved_name,
         strategy_name=resolved_strategy_name,
         strategy_config=strategy.config,
         instrument_spec=instrument_spec,

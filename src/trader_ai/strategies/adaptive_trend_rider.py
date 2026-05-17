@@ -40,6 +40,8 @@ class AdaptiveTrendRiderConfig(StrategyConfig, frozen=True):
     use_discovery_journal: bool = False
     discovery_gate: str = "off"
     ccxt_symbol: str = ""
+    warmup_diagnostics: bool = True
+    warmup_log_interval_bars: int = 10
 
 
 class AdaptiveTrendRiderStrategy(Strategy):
@@ -67,6 +69,8 @@ class AdaptiveTrendRiderStrategy(Strategy):
         self._bars_in_position: int = 0
         self._cooldown_remaining: int = 0
         self._entry_atr: float = 0.0
+        self._bars_seen: int = 0
+        self._last_warmup_log_bar: int = 0
 
     def on_start(self):
         self.register_indicator_for_bars(self.config.bar_type, self.fast_ema)
@@ -76,11 +80,13 @@ class AdaptiveTrendRiderStrategy(Strategy):
         self.subscribe_bars(self.config.bar_type)
 
     def on_bar(self, bar: Bar):
+        self._bars_seen += 1
         self._volumes.append(bar.volume.as_double())
         if self.atr.initialized:
             self._atr_history.append(self.atr.value)
 
         if not self._indicators_ready():
+            self._log_warmup_status()
             return
 
         self._update_trend_counter()
@@ -97,12 +103,59 @@ class AdaptiveTrendRiderStrategy(Strategy):
         self.close_all_positions(self.config.instrument_id)
         self._reset_position_state()
 
+    def warmup_with_bars(self, bars: list[Bar]) -> None:
+        for bar in bars:
+            self.fast_ema.handle_bar(bar)
+            self.slow_ema.handle_bar(bar)
+            self.rsi.handle_bar(bar)
+            self.atr.handle_bar(bar)
+            self._bars_seen += 1
+            self._volumes.append(bar.volume.as_double())
+            if self.atr.initialized:
+                self._atr_history.append(self.atr.value)
+
     def _indicators_ready(self) -> bool:
         return (
-            self.indicators_initialized()
+            self.fast_ema.initialized
+            and self.slow_ema.initialized
+            and self.rsi.initialized
+            and self.atr.initialized
             and len(self._volumes) >= self.config.volume_window
             and len(self._atr_history) >= self.config.atr_ma_period
         )
+
+    def _warmup_status(self) -> dict[str, int | bool]:
+        return {
+            "indicators_initialized": (
+                self.fast_ema.initialized
+                and self.slow_ema.initialized
+                and self.rsi.initialized
+                and self.atr.initialized
+            ),
+            "volume_bars": len(self._volumes),
+            "volume_required": self.config.volume_window,
+            "atr_history_bars": len(self._atr_history),
+            "atr_history_required": self.config.atr_ma_period,
+        }
+
+    def _log_warmup_status(self) -> None:
+        if not self.config.warmup_diagnostics:
+            return
+        if self._last_warmup_log_bar and (
+            self._bars_seen - self._last_warmup_log_bar
+            < self.config.warmup_log_interval_bars
+        ):
+            return
+
+        status = self._warmup_status()
+        self.log.info(
+            "Warmup pending "
+            f"{self.config.instrument_id}: "
+            f"indicators_initialized={status['indicators_initialized']}, "
+            f"volume={status['volume_bars']}/{status['volume_required']}, "
+            f"atr_history={status['atr_history_bars']}/{status['atr_history_required']}"
+        )
+        self._last_warmup_log_bar = self._bars_seen
 
     def _update_trend_counter(self):
         fast = self.fast_ema.value
