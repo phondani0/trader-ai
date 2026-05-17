@@ -36,13 +36,18 @@ class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     max_hold_bars: int = 64
     cooldown_bars: int = 12
     use_discovery_journal: bool = False
+    discovery_gate: str = "off"
     ccxt_symbol: str = ""
 
 
 class VolumeSpikeTrendStrategy(Strategy):
     def __init__(self, config: VolumeSpikeTrendConfig):
         super().__init__(config)
-        self.db = DatabaseManager() if config.use_discovery_journal else None
+        self.db = (
+            DatabaseManager()
+            if config.use_discovery_journal or config.discovery_gate in {"soft", "hard"}
+            else None
+        )
         self.fast_ema = ExponentialMovingAverage(config.fast_ema_period)
         self.slow_ema = ExponentialMovingAverage(config.slow_ema_period)
         self.rsi = RelativeStrengthIndex(config.rsi_period)
@@ -90,12 +95,8 @@ class VolumeSpikeTrendStrategy(Strategy):
         )
 
     def _evaluate_entry(self, bar: Bar):
-        # Discovery Journal Interlock
-        if self.config.use_discovery_journal and self.db and self.config.ccxt_symbol:
-            pending = self.db.get_pending_discoveries()
-            is_hot = any(p["symbol"] == self.config.ccxt_symbol for p in pending)
-            if not is_hot:
-                return
+        if self._journal_blocks_entry():
+            return
 
         avg_volume = sum(self._volumes) / len(self._volumes)
         is_spike = bar.volume.as_double() >= avg_volume * self.config.volume_multiplier
@@ -126,6 +127,24 @@ class VolumeSpikeTrendStrategy(Strategy):
         self._trailing_active = False
         self._bars_in_position = 0
         self._submit_market(side)
+
+    def _journal_blocks_entry(self) -> bool:
+        if not self.db or not self.config.ccxt_symbol:
+            return False
+
+        gate = self.config.discovery_gate
+        if gate == "off" and not self.config.use_discovery_journal:
+            return False
+
+        pending = self.db.get_pending_discoveries()
+        is_hot = any(p["symbol"] == self.config.ccxt_symbol for p in pending)
+        if is_hot:
+            return False
+
+        if gate == "hard" or self.config.use_discovery_journal:
+            return True
+
+        return False
 
     def _manage_position(self, bar: Bar):
         self._bars_in_position += 1

@@ -36,7 +36,9 @@ def create_strategy(
     fast_ema_period: int,
     slow_ema_period: int,
     use_discovery_journal: bool = False,
+    discovery_gate: str = "off",
     ccxt_symbol: str = "",
+    params: dict[str, object] | None = None,
 ):
     if isinstance(instrument_id, str):
         instrument_id = InstrumentId.from_str(instrument_id)
@@ -44,16 +46,23 @@ def create_strategy(
         bar_type = BarType.from_str(bar_type)
     if not isinstance(trade_size, Decimal):
         trade_size = Decimal(str(trade_size))
+    strategy_params = dict(params or {})
 
     if name == "adaptive_trend_rider":
         config = AdaptiveTrendRiderConfig(
             instrument_id=instrument_id,
             bar_type=bar_type,
             trade_size=trade_size,
-            fast_ema_period=fast_ema_period,
-            slow_ema_period=slow_ema_period,
+            fast_ema_period=int(
+                strategy_params.pop("fast_ema_period", fast_ema_period)
+            ),
+            slow_ema_period=int(
+                strategy_params.pop("slow_ema_period", slow_ema_period)
+            ),
             use_discovery_journal=use_discovery_journal,
+            discovery_gate=discovery_gate,
             ccxt_symbol=ccxt_symbol,
+            **strategy_params,
         )
         return AdaptiveTrendRiderStrategy(config)
 
@@ -62,8 +71,13 @@ def create_strategy(
             instrument_id=instrument_id,
             bar_type=bar_type,
             trade_size=trade_size,
-            fast_ema_period=fast_ema_period,
-            slow_ema_period=slow_ema_period,
+            fast_ema_period=int(
+                strategy_params.pop("fast_ema_period", fast_ema_period)
+            ),
+            slow_ema_period=int(
+                strategy_params.pop("slow_ema_period", slow_ema_period)
+            ),
+            **strategy_params,
         )
         return DemoEMACrossStrategy(config)
 
@@ -72,8 +86,13 @@ def create_strategy(
             instrument_id=instrument_id,
             bar_type=bar_type,
             trade_size=trade_size,
-            fast_ema_period=fast_ema_period,
-            slow_ema_period=slow_ema_period,
+            fast_ema_period=int(
+                strategy_params.pop("fast_ema_period", fast_ema_period)
+            ),
+            slow_ema_period=int(
+                strategy_params.pop("slow_ema_period", slow_ema_period)
+            ),
+            **strategy_params,
         )
         return SqueezeBreakoutStrategy(config)
 
@@ -82,8 +101,13 @@ def create_strategy(
             instrument_id=instrument_id,
             bar_type=bar_type,
             trade_size=trade_size,
-            fast_ema_period=fast_ema_period,
-            slow_ema_period=slow_ema_period,
+            fast_ema_period=int(
+                strategy_params.pop("fast_ema_period", fast_ema_period)
+            ),
+            slow_ema_period=int(
+                strategy_params.pop("slow_ema_period", slow_ema_period)
+            ),
+            **strategy_params,
         )
         return EMACross(config)
 
@@ -92,10 +116,16 @@ def create_strategy(
             instrument_id=instrument_id,
             bar_type=bar_type,
             trade_size=trade_size,
-            fast_ema_period=fast_ema_period,
-            slow_ema_period=slow_ema_period,
+            fast_ema_period=int(
+                strategy_params.pop("fast_ema_period", fast_ema_period)
+            ),
+            slow_ema_period=int(
+                strategy_params.pop("slow_ema_period", slow_ema_period)
+            ),
             use_discovery_journal=use_discovery_journal,
+            discovery_gate=discovery_gate,
             ccxt_symbol=ccxt_symbol,
+            **strategy_params,
         )
         return VolumeSpikeTrendStrategy(config)
 

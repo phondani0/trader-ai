@@ -12,6 +12,7 @@ if str(SRC_ROOT) not in sys.path:
 
 
 from trader_ai.config import load_settings
+from trader_ai.config import load_strategy_configs
 
 
 class ConfigLoadingTest(unittest.TestCase):
@@ -24,6 +25,25 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual(settings.fast_ema_period, 10)
         self.assertEqual(settings.slow_ema_period, 20)
         self.assertEqual(settings.bars_count, 10000)
+
+    def test_load_strategy_configs_reads_execution_matrix(self):
+        strategies = load_strategy_configs(PROJECT_ROOT / "config" / "strategies.yaml")
+
+        adaptive = strategies["adaptive_trend_rider"]
+        self.assertTrue(adaptive.enabled)
+        self.assertEqual(adaptive.discovery_gate, "soft")
+        self.assertEqual(
+            adaptive.instruments,
+            ["btcusdt_linear_bybit", "ethusdt_linear_bybit", "xrpusdt_linear_bybit"],
+        )
+        self.assertEqual(adaptive.params["fast_ema_period"], 10)
+        self.assertEqual(adaptive.params["slow_ema_period"], 20)
+
+        volume_spike = strategies["volume_spike_trend"]
+        self.assertFalse(volume_spike.enabled)
+        self.assertEqual(volume_spike.discovery_gate, "soft")
+        self.assertEqual(volume_spike.instruments, ["ethusdt_linear_bybit"])
+        self.assertEqual(volume_spike.params["volume_multiplier"], 3.0)
 
 
 if __name__ == "__main__":

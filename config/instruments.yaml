@@ -55,3 +55,15 @@ btcusdt_linear_bybit:
   ccxt_exchange: bybit
   ccxt_symbol: "BTC/USDT:USDT"
   ccxt_timeframe: 15m
+
+ethusdt_linear_bybit:
+  provider: test
+  template: ethusdt_linear_bybit
+  venue: BYBIT
+  bar_type: "ETHUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL"
+  asset_class: crypto_perpetual
+  starting_balance: "100000 USDT"
+  trade_size: "1.0"
+  ccxt_exchange: bybit
+  ccxt_symbol: "ETH/USDT:USDT"
+  ccxt_timeframe: 15m

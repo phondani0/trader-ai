@@ -1,0 +1,18 @@
+adaptive_trend_rider:
+  enabled: true
+  instruments:
+    - btcusdt_linear_bybit
+    - ethusdt_linear_bybit
+    - xrpusdt_linear_bybit
+  discovery_gate: soft
+  params:
+    fast_ema_period: 10
+    slow_ema_period: 20
+
+volume_spike_trend:
+  enabled: false
+  instruments:
+    - ethusdt_linear_bybit
+  discovery_gate: soft
+  params:
+    volume_multiplier: 3.0

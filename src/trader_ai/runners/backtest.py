@@ -15,9 +15,17 @@ from nautilus_trader.config import LoggingConfig
 from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import AccountType
 from nautilus_trader.model.enums import OmsType
+from nautilus_trader.model.currencies import BTC
+from nautilus_trader.model.currencies import ETH
+from nautilus_trader.model.currencies import USDT
 from nautilus_trader.model.identifiers import Venue
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.model.identifiers import Symbol
+from nautilus_trader.model.instruments import CryptoPerpetual
 from nautilus_trader.model.objects import Currency
 from nautilus_trader.model.objects import Money
+from nautilus_trader.model.objects import Price
+from nautilus_trader.model.objects import Quantity
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 from trader_ai.config import InstrumentSpec
@@ -59,6 +67,9 @@ def build_backtest_components(
     fast_ema_period: int | None = None,
     slow_ema_period: int | None = None,
     is_live: bool = False,
+    discovery_gate: str = "off",
+    strategy_params: dict[str, object] | None = None,
+    use_discovery_journal: bool | None = None,
 ) -> BacktestComponents:
     instruments = load_instruments(INSTRUMENTS_PATH)
     resolved_name = instrument_name or settings.instrument_name
@@ -74,8 +85,12 @@ def build_backtest_components(
         trade_size=instrument_spec.trade_size or settings.trade_size,
         fast_ema_period=fast_ema_period or settings.fast_ema_period,
         slow_ema_period=slow_ema_period or settings.slow_ema_period,
-        use_discovery_journal=is_live,
+        use_discovery_journal=(
+            is_live if use_discovery_journal is None else use_discovery_journal
+        ),
+        discovery_gate=discovery_gate,
         ccxt_symbol=instrument_spec.ccxt_symbol,
+        params=strategy_params,
     )
     return BacktestComponents(
         venue=venue,
@@ -224,10 +239,73 @@ def run_backtest(
 
 
 def _build_instrument(instrument_spec: InstrumentSpec, venue: Venue):
+    if instrument_spec.template == "btcusdt_linear_bybit":
+        return _build_bybit_linear_perpetual(
+            raw_symbol="BTCUSDT",
+            base_currency=BTC,
+            venue=venue,
+            price_precision=1,
+            price_increment="0.1",
+            size_precision=3,
+            size_increment="0.001",
+            min_quantity="0.001",
+        )
+    if instrument_spec.template == "ethusdt_linear_bybit":
+        return _build_bybit_linear_perpetual(
+            raw_symbol="ETHUSDT",
+            base_currency=ETH,
+            venue=venue,
+            price_precision=2,
+            price_increment="0.01",
+            size_precision=2,
+            size_increment="0.01",
+            min_quantity="0.01",
+        )
+
     template = getattr(TestInstrumentProvider, instrument_spec.template)
     if instrument_spec.template == "default_fx_ccy":
         return template(instrument_spec.symbol, venue=venue)
     return template()
+
+
+def _build_bybit_linear_perpetual(
+    *,
+    raw_symbol: str,
+    base_currency: Currency,
+    venue: Venue,
+    price_precision: int,
+    price_increment: str,
+    size_precision: int,
+    size_increment: str,
+    min_quantity: str,
+) -> CryptoPerpetual:
+    return CryptoPerpetual(
+        instrument_id=InstrumentId(
+            symbol=Symbol(f"{raw_symbol}-LINEAR"),
+            venue=venue,
+        ),
+        raw_symbol=Symbol(raw_symbol),
+        base_currency=base_currency,
+        quote_currency=USDT,
+        settlement_currency=USDT,
+        is_inverse=False,
+        price_precision=price_precision,
+        price_increment=Price.from_str(price_increment),
+        size_precision=size_precision,
+        size_increment=Quantity.from_str(size_increment),
+        max_quantity=Quantity.from_str("100000000"),
+        min_quantity=Quantity.from_str(min_quantity),
+        max_notional=None,
+        min_notional=Money(1.0, USDT),
+        max_price=Price.from_str("1000000"),
+        min_price=Price.from_str(price_increment),
+        margin_init=Decimal("0.1"),
+        margin_maint=Decimal("0.1"),
+        maker_fee=Decimal("0.0002"),
+        taker_fee=Decimal("0.00055"),
+        ts_event=1646199312128000000,
+        ts_init=1646199342953849862,
+    )
 
 
 def _load_bars(

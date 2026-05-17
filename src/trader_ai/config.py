@@ -38,6 +38,14 @@ class InstrumentSpec:
     ccxt_timeframe: str | None = None
 
 
+@dataclass(frozen=True)
+class StrategyExecutionConfig:
+    enabled: bool
+    instruments: list[str]
+    discovery_gate: str
+    params: dict[str, object]
+
+
 def load_settings(path: str | Path) -> NautilusSettings:
     raw_path = Path(path)
     with raw_path.open("r", encoding="utf-8") as fh:
@@ -97,3 +105,27 @@ def load_instruments(path: str | Path) -> dict[str, InstrumentSpec]:
         )
         for name, spec in payload.items()
     }
+
+
+def load_strategy_configs(path: str | Path) -> dict[str, StrategyExecutionConfig]:
+    raw_path = Path(path)
+    with raw_path.open("r", encoding="utf-8") as fh:
+        payload = yaml.safe_load(fh) or {}
+
+    configs: dict[str, StrategyExecutionConfig] = {}
+    for name, spec in payload.items():
+        discovery_gate = str(spec.get("discovery_gate", "off")).lower()
+        if discovery_gate not in {"off", "soft", "hard"}:
+            raise ValueError(
+                f"Invalid discovery_gate for {name}: {discovery_gate!r}. "
+                "Expected one of: off, soft, hard."
+            )
+
+        configs[str(name)] = StrategyExecutionConfig(
+            enabled=bool(spec.get("enabled", False)),
+            instruments=[str(item) for item in spec.get("instruments", [])],
+            discovery_gate=discovery_gate,
+            params=dict(spec.get("params", {})),
+        )
+
+    return configs

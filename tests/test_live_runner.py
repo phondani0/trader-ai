@@ -33,6 +33,43 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
 
         journal.update_performance.assert_called_once_with()
 
+    def test_build_live_components_uses_enabled_strategy_matrix(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+
+        components = live.build_live_components(settings)
+
+        pairs = [
+            (component.strategy_name, component.instrument_spec.ccxt_symbol)
+            for component in components
+        ]
+        self.assertEqual(
+            pairs,
+            [
+                ("adaptive_trend_rider", "BTC/USDT:USDT"),
+                ("adaptive_trend_rider", "ETH/USDT:USDT"),
+                ("adaptive_trend_rider", "XRP/USDT:USDT"),
+            ],
+        )
+        self.assertTrue(
+            all(
+                component.strategy.config.discovery_gate == "soft"
+                for component in components
+            )
+        )
+
+    def test_build_live_components_preserves_cli_single_strategy_override(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+
+        components = live.build_live_components(
+            settings,
+            instrument_name="xrpusdt_linear_bybit",
+            strategy_name="volume_spike_trend",
+        )
+
+        self.assertEqual(len(components), 1)
+        self.assertEqual(components[0].strategy_name, "volume_spike_trend")
+        self.assertEqual(components[0].instrument_spec.ccxt_symbol, "XRP/USDT:USDT")
+
 
 if __name__ == "__main__":
     unittest.main()

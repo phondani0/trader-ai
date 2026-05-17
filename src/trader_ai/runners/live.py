@@ -33,12 +33,15 @@ from nautilus_trader.config import (
 from nautilus_trader.live.node import TradingNode
 
 from trader_ai.config import load_settings
+from trader_ai.config import load_strategy_configs
 from trader_ai.core.database import DatabaseManager
 from trader_ai.intelligence.journal import DiscoveryJournal
 from trader_ai.intelligence.scanner import MarketScanner
+from trader_ai.runners.backtest import BacktestComponents
 from trader_ai.runners.backtest import build_backtest_components
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+STRATEGIES_PATH = PROJECT_ROOT / "config" / "strategies.yaml"
 
 # Global state for sidecars
 _db: DatabaseManager | None = None
@@ -64,6 +67,55 @@ def _trigger_journal_review(_event: object | None = None) -> None:
         _journal.update_performance()
 
 
+def build_live_components(
+    settings,
+    instrument_name: str | None = None,
+    strategy_name: str | None = None,
+    strategies_path: str | Path | None = None,
+) -> list[BacktestComponents]:
+    if instrument_name is not None or strategy_name is not None:
+        return [
+            build_backtest_components(
+                settings,
+                instrument_name=instrument_name,
+                strategy_name=strategy_name,
+                is_live=True,
+                discovery_gate="soft",
+                use_discovery_journal=False,
+            )
+        ]
+
+    strategy_configs = load_strategy_configs(strategies_path or STRATEGIES_PATH)
+    components: list[BacktestComponents] = []
+    for resolved_strategy_name, strategy_config in strategy_configs.items():
+        if not strategy_config.enabled:
+            continue
+        for resolved_instrument_name in strategy_config.instruments:
+            components.append(
+                build_backtest_components(
+                    settings,
+                    instrument_name=resolved_instrument_name,
+                    strategy_name=resolved_strategy_name,
+                    is_live=True,
+                    discovery_gate=strategy_config.discovery_gate,
+                    strategy_params=strategy_config.params,
+                    use_discovery_journal=False,
+                )
+            )
+
+    if not components:
+        raise ValueError(f"No enabled live strategies found in {strategies_path or STRATEGIES_PATH}")
+
+    venues = {component.venue.value for component in components}
+    if len(venues) != 1:
+        raise ValueError(
+            "Live trading currently supports one venue per node; "
+            f"configured venues: {sorted(venues)}"
+        )
+
+    return components
+
+
 def build_live_node(
     settings_path: str | Path | None,
     instrument_name: str | None = None,
@@ -77,18 +129,18 @@ def build_live_node(
     )
 
     # Reuse the same strategy/instrument builder as backtesting
-    components = build_backtest_components(
+    components = build_live_components(
         settings,
         instrument_name=instrument_name,
         strategy_name=strategy_name,
-        is_live=True,
     )
+    primary_component = components[0]
 
     # Initialize the Sidecars
     global _db, _journal, _scanner
     if _db is None:
         _db = DatabaseManager()
-        exchange_name = components.instrument_spec.ccxt_exchange or "binanceusdm"
+        exchange_name = primary_component.instrument_spec.ccxt_exchange or "binanceusdm"
         exchange_class = getattr(ccxt, exchange_name)
         exchange = exchange_class()
         _journal = DiscoveryJournal(exchange, _db, asdict(settings))
@@ -98,7 +150,7 @@ def build_live_node(
     api_key = os.environ.get("EXCHANGE_API_KEY", "")
     api_secret = os.environ.get("EXCHANGE_SECRET_KEY", "")
 
-    venue_str = components.venue.value.upper()
+    venue_str = primary_component.venue.value.upper()
     data_clients = {}
     exec_clients = {}
 
@@ -172,7 +224,8 @@ def build_live_node(
     node.build()
 
     # 4. Add the Strategy
-    node.trader.add_strategy(components.strategy)
+    for component in components:
+        node.trader.add_strategy(component.strategy)
 
     # 5. Wire the sidecar tasks (Scanner and Journal) to the Node's Clock
     discovery_interval = getattr(settings, "discovery_interval", 10)
