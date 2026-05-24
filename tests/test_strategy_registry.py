@@ -135,6 +135,36 @@ class StrategyRegistryTest(unittest.TestCase):
         )
         self.assertEqual(strategy.config.warmup_log_interval_bars, 5)
 
+    def test_adaptive_trend_rider_records_decision_diagnostics(self):
+        strategy = create_strategy(
+            name="adaptive_trend_rider",
+            instrument_id="BTCUSDT-PERP.BINANCE",
+            bar_type="BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL",
+            trade_size="0.010",
+            fast_ema_period=8,
+            slow_ema_period=21,
+            params={
+                "decision_diagnostics": False,
+                "decision_log_interval_bars": 7,
+            },
+        )
+
+        strategy._record_decision("atr_gate")
+        strategy._record_decision("atr_gate")
+        strategy._record_decision("volume_gate")
+
+        self.assertEqual(
+            strategy._decision_status(),
+            {
+                "last_reason": "volume_gate",
+                "counts": {
+                    "atr_gate": 2,
+                    "volume_gate": 1,
+                },
+            },
+        )
+        self.assertEqual(strategy.config.decision_log_interval_bars, 7)
+
     def test_volume_spike_trend_reports_warmup_status(self):
         strategy = create_strategy(
             name="volume_spike_trend",
@@ -153,6 +183,31 @@ class StrategyRegistryTest(unittest.TestCase):
                 "indicators_initialized": False,
                 "volume_bars": 9,
                 "volume_required": 20,
+            },
+        )
+
+    def test_volume_spike_trend_records_decision_diagnostics(self):
+        strategy = create_strategy(
+            name="volume_spike_trend",
+            instrument_id="BTCUSDT-PERP.BINANCE",
+            bar_type="BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL",
+            trade_size="0.010",
+            fast_ema_period=8,
+            slow_ema_period=21,
+            params={"decision_diagnostics": False},
+        )
+
+        strategy._record_decision("journal_gate")
+        strategy._record_decision("volume_gate")
+
+        self.assertEqual(
+            strategy._decision_status(),
+            {
+                "last_reason": "volume_gate",
+                "counts": {
+                    "journal_gate": 1,
+                    "volume_gate": 1,
+                },
             },
         )
 

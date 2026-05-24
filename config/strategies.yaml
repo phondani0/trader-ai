@@ -10,6 +10,8 @@ adaptive_trend_rider:
     slow_ema_period: 20
     warmup_diagnostics: true
     warmup_log_interval_bars: 10
+    decision_diagnostics: true
+    decision_log_interval_bars: 10
 
 volume_spike_trend:
   enabled: false
@@ -20,3 +22,5 @@ volume_spike_trend:
     volume_multiplier: 3.0
     warmup_diagnostics: true
     warmup_log_interval_bars: 10
+    decision_diagnostics: true
+    decision_log_interval_bars: 10

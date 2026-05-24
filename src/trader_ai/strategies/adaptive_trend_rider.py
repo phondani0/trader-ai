@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections import deque
 from decimal import Decimal
 
@@ -42,6 +43,8 @@ class AdaptiveTrendRiderConfig(StrategyConfig, frozen=True):
     ccxt_symbol: str = ""
     warmup_diagnostics: bool = True
     warmup_log_interval_bars: int = 10
+    decision_diagnostics: bool = True
+    decision_log_interval_bars: int = 10
 
 
 class AdaptiveTrendRiderStrategy(Strategy):
@@ -72,6 +75,9 @@ class AdaptiveTrendRiderStrategy(Strategy):
         self._bars_seen: int = 0
         self._last_warmup_log_bar: int = 0
         self._last_warmup_close_ns: int | None = None
+        self._decision_counts: Counter[str] = Counter()
+        self._last_decision_reason: str | None = None
+        self._last_decision_log_bar: int = 0
 
     def on_start(self):
         self.register_indicator_for_bars(self.config.bar_type, self.fast_ema)
@@ -82,6 +88,7 @@ class AdaptiveTrendRiderStrategy(Strategy):
 
     def on_bar(self, bar: Bar):
         if self._is_warmup_replayed_bar(bar):
+            self._record_decision("warmup_replayed_bar")
             return
 
         self._bars_seen += 1
@@ -91,6 +98,7 @@ class AdaptiveTrendRiderStrategy(Strategy):
 
         if not self._indicators_ready():
             self._log_warmup_status()
+            self._record_decision("warming_up")
             return
 
         self._update_trend_counter()
@@ -99,8 +107,11 @@ class AdaptiveTrendRiderStrategy(Strategy):
             self._cooldown_remaining -= 1
 
         if self._position_side is not None:
+            self._record_decision("position_open")
             self._manage_position(bar)
-        elif self._cooldown_remaining <= 0:
+        elif self._cooldown_remaining > 0:
+            self._record_decision("cooldown")
+        else:
             self._evaluate_entry(bar)
 
     def on_stop(self):
@@ -173,6 +184,38 @@ class AdaptiveTrendRiderStrategy(Strategy):
         )
         self._last_warmup_log_bar = self._bars_seen
 
+    def _record_decision(self, reason: str) -> None:
+        self._decision_counts[reason] += 1
+        self._last_decision_reason = reason
+        self._log_decision_status()
+
+    def _decision_status(self) -> dict[str, object]:
+        return {
+            "last_reason": self._last_decision_reason,
+            "counts": dict(sorted(self._decision_counts.items())),
+        }
+
+    def _log_decision_status(self) -> None:
+        if not self.config.decision_diagnostics:
+            return
+        if self._last_decision_log_bar and (
+            self._bars_seen - self._last_decision_log_bar
+            < self.config.decision_log_interval_bars
+        ):
+            return
+
+        counts = ", ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(self._decision_counts.items())
+        )
+        self.log.info(
+            "Decision status "
+            f"{self.config.instrument_id}: "
+            f"last_reason={self._last_decision_reason}, "
+            f"counts={counts or 'none'}"
+        )
+        self._last_decision_log_bar = self._bars_seen
+
     def _update_trend_counter(self):
         fast = self.fast_ema.value
         slow = self.slow_ema.value
@@ -191,18 +234,22 @@ class AdaptiveTrendRiderStrategy(Strategy):
 
     def _evaluate_entry(self, bar: Bar):
         if self._trend_bars < self.config.trend_confirm_bars:
+            self._record_decision("trend_not_confirmed")
             return
 
         if self._journal_blocks_entry():
+            self._record_decision("discovery_gate")
             return
 
         current_atr = self.atr.value
         atr_ma = sum(self._atr_history) / len(self._atr_history)
         if current_atr < atr_ma * self.config.atr_volatility_gate:
+            self._record_decision("atr_gate")
             return
 
         avg_volume = sum(self._volumes) / len(self._volumes)
         if bar.volume.as_double() < avg_volume * self.config.volume_spike_mult:
+            self._record_decision("volume_gate")
             return
 
         close = bar.close.as_double()
@@ -212,12 +259,17 @@ class AdaptiveTrendRiderStrategy(Strategy):
 
         ema_spread_pct = abs(fast - slow) / slow
         if ema_spread_pct < self.config.ema_spread_min:
+            self._record_decision("ema_spread_gate")
             return
 
         if fast > slow and self.config.rsi_long_low <= rsi <= self.config.rsi_long_high:
+            self._record_decision("entry_submitted")
             self._open_position(OrderSide.BUY, close, current_atr)
         elif fast < slow and self.config.rsi_short_low <= rsi <= self.config.rsi_short_high:
+            self._record_decision("entry_submitted")
             self._open_position(OrderSide.SELL, close, current_atr)
+        else:
+            self._record_decision("rsi_gate")
 
     def _open_position(self, side: OrderSide, price: float, current_atr: float):
         if side == OrderSide.BUY:
