@@ -19,8 +19,8 @@ from trader_ai.runners import live  # noqa: E402
 from trader_ai.runners.backtest import build_backtest_components  # noqa: E402
 
 
-class StartupBackfillTest(unittest.TestCase):
-    def test_adaptive_strategy_startup_backfill_replays_bars_without_entry_evaluation(self):
+class WarmupTest(unittest.TestCase):
+    def test_adaptive_strategy_warmup_replays_bars_without_entry_evaluation(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         component = build_backtest_components(
             settings,
@@ -42,13 +42,13 @@ class StartupBackfillTest(unittest.TestCase):
         )[:30]
         component.strategy._evaluate_entry = Mock()
 
-        component.strategy.seed_startup_backfill(bars)
+        component.strategy.seed_warmup(bars)
 
         self.assertTrue(component.strategy._indicators_ready())
         self.assertEqual(component.strategy._bars_seen, len(bars))
         component.strategy._evaluate_entry.assert_not_called()
 
-    def test_adaptive_strategy_skips_live_bar_already_covered_by_startup_backfill(self):
+    def test_adaptive_strategy_skips_live_bar_already_covered_by_warmup(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         component = build_backtest_components(
             settings,
@@ -69,7 +69,7 @@ class StartupBackfillTest(unittest.TestCase):
             bar_type=component.bar_type,
         )[:30]
         duplicate_bar = bars[-1]
-        component.strategy.seed_startup_backfill(
+        component.strategy.seed_warmup(
             bars,
             last_replayed_close_ns=duplicate_bar.ts_event,
         )
@@ -79,7 +79,7 @@ class StartupBackfillTest(unittest.TestCase):
 
         self.assertEqual(component.strategy._bars_seen, bars_seen)
 
-    def test_volume_strategy_startup_backfill_replays_bars_without_entry_evaluation(self):
+    def test_volume_strategy_warmup_replays_bars_without_entry_evaluation(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         component = build_backtest_components(
             settings,
@@ -100,13 +100,13 @@ class StartupBackfillTest(unittest.TestCase):
         )[:30]
         component.strategy._evaluate_entry = Mock()
 
-        component.strategy.seed_startup_backfill(bars)
+        component.strategy.seed_warmup(bars)
 
         self.assertTrue(component.strategy._indicators_ready())
         self.assertEqual(component.strategy._bars_seen, len(bars))
         component.strategy._evaluate_entry.assert_not_called()
 
-    def test_startup_backfill_replays_loaded_bars_for_each_component(self):
+    def test_warmup_replays_loaded_bars_for_each_component(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         components = live.build_live_components(
             settings,
@@ -119,10 +119,10 @@ class StartupBackfillTest(unittest.TestCase):
             bar_type=components[0].bar_type,
         )[:5]
         loader = Mock(return_value=bars)
-        components[0].strategy.seed_startup_backfill = Mock()
+        components[0].strategy.seed_warmup = Mock()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            reports = live.startup_backfill_live_components(
+            reports = live.warmup_live_components(
                 components,
                 cache_dir=tmp_dir,
                 bars_limit=5,
@@ -130,7 +130,7 @@ class StartupBackfillTest(unittest.TestCase):
             )
 
         loader.assert_called_once()
-        components[0].strategy.seed_startup_backfill.assert_called_once_with(
+        components[0].strategy.seed_warmup.assert_called_once_with(
             bars,
             last_replayed_close_ns=bars[-1].ts_event + 15 * 60 * 1_000_000_000,
         )
@@ -139,7 +139,7 @@ class StartupBackfillTest(unittest.TestCase):
         self.assertFalse(reports[0]["ready"])
         self.assertIsNone(reports[0]["error"])
 
-    def test_startup_backfill_replays_only_closed_bars(self):
+    def test_warmup_replays_only_closed_bars(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         components = live.build_live_components(
             settings,
@@ -154,10 +154,10 @@ class StartupBackfillTest(unittest.TestCase):
         timeframe_ns = 15 * 60 * 1_000_000_000
         now_ns = bars[0].ts_event + timeframe_ns
         loader = Mock(return_value=bars)
-        components[0].strategy.seed_startup_backfill = Mock()
+        components[0].strategy.seed_warmup = Mock()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
-            reports = live.startup_backfill_live_components(
+            reports = live.warmup_live_components(
                 components,
                 cache_dir=tmp_dir,
                 bars_limit=3,
@@ -165,7 +165,7 @@ class StartupBackfillTest(unittest.TestCase):
                 now_ns=now_ns,
             )
 
-        replayed_bars = components[0].strategy.seed_startup_backfill.call_args.args[0]
+        replayed_bars = components[0].strategy.seed_warmup.call_args.args[0]
         self.assertEqual(replayed_bars, bars[:1])
         self.assertEqual(reports[0]["bars"], 1)
 

@@ -40,8 +40,8 @@ class AdaptiveTrendRiderConfig(StrategyConfig, frozen=True):
     use_discovery_journal: bool = False
     discovery_gate: str = "off"
     ccxt_symbol: str = ""
-    readiness_diagnostics: bool = True
-    readiness_log_interval_bars: int = 10
+    warmup_diagnostics: bool = True
+    warmup_log_interval_bars: int = 10
 
 
 class AdaptiveTrendRiderStrategy(Strategy):
@@ -70,8 +70,8 @@ class AdaptiveTrendRiderStrategy(Strategy):
         self._cooldown_remaining: int = 0
         self._entry_atr: float = 0.0
         self._bars_seen: int = 0
-        self._last_readiness_log_bar: int = 0
-        self._last_startup_backfill_close_ns: int | None = None
+        self._last_warmup_log_bar: int = 0
+        self._last_warmup_close_ns: int | None = None
 
     def on_start(self):
         self.register_indicator_for_bars(self.config.bar_type, self.fast_ema)
@@ -81,7 +81,7 @@ class AdaptiveTrendRiderStrategy(Strategy):
         self.subscribe_bars(self.config.bar_type)
 
     def on_bar(self, bar: Bar):
-        if self._is_startup_backfilled_bar(bar):
+        if self._is_warmup_replayed_bar(bar):
             return
 
         self._bars_seen += 1
@@ -90,7 +90,7 @@ class AdaptiveTrendRiderStrategy(Strategy):
             self._atr_history.append(self.atr.value)
 
         if not self._indicators_ready():
-            self._log_readiness_status()
+            self._log_warmup_status()
             return
 
         self._update_trend_counter()
@@ -107,7 +107,7 @@ class AdaptiveTrendRiderStrategy(Strategy):
         self.close_all_positions(self.config.instrument_id)
         self._reset_position_state()
 
-    def seed_startup_backfill(
+    def seed_warmup(
         self,
         bars: list[Bar],
         *,
@@ -122,12 +122,12 @@ class AdaptiveTrendRiderStrategy(Strategy):
             self._volumes.append(bar.volume.as_double())
             if self.atr.initialized:
                 self._atr_history.append(self.atr.value)
-        self._last_startup_backfill_close_ns = last_replayed_close_ns
+        self._last_warmup_close_ns = last_replayed_close_ns
 
-    def _is_startup_backfilled_bar(self, bar: Bar) -> bool:
+    def _is_warmup_replayed_bar(self, bar: Bar) -> bool:
         return (
-            self._last_startup_backfill_close_ns is not None
-            and bar.ts_event <= self._last_startup_backfill_close_ns
+            self._last_warmup_close_ns is not None
+            and bar.ts_event <= self._last_warmup_close_ns
         )
 
     def _indicators_ready(self) -> bool:
@@ -140,7 +140,7 @@ class AdaptiveTrendRiderStrategy(Strategy):
             and len(self._atr_history) >= self.config.atr_ma_period
         )
 
-    def _readiness_status(self) -> dict[str, int | bool]:
+    def _warmup_status(self) -> dict[str, int | bool]:
         return {
             "indicators_initialized": (
                 self.fast_ema.initialized
@@ -154,24 +154,24 @@ class AdaptiveTrendRiderStrategy(Strategy):
             "atr_history_required": self.config.atr_ma_period,
         }
 
-    def _log_readiness_status(self) -> None:
-        if not self.config.readiness_diagnostics:
+    def _log_warmup_status(self) -> None:
+        if not self.config.warmup_diagnostics:
             return
-        if self._last_readiness_log_bar and (
-            self._bars_seen - self._last_readiness_log_bar
-            < self.config.readiness_log_interval_bars
+        if self._last_warmup_log_bar and (
+            self._bars_seen - self._last_warmup_log_bar
+            < self.config.warmup_log_interval_bars
         ):
             return
 
-        status = self._readiness_status()
+        status = self._warmup_status()
         self.log.info(
-            "Readiness pending "
+            "Warmup pending "
             f"{self.config.instrument_id}: "
             f"indicators_initialized={status['indicators_initialized']}, "
             f"volume={status['volume_bars']}/{status['volume_required']}, "
             f"atr_history={status['atr_history_bars']}/{status['atr_history_required']}"
         )
-        self._last_readiness_log_bar = self._bars_seen
+        self._last_warmup_log_bar = self._bars_seen
 
     def _update_trend_counter(self):
         fast = self.fast_ema.value

@@ -8,8 +8,8 @@ adaptive_trend_rider:
   params:
     fast_ema_period: 10
     slow_ema_period: 20
-    readiness_diagnostics: true
-    readiness_log_interval_bars: 10
+    warmup_diagnostics: true
+    warmup_log_interval_bars: 10
 
 volume_spike_trend:
   enabled: false
@@ -18,5 +18,5 @@ volume_spike_trend:
   discovery_gate: soft
   params:
     volume_multiplier: 3.0
-    readiness_diagnostics: true
-    readiness_log_interval_bars: 10
+    warmup_diagnostics: true
+    warmup_log_interval_bars: 10

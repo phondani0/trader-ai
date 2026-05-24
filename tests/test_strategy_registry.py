@@ -106,7 +106,7 @@ class StrategyRegistryTest(unittest.TestCase):
 
         self.assertTrue(strategy._journal_blocks_entry())
 
-    def test_adaptive_trend_rider_reports_readiness_status(self):
+    def test_adaptive_trend_rider_reports_warmup_status(self):
         strategy = create_strategy(
             name="adaptive_trend_rider",
             instrument_id="BTCUSDT-PERP.BINANCE",
@@ -117,14 +117,14 @@ class StrategyRegistryTest(unittest.TestCase):
             params={
                 "volume_window": 20,
                 "atr_ma_period": 50,
-                "readiness_log_interval_bars": 5,
+                "warmup_log_interval_bars": 5,
             },
         )
         strategy._volumes.extend([1.0] * 7)
         strategy._atr_history.extend([1.0] * 11)
 
         self.assertEqual(
-            strategy._readiness_status(),
+            strategy._warmup_status(),
             {
                 "indicators_initialized": False,
                 "volume_bars": 7,
@@ -133,9 +133,9 @@ class StrategyRegistryTest(unittest.TestCase):
                 "atr_history_required": 50,
             },
         )
-        self.assertEqual(strategy.config.readiness_log_interval_bars, 5)
+        self.assertEqual(strategy.config.warmup_log_interval_bars, 5)
 
-    def test_volume_spike_trend_reports_readiness_status(self):
+    def test_volume_spike_trend_reports_warmup_status(self):
         strategy = create_strategy(
             name="volume_spike_trend",
             instrument_id="BTCUSDT-PERP.BINANCE",
@@ -148,7 +148,7 @@ class StrategyRegistryTest(unittest.TestCase):
         strategy._volumes.extend([1.0] * 9)
 
         self.assertEqual(
-            strategy._readiness_status(),
+            strategy._warmup_status(),
             {
                 "indicators_initialized": False,
                 "volume_bars": 9,

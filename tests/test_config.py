@@ -25,8 +25,8 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual(settings.fast_ema_period, 10)
         self.assertEqual(settings.slow_ema_period, 20)
         self.assertEqual(settings.bars_count, 10000)
-        self.assertTrue(settings.startup_backfill_enabled)
-        self.assertEqual(settings.startup_backfill_bars, 120)
+        self.assertTrue(settings.warmup_enabled)
+        self.assertEqual(settings.warmup_bars, 120)
 
     def test_load_strategy_configs_reads_execution_matrix(self):
         strategies = load_strategy_configs(PROJECT_ROOT / "config" / "strategies.yaml")

@@ -119,7 +119,7 @@ def build_live_components(
     return components
 
 
-def startup_backfill_live_components(
+def warmup_live_components(
     components: list[BacktestComponents],
     *,
     cache_dir: str | Path,
@@ -142,7 +142,7 @@ def startup_backfill_live_components(
                 limit=bars_limit,
             )
             timeframe_ns = _timeframe_to_ns(component.instrument_spec.ccxt_timeframe)
-            bars = _closed_startup_backfill_bars(
+            bars = _closed_warmup_bars(
                 bars,
                 timeframe_ns=timeframe_ns,
                 now_ns=resolved_now_ns,
@@ -150,29 +150,29 @@ def startup_backfill_live_components(
             last_replayed_close_ns = (
                 bars[-1].ts_event + timeframe_ns if bars else None
             )
-            seed_startup_backfill = getattr(
+            seed_warmup = getattr(
                 component.strategy,
-                "seed_startup_backfill",
+                "seed_warmup",
                 None,
             )
-            if not callable(seed_startup_backfill):
+            if not callable(seed_warmup):
                 reports.append(
                     {
                         "instrument": component.instrument_name,
                         "strategy": component.strategy_name,
                         "bars": len(bars),
                         "ready": False,
-                        "error": "strategy does not support startup backfill",
+                        "error": "strategy does not support warmup",
                     }
                 )
                 logger.warning(
-                    "Startup backfill skipped for "
+                    "Warmup skipped for "
                     f"{component.strategy_name}/{component.instrument_name}: "
-                    "strategy does not support startup backfill"
+                    "strategy does not support warmup"
                 )
                 continue
 
-            seed_startup_backfill(
+            seed_warmup(
                 bars,
                 last_replayed_close_ns=last_replayed_close_ns,
             )
@@ -191,7 +191,7 @@ def startup_backfill_live_components(
                 }
             )
             logger.info(
-                "Startup backfill replayed "
+                "Warmup replayed "
                 f"{len(bars)} bars for "
                 f"{component.strategy_name}/{component.instrument_name}; "
                 f"ready={ready}"
@@ -207,14 +207,14 @@ def startup_backfill_live_components(
                 }
             )
             logger.warning(
-                "Startup backfill failed for "
+                "Warmup failed for "
                 f"{component.strategy_name}/{component.instrument_name}: {exc}"
             )
 
     return reports
 
 
-def _closed_startup_backfill_bars(
+def _closed_warmup_bars(
     bars: list,
     *,
     timeframe_ns: int,
@@ -351,11 +351,11 @@ def build_live_node(
     for component in components:
         node.trader.add_strategy(component.strategy)
 
-    if settings.startup_backfill_enabled:
-        startup_backfill_live_components(
+    if settings.warmup_enabled:
+        warmup_live_components(
             components,
             cache_dir=DEFAULT_CACHE_DIR,
-            bars_limit=settings.startup_backfill_bars,
+            bars_limit=settings.warmup_bars,
         )
 
     # 5. Wire the sidecar tasks (Scanner and Journal) to the Node's Clock

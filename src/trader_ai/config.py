@@ -21,8 +21,8 @@ class NautilusSettings:
     random_seed: int
     log_level: str
     ccxt_limit: int = 500
-    startup_backfill_enabled: bool = True
-    startup_backfill_bars: int = 120
+    warmup_enabled: bool = True
+    warmup_bars: int = 120
 
 
 @dataclass(frozen=True)
@@ -67,10 +67,8 @@ def load_settings(path: str | Path) -> NautilusSettings:
         random_seed=int(payload["random_seed"]),
         log_level=str(payload["log_level"]),
         ccxt_limit=int(payload.get("ccxt_limit", 500)),
-        startup_backfill_enabled=bool(
-            payload.get("startup_backfill_enabled", True)
-        ),
-        startup_backfill_bars=int(payload.get("startup_backfill_bars", 120)),
+        warmup_enabled=bool(payload.get("warmup_enabled", True)),
+        warmup_bars=int(payload.get("warmup_bars", 120)),
     )
 
 
