@@ -26,6 +26,7 @@ from nautilus_trader.adapters.bybit.factories import (
     BybitLiveExecClientFactory,
 )
 from nautilus_trader.config import (
+    InstrumentProviderConfig,
     LiveDataEngineConfig,
     LiveExecEngineConfig,
     LiveRiskEngineConfig,
@@ -68,6 +69,66 @@ def _trigger_journal_review(_event: object | None = None) -> None:
     if _journal:
         logger.info("Running scheduled DiscoveryJournal review...")
         _journal.update_performance()
+
+
+def build_live_client_configs(
+    components: list[BacktestComponents],
+    *,
+    is_paper: bool,
+    api_key: str,
+    api_secret: str,
+):
+    primary_component = components[0]
+    venue_str = primary_component.venue.value.upper()
+    data_clients = {}
+    exec_clients = {}
+
+    if venue_str == "BINANCE":
+        base_uri = os.environ.get(
+            "EXCHANGE_WSS_URL",
+            "wss://stream.binancefuture.com"
+            if is_paper
+            else "wss://fstream.binance.com",
+        )
+        api_url = os.environ.get(
+            "EXCHANGE_REST_URL",
+            "https://testnet.binancefuture.com"
+            if is_paper
+            else "https://fapi.binance.com",
+        )
+
+        data_clients["BINANCE"] = BinanceDataClientConfig(
+            base_url_ws=base_uri,
+            account_type=BinanceAccountType.USDT_FUTURES,
+            api_key=api_key,
+            api_secret=api_secret,
+            testnet=is_paper,
+        )
+        exec_clients["BINANCE"] = BinanceExecClientConfig(
+            base_url_http=api_url,
+            account_type=BinanceAccountType.USDT_FUTURES,
+            api_key=api_key,
+            api_secret=api_secret,
+            testnet=is_paper,
+        )
+    elif venue_str == "BYBIT":
+        env = BybitEnvironment.DEMO if is_paper else BybitEnvironment.MAINNET
+
+        data_clients["BYBIT"] = BybitDataClientConfig(
+            api_key=api_key,
+            api_secret=api_secret,
+            environment=env,
+            instrument_provider=InstrumentProviderConfig(load_all=True),
+        )
+        exec_clients["BYBIT"] = BybitExecClientConfig(
+            api_key=api_key,
+            api_secret=api_secret,
+            environment=env,
+        )
+    else:
+        raise ValueError(f"Unsupported venue for live trading: {venue_str}")
+
+    return data_clients, exec_clients
 
 
 def build_live_components(
@@ -275,54 +336,12 @@ def build_live_node(
     api_secret = os.environ.get("EXCHANGE_SECRET_KEY", "")
 
     venue_str = primary_component.venue.value.upper()
-    data_clients = {}
-    exec_clients = {}
-
-    if venue_str == "BINANCE":
-        # Check environment for URL overrides, fallback to defaults
-        base_uri = os.environ.get(
-            "EXCHANGE_WSS_URL",
-            "wss://stream.binancefuture.com"
-            if is_paper
-            else "wss://fstream.binance.com",
-        )
-        api_url = os.environ.get(
-            "EXCHANGE_REST_URL",
-            "https://testnet.binancefuture.com"
-            if is_paper
-            else "https://fapi.binance.com",
-        )
-
-        data_clients["BINANCE"] = BinanceDataClientConfig(
-            base_url_ws=base_uri,
-            account_type=BinanceAccountType.USDT_FUTURES,
-            api_key=api_key,
-            api_secret=api_secret,
-            testnet=is_paper,
-        )
-        exec_clients["BINANCE"] = BinanceExecClientConfig(
-            base_url_http=api_url,
-            account_type=BinanceAccountType.USDT_FUTURES,
-            api_key=api_key,
-            api_secret=api_secret,
-            testnet=is_paper,
-        )
-
-    elif venue_str == "BYBIT":
-        env = BybitEnvironment.DEMO if is_paper else BybitEnvironment.MAINNET
-
-        data_clients["BYBIT"] = BybitDataClientConfig(
-            api_key=api_key,
-            api_secret=api_secret,
-            environment=env,
-        )
-        exec_clients["BYBIT"] = BybitExecClientConfig(
-            api_key=api_key,
-            api_secret=api_secret,
-            environment=env,
-        )
-    else:
-        raise ValueError(f"Unsupported venue for live trading: {venue_str}")
+    data_clients, exec_clients = build_live_client_configs(
+        components,
+        is_paper=is_paper,
+        api_key=api_key,
+        api_secret=api_secret,
+    )
 
     # 1. Configure the TradingNode
     node_config = TradingNodeConfig(

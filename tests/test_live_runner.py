@@ -70,6 +70,21 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         self.assertEqual(components[0].strategy_name, "volume_spike_trend")
         self.assertEqual(components[0].instrument_spec.ccxt_symbol, "XRP/USDT:USDT")
 
+    def test_build_live_client_configs_loads_all_bybit_instruments(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        components = live.build_live_components(settings)
+
+        data_clients, _ = live.build_live_client_configs(
+            components,
+            is_paper=True,
+            api_key="key",
+            api_secret="secret",
+        )
+
+        bybit_config = data_clients["BYBIT"]
+        self.assertTrue(bybit_config.instrument_provider.load_all)
+        self.assertIsNone(bybit_config.instrument_provider.load_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
