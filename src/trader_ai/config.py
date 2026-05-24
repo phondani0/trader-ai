@@ -46,6 +46,7 @@ class StrategyExecutionConfig:
     instruments: list[str]
     discovery_gate: str
     params: dict[str, object]
+    scanner_execution: dict[str, object]
 
 
 def load_settings(path: str | Path) -> NautilusSettings:
@@ -125,11 +126,20 @@ def load_strategy_configs(path: str | Path) -> dict[str, StrategyExecutionConfig
                 "Expected one of: off, soft, hard."
             )
 
+        scanner_execution = dict(spec.get("scanner_execution", {}))
+        scanner_execution.setdefault("enabled", False)
+        scanner_execution.setdefault("max_symbols", 0)
+        scanner_execution.setdefault("min_score", 0.0)
+        scanner_execution.setdefault("min_24h_volume", 0.0)
+        scanner_execution.setdefault("blacklist", [])
+        scanner_execution.setdefault("discovery_gate", discovery_gate)
+
         configs[str(name)] = StrategyExecutionConfig(
             enabled=bool(spec.get("enabled", False)),
             instruments=[str(item) for item in spec.get("instruments", [])],
             discovery_gate=discovery_gate,
             params=dict(spec.get("params", {})),
+            scanner_execution=scanner_execution,
         )
 
     return configs

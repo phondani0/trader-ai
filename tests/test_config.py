@@ -40,6 +40,11 @@ class ConfigLoadingTest(unittest.TestCase):
         )
         self.assertEqual(adaptive.params["fast_ema_period"], 10)
         self.assertEqual(adaptive.params["slow_ema_period"], 20)
+        self.assertTrue(adaptive.scanner_execution["enabled"])
+        self.assertEqual(adaptive.scanner_execution["max_symbols"], 5)
+        self.assertEqual(adaptive.scanner_execution["min_score"], 10.0)
+        self.assertEqual(adaptive.scanner_execution["min_24h_volume"], 50_000_000.0)
+        self.assertEqual(adaptive.scanner_execution["discovery_gate"], "hard")
 
         volume_spike = strategies["volume_spike_trend"]
         self.assertFalse(volume_spike.enabled)

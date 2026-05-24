@@ -5,6 +5,15 @@ adaptive_trend_rider:
     - ethusdt_linear_bybit
     - xrpusdt_linear_bybit
   discovery_gate: soft
+  scanner_execution:
+    enabled: true
+    max_symbols: 5
+    min_score: 10.0
+    min_24h_volume: 50000000.0
+    discovery_gate: hard
+    blacklist:
+      - XAU/USDT:USDT
+      - XAUT/USDT:USDT
   params:
     fast_ema_period: 10
     slow_ema_period: 20
