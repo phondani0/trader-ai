@@ -85,6 +85,53 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         self.assertTrue(bybit_config.instrument_provider.load_all)
         self.assertIsNone(bybit_config.instrument_provider.load_ids)
 
+    def test_build_dynamic_bybit_component_supports_scanner_symbol(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+
+        component = live.build_dynamic_bybit_component(
+            settings,
+            strategy_name="adaptive_trend_rider",
+            ccxt_symbol="NEAR/USDT:USDT",
+            strategy_params={"fast_ema_period": 10, "slow_ema_period": 20},
+            discovery_gate="hard",
+        )
+
+        self.assertEqual(str(component.instrument.id), "NEARUSDT-LINEAR.BYBIT")
+        self.assertEqual(component.instrument_name, "nearusdt_linear_bybit")
+        self.assertEqual(component.instrument_spec.ccxt_symbol, "NEAR/USDT:USDT")
+        self.assertEqual(component.strategy.config.discovery_gate, "hard")
+
+    def test_build_live_components_includes_scanner_candidates(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        candidates = [
+            {"symbol": "NEAR/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+            {"symbol": "BTC/USDT:USDT", "score": 13.0, "volume_24h": 4_000_000_000},
+            {"symbol": "THIN/USDT:USDT", "score": 20.0, "volume_24h": 1_000_000},
+        ]
+
+        components = live.build_live_components(
+            settings,
+            scanner_candidates=candidates,
+        )
+
+        symbols = [component.instrument_spec.ccxt_symbol for component in components]
+        self.assertIn("NEAR/USDT:USDT", symbols)
+        self.assertEqual(symbols.count("BTC/USDT:USDT"), 1)
+        self.assertNotIn("THIN/USDT:USDT", symbols)
+
+    def test_build_startup_live_components_uses_scanner_snapshot(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "NEAR/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+        ]
+
+        components = live.build_startup_live_components(settings, scanner=scanner)
+
+        symbols = [component.instrument_spec.ccxt_symbol for component in components]
+        self.assertIn("NEAR/USDT:USDT", symbols)
+        scanner.scan_for_momentum.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

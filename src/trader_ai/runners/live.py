@@ -42,6 +42,9 @@ from trader_ai.intelligence.journal import DiscoveryJournal
 from trader_ai.intelligence.scanner import MarketScanner
 from trader_ai.runners.backtest import BacktestComponents
 from trader_ai.runners.backtest import build_backtest_components
+from trader_ai.runners.backtest import build_dynamic_bybit_linear_components
+from trader_ai.runners.scanner_execution import ScannerExecutionConfig
+from trader_ai.runners.scanner_execution import select_scanner_execution_symbols
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 STRATEGIES_PATH = PROJECT_ROOT / "config" / "strategies.yaml"
@@ -136,6 +139,7 @@ def build_live_components(
     instrument_name: str | None = None,
     strategy_name: str | None = None,
     strategies_path: str | Path | None = None,
+    scanner_candidates: list[dict] | None = None,
 ) -> list[BacktestComponents]:
     if instrument_name is not None or strategy_name is not None:
         return [
@@ -170,6 +174,33 @@ def build_live_components(
     if not components:
         raise ValueError(f"No enabled live strategies found in {strategies_path or STRATEGIES_PATH}")
 
+    configured_symbols = {
+        component.instrument_spec.ccxt_symbol
+        for component in components
+        if component.instrument_spec.ccxt_symbol is not None
+    }
+    for resolved_strategy_name, strategy_config in strategy_configs.items():
+        if not strategy_config.enabled:
+            continue
+
+        scanner_config = strategy_config.scanner_execution
+        selected_symbols = select_scanner_execution_symbols(
+            scanner_candidates or [],
+            configured_symbols=configured_symbols,
+            config=ScannerExecutionConfig.from_mapping(scanner_config),
+        )
+        for symbol in selected_symbols:
+            components.append(
+                build_dynamic_bybit_component(
+                    settings,
+                    strategy_name=resolved_strategy_name,
+                    ccxt_symbol=symbol,
+                    strategy_params=strategy_config.params,
+                    discovery_gate=str(scanner_config.get("discovery_gate", "hard")),
+                )
+            )
+            configured_symbols.add(symbol)
+
     venues = {component.venue.value for component in components}
     if len(venues) != 1:
         raise ValueError(
@@ -178,6 +209,38 @@ def build_live_components(
         )
 
     return components
+
+
+def build_startup_live_components(settings, *, scanner=None) -> list[BacktestComponents]:
+    if scanner is None:
+        return build_live_components(settings)
+
+    from loguru import logger
+
+    try:
+        candidates = scanner.scan_for_momentum()
+    except Exception as exc:
+        logger.warning(f"Startup scanner snapshot failed: {exc}")
+        candidates = []
+
+    return build_live_components(settings, scanner_candidates=candidates)
+
+
+def build_dynamic_bybit_component(
+    settings,
+    *,
+    strategy_name: str,
+    ccxt_symbol: str,
+    strategy_params: dict[str, object],
+    discovery_gate: str,
+) -> BacktestComponents:
+    return build_dynamic_bybit_linear_components(
+        settings,
+        ccxt_symbol=ccxt_symbol,
+        strategy_name=strategy_name,
+        strategy_params=strategy_params,
+        discovery_gate=discovery_gate,
+    )
 
 
 def warmup_live_components(
@@ -313,13 +376,13 @@ def build_live_node(
         else load_settings(PROJECT_ROOT / "config" / "settings.yaml")
     )
 
-    # Reuse the same strategy/instrument builder as backtesting
-    components = build_live_components(
+    # Reuse the same strategy/instrument builder as backtesting.
+    initial_components = build_live_components(
         settings,
         instrument_name=instrument_name,
         strategy_name=strategy_name,
     )
-    primary_component = components[0]
+    primary_component = initial_components[0]
 
     # Initialize the Sidecars
     global _db, _journal, _scanner
@@ -330,6 +393,12 @@ def build_live_node(
         exchange = exchange_class()
         _journal = DiscoveryJournal(exchange, _db, asdict(settings))
         _scanner = MarketScanner(exchange, asdict(settings), _journal)
+
+    components = (
+        initial_components
+        if instrument_name is not None or strategy_name is not None
+        else build_startup_live_components(settings, scanner=_scanner)
+    )
 
     is_paper = os.environ.get("TRADING_MODE", "paper").lower() == "paper"
     api_key = os.environ.get("EXCHANGE_API_KEY", "")

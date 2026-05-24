@@ -105,6 +105,65 @@ def build_backtest_components(
     )
 
 
+def build_dynamic_bybit_linear_components(
+    settings: NautilusSettings,
+    *,
+    ccxt_symbol: str,
+    strategy_name: str,
+    strategy_params: dict[str, object],
+    discovery_gate: str,
+) -> BacktestComponents:
+    base = ccxt_symbol.split("/", maxsplit=1)[0].upper()
+    raw_symbol = f"{base}USDT"
+    instrument_name = f"{raw_symbol.lower()}_linear_bybit"
+    instrument_spec = InstrumentSpec(
+        provider="dynamic",
+        template="dynamic_bybit_linear",
+        venue="BYBIT",
+        bar_type=f"{raw_symbol}-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL",
+        asset_class="crypto_perpetual",
+        starting_balance=settings.starting_balance,
+        trade_size=settings.trade_size,
+        ccxt_exchange="bybit",
+        ccxt_symbol=ccxt_symbol,
+        ccxt_timeframe="15m",
+    )
+    venue = Venue("BYBIT")
+    instrument = _build_bybit_linear_perpetual(
+        raw_symbol=raw_symbol,
+        base_currency=Currency.from_str(base),
+        venue=venue,
+        price_precision=8,
+        price_increment="0.00000001",
+        size_precision=8,
+        size_increment="0.00000001",
+        min_quantity="0.00000001",
+    )
+    bar_type = BarType.from_str(instrument_spec.bar_type)
+    strategy = create_strategy(
+        name=strategy_name,
+        instrument_id=instrument.id,
+        bar_type=bar_type,
+        trade_size=instrument_spec.trade_size or settings.trade_size,
+        fast_ema_period=settings.fast_ema_period,
+        slow_ema_period=settings.slow_ema_period,
+        use_discovery_journal=False,
+        discovery_gate=discovery_gate,
+        ccxt_symbol=ccxt_symbol,
+        params=strategy_params,
+    )
+    return BacktestComponents(
+        venue=venue,
+        instrument=instrument,
+        bar_type=bar_type,
+        instrument_name=instrument_name,
+        strategy_name=strategy_name,
+        strategy_config=strategy.config,
+        instrument_spec=instrument_spec,
+        strategy=strategy,
+    )
+
+
 def run_backtest(
     settings_path: str | Path | None = None,
     *,
