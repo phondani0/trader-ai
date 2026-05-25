@@ -47,6 +47,10 @@ def create_strategy(
     if not isinstance(trade_size, Decimal):
         trade_size = Decimal(str(trade_size))
     strategy_params = dict(params or {})
+    if "trade_notional_usdt" in strategy_params:
+        strategy_params["trade_notional_usdt"] = Decimal(
+            str(strategy_params["trade_notional_usdt"])
+        )
 
     if name == "adaptive_trend_rider":
         config = AdaptiveTrendRiderConfig(

@@ -39,6 +39,7 @@ class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     use_discovery_journal: bool = False
     discovery_gate: str = "off"
     ccxt_symbol: str = ""
+    trade_notional_usdt: Decimal = Decimal("0")
     warmup_diagnostics: bool = True
     warmup_log_interval_bars: int = 10
     decision_diagnostics: bool = True
@@ -239,7 +240,7 @@ class VolumeSpikeTrendStrategy(Strategy):
         self._entry_atr = current_atr
         self._trailing_active = False
         self._bars_in_position = 0
-        self._submit_market(side)
+        self._submit_market(side, Decimal(str(price)))
 
     def _journal_blocks_entry(self) -> bool:
         if not self.db or not self.config.ccxt_symbol:
@@ -316,11 +317,16 @@ class VolumeSpikeTrendStrategy(Strategy):
         self._trailing_active = False
         self._bars_in_position = 0
 
-    def _submit_market(self, side: OrderSide):
+    def _order_quantity(self, instrument, price: Decimal):
+        if self.config.trade_notional_usdt > 0 and price > 0:
+            return instrument.make_qty(self.config.trade_notional_usdt / price)
+        return instrument.make_qty(self.config.trade_size)
+
+    def _submit_market(self, side: OrderSide, price: Decimal):
         instrument = self.cache.instrument(self.config.instrument_id)
         order = self.order_factory.market(
             self.config.instrument_id,
             side,
-            instrument.make_qty(self.config.trade_size),
+            self._order_quantity(instrument, price),
         )
         self.submit_order(order)

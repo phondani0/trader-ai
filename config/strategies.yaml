@@ -17,6 +17,7 @@ adaptive_trend_rider:
   params:
     fast_ema_period: 10
     slow_ema_period: 20
+    trade_notional_usdt: "25"
     warmup_diagnostics: true
     warmup_log_interval_bars: 10
     decision_diagnostics: true
@@ -29,6 +30,7 @@ volume_spike_trend:
   discovery_gate: soft
   params:
     volume_multiplier: 3.0
+    trade_notional_usdt: "25"
     warmup_diagnostics: true
     warmup_log_interval_bars: 10
     decision_diagnostics: true

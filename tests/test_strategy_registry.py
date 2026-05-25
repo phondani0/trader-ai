@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 import sys
 import unittest
 from pathlib import Path
@@ -165,6 +166,24 @@ class StrategyRegistryTest(unittest.TestCase):
         )
         self.assertEqual(strategy.config.decision_log_interval_bars, 7)
 
+    def test_adaptive_trend_rider_sizes_orders_by_notional_when_configured(self):
+        strategy = create_strategy(
+            name="adaptive_trend_rider",
+            instrument_id="ETHUSDT-LINEAR.BYBIT",
+            bar_type="ETHUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL",
+            trade_size="1.0",
+            fast_ema_period=8,
+            slow_ema_period=21,
+            params={"trade_notional_usdt": "25"},
+        )
+        instrument = Mock()
+        instrument.make_qty.return_value = "qty"
+
+        quantity = strategy._order_quantity(instrument, price=Decimal("2500"))
+
+        self.assertEqual(quantity, "qty")
+        instrument.make_qty.assert_called_once_with(Decimal("0.01"))
+
     def test_volume_spike_trend_reports_warmup_status(self):
         strategy = create_strategy(
             name="volume_spike_trend",
@@ -210,6 +229,24 @@ class StrategyRegistryTest(unittest.TestCase):
                 },
             },
         )
+
+    def test_volume_spike_trend_sizes_orders_by_notional_when_configured(self):
+        strategy = create_strategy(
+            name="volume_spike_trend",
+            instrument_id="BSBUSDT-LINEAR.BYBIT",
+            bar_type="BSBUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL",
+            trade_size="1.0",
+            fast_ema_period=8,
+            slow_ema_period=21,
+            params={"trade_notional_usdt": "25"},
+        )
+        instrument = Mock()
+        instrument.make_qty.return_value = "qty"
+
+        quantity = strategy._order_quantity(instrument, price=Decimal("0.50"))
+
+        self.assertEqual(quantity, "qty")
+        instrument.make_qty.assert_called_once_with(Decimal("5E+1"))
 
     def test_registry_rejects_unknown_strategy_names(self):
         with self.assertRaises(ValueError):
