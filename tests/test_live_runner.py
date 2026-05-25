@@ -125,6 +125,7 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         scanner.scan_for_momentum.return_value = [
             {"symbol": "NEAR/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
         ]
+        scanner.get_dynamic_universe_symbols.return_value = []
 
         components = live.build_startup_live_components(settings, scanner=scanner)
 
@@ -132,7 +133,35 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         self.assertIn("NEAR/USDT:USDT", symbols)
         scanner.scan_for_momentum.assert_called_once_with()
 
-    def test_activate_runtime_scanner_symbols_adds_new_strategy(self):
+    def test_build_startup_live_components_preloads_runtime_universe(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "BSB/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+        ]
+        scanner.get_dynamic_universe_symbols.return_value = [
+            "NEAR/USDT:USDT",
+            "BILL/USDT:USDT",
+            "TON/USDT:USDT",
+            "SUI/USDT:USDT",
+            "DOGE/USDT:USDT",
+            "ADA/USDT:USDT",
+            "XAU/USDT:USDT",
+        ]
+
+        components = live.build_startup_live_components(settings, scanner=scanner)
+
+        symbols = [component.instrument_spec.ccxt_symbol for component in components]
+        self.assertIn("BSB/USDT:USDT", symbols)
+        self.assertIn("NEAR/USDT:USDT", symbols)
+        self.assertIn("BILL/USDT:USDT", symbols)
+        self.assertIn("TON/USDT:USDT", symbols)
+        self.assertIn("SUI/USDT:USDT", symbols)
+        self.assertIn("DOGE/USDT:USDT", symbols)
+        self.assertIn("ADA/USDT:USDT", symbols)
+        self.assertNotIn("XAU/USDT:USDT", symbols)
+
+    def test_activate_runtime_scanner_symbols_does_not_add_strategy_to_running_node(self):
         settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         scanner = Mock()
         scanner.scan_for_momentum.return_value = [
@@ -140,23 +169,23 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             {"symbol": "BTC/USDT:USDT", "score": 13.0, "volume_24h": 4_000_000_000},
         ]
         node = Mock()
-        warmer = Mock()
-        active_symbols = {"BTC/USDT:USDT", "ETH/USDT:USDT", "XRP/USDT:USDT"}
+        active_symbols = {
+            "BTC/USDT:USDT",
+            "ETH/USDT:USDT",
+            "XRP/USDT:USDT",
+            "NEAR/USDT:USDT",
+        }
 
         components = live.activate_runtime_scanner_symbols(
             settings=settings,
             scanner=scanner,
             node=node,
             active_symbols=active_symbols,
-            warmer=warmer,
             cache_dir=PROJECT_ROOT / "data" / "cache",
         )
 
-        self.assertEqual(len(components), 1)
-        self.assertEqual(components[0].instrument_spec.ccxt_symbol, "NEAR/USDT:USDT")
-        node.trader.add_strategy.assert_called_once_with(components[0].strategy)
-        warmer.assert_called_once()
-        self.assertIn("NEAR/USDT:USDT", active_symbols)
+        self.assertEqual(components, [])
+        node.trader.add_strategy.assert_not_called()
 
 
 if __name__ == "__main__":

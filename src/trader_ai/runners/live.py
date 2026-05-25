@@ -223,16 +223,41 @@ def build_scanner_live_components(
     strategy_configs = load_strategy_configs(strategies_path or STRATEGIES_PATH)
     components: list[BacktestComponents] = []
     seen_symbols = set(configured_symbols)
+    scanner_candidates = [candidate for candidate in scanner_candidates if candidate]
+    startup_candidates = [
+        candidate
+        for candidate in scanner_candidates
+        if not bool(candidate.get("runtime_preload"))
+    ]
+    runtime_preload_candidates = [
+        candidate for candidate in scanner_candidates if bool(candidate.get("runtime_preload"))
+    ]
 
     for resolved_strategy_name, strategy_config in strategy_configs.items():
         if not strategy_config.enabled:
             continue
 
         scanner_config = strategy_config.scanner_execution
-        selected_symbols = select_scanner_execution_symbols(
-            scanner_candidates,
+        selected_symbols = [
+            *select_scanner_execution_symbols(
+                startup_candidates,
+                configured_symbols=seen_symbols,
+                config=ScannerExecutionConfig.from_mapping(scanner_config),
+            ),
+            *select_scanner_execution_symbols(
+                runtime_preload_candidates,
+                configured_symbols=seen_symbols,
+                config=ScannerExecutionConfig.from_mapping(
+                    {
+                        **scanner_config,
+                        "max_symbols": _runtime_preload_limit(scanner_config),
+                    }
+                ),
+            ),
+        ]
+        selected_symbols = _dedupe_selected_symbols(
+            selected_symbols,
             configured_symbols=seen_symbols,
-            config=ScannerExecutionConfig.from_mapping(scanner_config),
         )
         for symbol in selected_symbols:
             components.append(
@@ -249,6 +274,27 @@ def build_scanner_live_components(
     return components
 
 
+def _runtime_preload_limit(scanner_config: dict[str, object]) -> int:
+    if not bool(scanner_config.get("preload_runtime_symbols", False)):
+        return 0
+    return int(scanner_config.get("runtime_universe_size", 0))
+
+
+def _dedupe_selected_symbols(
+    symbols: list[str],
+    *,
+    configured_symbols: set[str],
+) -> list[str]:
+    selected: list[str] = []
+    seen_symbols = set(configured_symbols)
+    for symbol in symbols:
+        if symbol in seen_symbols:
+            continue
+        selected.append(symbol)
+        seen_symbols.add(symbol)
+    return selected
+
+
 def build_startup_live_components(settings, *, scanner=None) -> list[BacktestComponents]:
     if scanner is None:
         return build_live_components(settings)
@@ -261,7 +307,41 @@ def build_startup_live_components(settings, *, scanner=None) -> list[BacktestCom
         logger.warning(f"Startup scanner snapshot failed: {exc}")
         candidates = []
 
+    candidates = [
+        *candidates,
+        *build_runtime_preload_candidates(scanner),
+    ]
     return build_live_components(settings, scanner_candidates=candidates)
+
+
+def build_runtime_preload_candidates(
+    scanner,
+    *,
+    strategies_path: str | Path | None = None,
+) -> list[dict[str, object]]:
+    strategy_configs = load_strategy_configs(strategies_path or STRATEGIES_PATH)
+    preload_limit = max(
+        (
+            int(config.scanner_execution.get("runtime_universe_size", 0))
+            for config in strategy_configs.values()
+            if config.enabled
+            and bool(config.scanner_execution.get("preload_runtime_symbols", False))
+        ),
+        default=0,
+    )
+    if preload_limit <= 0:
+        return []
+
+    symbols = scanner.get_dynamic_universe_symbols()[:preload_limit]
+    return [
+        {
+            "symbol": symbol,
+            "score": float("inf"),
+            "volume_24h": float("inf"),
+            "runtime_preload": True,
+        }
+        for symbol in symbols
+    ]
 
 
 def activate_runtime_scanner_symbols(
@@ -279,32 +359,17 @@ def activate_runtime_scanner_symbols(
     if candidates is None:
         candidates = scanner.scan_for_momentum()
 
-    components = build_scanner_live_components(
-        settings,
-        scanner_candidates=candidates,
-        configured_symbols=active_symbols,
-    )
-    if not components:
-        return []
-
-    if settings.warmup_enabled:
-        resolved_warmer = warmup_live_components if warmer is None else warmer
-        resolved_warmer(
-            components,
-            cache_dir=cache_dir,
-            bars_limit=settings.warmup_bars,
-        )
-
-    for component in components:
-        node.trader.add_strategy(component.strategy)
-        if component.instrument_spec.ccxt_symbol:
-            active_symbols.add(component.instrument_spec.ccxt_symbol)
+    tradable = [
+        str(candidate.get("symbol"))
+        for candidate in candidates
+        if str(candidate.get("symbol")) in active_symbols
+    ]
+    if tradable:
         logger.info(
-            "Runtime scanner activated "
-            f"{component.strategy_name}/{component.instrument_name}"
+            "Runtime scanner discoveries already covered by preloaded strategies: "
+            f"{', '.join(tradable)}"
         )
-
-    return components
+    return []
 
 
 def build_dynamic_bybit_component(

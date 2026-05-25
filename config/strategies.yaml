@@ -10,6 +10,8 @@ adaptive_trend_rider:
     max_symbols: 5
     min_score: 10.0
     min_24h_volume: 50000000.0
+    preload_runtime_symbols: true
+    runtime_universe_size: 20
     discovery_gate: hard
     blacklist:
       - XAU/USDT:USDT
