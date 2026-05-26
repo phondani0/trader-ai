@@ -67,3 +67,22 @@ squeeze_breakout:
       - XAUT/USDT:USDT
   params:
     trade_notional_usdt: "25"
+
+demo_ema_cross:
+  enabled: true
+  instruments:
+    - xrpusdt_linear_bybit
+  discovery_gate: soft
+  scanner_execution:
+    enabled: true
+    max_symbols: 2
+    min_score: 13.0
+    min_24h_volume: 75000000.0
+    preload_runtime_symbols: false
+    runtime_universe_size: 0
+    discovery_gate: hard
+    blacklist:
+      - XAU/USDT:USDT
+      - XAUT/USDT:USDT
+  params:
+    trade_notional_usdt: "25"

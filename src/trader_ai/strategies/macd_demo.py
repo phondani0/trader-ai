@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from decimal import Decimal
 
 from nautilus_trader.config import StrategyConfig
@@ -11,6 +12,8 @@ from nautilus_trader.model.data import BarType
 from nautilus_trader.model.enums import OrderSide
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
+
+from trader_ai.core.database import DatabaseManager
 
 
 class DemoEMACrossConfig(StrategyConfig, frozen=True):
@@ -30,6 +33,222 @@ class DemoEMACrossConfig(StrategyConfig, frozen=True):
     trailing_activation_atr_mult: float = 1.5
     max_hold_bars: int = 64
     cooldown_bars: int = 12
+    use_discovery_journal: bool = False
+    discovery_gate: str = "off"
+    ccxt_symbol: str = ""
+    trade_notional_usdt: Decimal = Decimal("0")
+
+
+class _RuntimeDemoEMAContext:
+    def __init__(
+        self,
+        *,
+        parent: DemoEMACrossStrategy,
+        config: DemoEMACrossConfig,
+        instrument,
+        instrument_id: InstrumentId,
+        bar_type: BarType,
+        ccxt_symbol: str,
+    ):
+        self.parent = parent
+        self.config = config
+        self.instrument = instrument
+        self.instrument_id = instrument_id
+        self.bar_type = bar_type
+        self.ccxt_symbol = ccxt_symbol
+        self.fast_ema = ExponentialMovingAverage(config.fast_ema_period)
+        self.slow_ema = ExponentialMovingAverage(config.slow_ema_period)
+        self.rsi = RelativeStrengthIndex(config.rsi_period)
+        self.atr = AverageTrueRange(config.atr_period)
+        self._atr_history: deque[float] = deque(maxlen=config.atr_ma_period)
+        self._position_side: OrderSide | None = None
+        self._entry_price: float = 0.0
+        self._best_price: float = 0.0
+        self._stop_price: float = 0.0
+        self._entry_atr: float = 0.0
+        self._trailing_active: bool = False
+        self._bars_in_position: int = 0
+        self._cooldown_remaining: int = 0
+        self._prev_fast: float | None = None
+        self._prev_slow: float | None = None
+        self._last_warmup_close_ns: int | None = None
+
+    def seed_warmup(
+        self,
+        bars: list[Bar],
+        *,
+        last_replayed_close_ns: int | None = None,
+    ) -> None:
+        for bar in bars:
+            self._handle_indicators(bar)
+            self._update_atr_history()
+            if self._indicators_ready():
+                self._prev_fast = self.fast_ema.value
+                self._prev_slow = self.slow_ema.value
+        self._last_warmup_close_ns = last_replayed_close_ns
+
+    def on_bar(self, bar: Bar) -> None:
+        if (
+            self._last_warmup_close_ns is not None
+            and bar.ts_event <= self._last_warmup_close_ns
+        ):
+            return
+
+        self._handle_indicators(bar)
+        self._update_atr_history()
+        if not self._indicators_ready():
+            return
+
+        fast = self.fast_ema.value
+        slow = self.slow_ema.value
+        if self._prev_fast is None:
+            self._prev_fast = fast
+            self._prev_slow = slow
+            return
+
+        crossed_up = self._prev_fast <= self._prev_slow and fast > slow
+        crossed_down = self._prev_fast >= self._prev_slow and fast < slow
+        self._prev_fast = fast
+        self._prev_slow = slow
+
+        current_atr = self.atr.value
+        atr_ma = sum(self._atr_history) / len(self._atr_history)
+        if current_atr < atr_ma * self.config.atr_expansion_gate:
+            self._cooldown_remaining = self.config.cooldown_bars
+            return
+
+        if self._cooldown_remaining > 0:
+            self._cooldown_remaining -= 1
+
+        if self._position_side is not None:
+            self._manage_position(bar)
+        elif self._cooldown_remaining <= 0:
+            self._evaluate_entry(bar, crossed_up, crossed_down)
+
+    def _handle_indicators(self, bar: Bar) -> None:
+        self.fast_ema.handle_bar(bar)
+        self.slow_ema.handle_bar(bar)
+        self.rsi.handle_bar(bar)
+        self.atr.handle_bar(bar)
+
+    def _update_atr_history(self) -> None:
+        if self.atr.initialized:
+            self._atr_history.append(self.atr.value)
+
+    def _indicators_ready(self) -> bool:
+        return (
+            self.fast_ema.initialized
+            and self.slow_ema.initialized
+            and self.rsi.initialized
+            and self.atr.initialized
+            and len(self._atr_history) >= self.config.atr_ma_period
+        )
+
+    def _evaluate_entry(self, bar: Bar, crossed_up: bool, crossed_down: bool) -> None:
+        if self._journal_blocks_entry():
+            return
+
+        rsi = self.rsi.value
+        close = bar.close.as_double()
+        current_atr = self.atr.value
+
+        if crossed_up and rsi >= self.config.rsi_long_gate:
+            self._open_position(OrderSide.BUY, close, current_atr)
+        elif crossed_down and rsi <= self.config.rsi_short_gate:
+            self._open_position(OrderSide.SELL, close, current_atr)
+
+    def _journal_blocks_entry(self) -> bool:
+        if not self.parent.db or not self.ccxt_symbol:
+            return False
+
+        gate = self.config.discovery_gate
+        if gate == "off" and not self.config.use_discovery_journal:
+            return False
+
+        pending = self.parent.db.get_pending_discoveries()
+        is_hot = any(p["symbol"] == self.ccxt_symbol for p in pending)
+        if is_hot:
+            return False
+
+        return gate == "hard" or self.config.use_discovery_journal
+
+    def _open_position(self, side: OrderSide, price: float, current_atr: float) -> None:
+        if side == OrderSide.BUY:
+            self._stop_price = price - self.config.initial_stop_atr_mult * current_atr
+        else:
+            self._stop_price = price + self.config.initial_stop_atr_mult * current_atr
+
+        self._position_side = side
+        self._entry_price = price
+        self._best_price = price
+        self._entry_atr = current_atr
+        self._trailing_active = False
+        self._bars_in_position = 0
+        self._submit_market(side, Decimal(str(price)))
+
+    def _manage_position(self, bar: Bar) -> None:
+        self._bars_in_position += 1
+        high = bar.high.as_double()
+        low = bar.low.as_double()
+        current_atr = self.atr.value
+
+        if self._position_side == OrderSide.BUY:
+            self._best_price = max(self._best_price, high)
+        else:
+            self._best_price = min(self._best_price, low)
+
+        if self._position_side == OrderSide.BUY and low <= self._stop_price:
+            self._close_and_reset()
+            return
+        if self._position_side == OrderSide.SELL and high >= self._stop_price:
+            self._close_and_reset()
+            return
+
+        if self._bars_in_position >= self.config.max_hold_bars:
+            self._close_and_reset()
+            return
+
+        activation_distance = self.config.trailing_activation_atr_mult * self._entry_atr
+        if self._position_side == OrderSide.BUY:
+            if self._best_price - self._entry_price >= activation_distance:
+                self._trailing_active = True
+        elif self._entry_price - self._best_price >= activation_distance:
+            self._trailing_active = True
+
+        if self._trailing_active:
+            trail_distance = self.config.trailing_stop_atr_mult * current_atr
+            if self._position_side == OrderSide.BUY:
+                self._stop_price = max(self._stop_price, self._best_price - trail_distance)
+            else:
+                self._stop_price = min(self._stop_price, self._best_price + trail_distance)
+
+    def _close_and_reset(self) -> None:
+        self.parent.close_all_positions(self.instrument_id)
+        self._reset_position_state()
+        self._cooldown_remaining = self.config.cooldown_bars
+
+    def _reset_position_state(self) -> None:
+        self._position_side = None
+        self._entry_price = 0.0
+        self._best_price = 0.0
+        self._stop_price = 0.0
+        self._entry_atr = 0.0
+        self._trailing_active = False
+        self._bars_in_position = 0
+
+    def _order_quantity(self, price: Decimal):
+        instrument = self.parent.cache.instrument(self.instrument_id) or self.instrument
+        if self.config.trade_notional_usdt > 0 and price > 0:
+            return instrument.make_qty(self.config.trade_notional_usdt / price)
+        return instrument.make_qty(self.config.trade_size)
+
+    def _submit_market(self, side: OrderSide, price: Decimal) -> None:
+        order = self.parent.order_factory.market(
+            self.instrument_id,
+            side,
+            self._order_quantity(price),
+        )
+        self.parent.submit_order(order)
 
 
 class DemoEMACrossStrategy(Strategy):
@@ -37,11 +256,16 @@ class DemoEMACrossStrategy(Strategy):
 
     def __init__(self, config: DemoEMACrossConfig):
         super().__init__(config)
+        self.db = (
+            DatabaseManager()
+            if config.use_discovery_journal or config.discovery_gate in {"soft", "hard"}
+            else None
+        )
         self.fast_ema = ExponentialMovingAverage(config.fast_ema_period)
         self.slow_ema = ExponentialMovingAverage(config.slow_ema_period)
         self.rsi = RelativeStrengthIndex(config.rsi_period)
         self.atr = AverageTrueRange(config.atr_period)
-        from collections import deque
+
         self._atr_history: deque[float] = deque(maxlen=config.atr_ma_period)
 
         self._position_side: OrderSide | None = None
@@ -54,6 +278,9 @@ class DemoEMACrossStrategy(Strategy):
         self._cooldown_remaining: int = 0
         self._prev_fast: float | None = None
         self._prev_slow: float | None = None
+        self._last_warmup_close_ns: int | None = None
+        self._runtime_contexts: dict[BarType, _RuntimeDemoEMAContext] = {}
+        self._runtime_ccxt_symbols: set[str] = set()
 
     def on_start(self):
         self.register_indicator_for_bars(self.config.bar_type, self.fast_ema)
@@ -63,6 +290,17 @@ class DemoEMACrossStrategy(Strategy):
         self.subscribe_bars(self.config.bar_type)
 
     def on_bar(self, bar: Bar):
+        runtime_context = self._runtime_contexts.get(bar.bar_type)
+        if runtime_context is not None:
+            runtime_context.on_bar(bar)
+            return
+
+        if (
+            self._last_warmup_close_ns is not None
+            and bar.ts_event <= self._last_warmup_close_ns
+        ):
+            return
+
         if self.atr.initialized:
             self._atr_history.append(self.atr.value)
 
@@ -101,7 +339,74 @@ class DemoEMACrossStrategy(Strategy):
 
     def on_stop(self):
         self.close_all_positions(self.config.instrument_id)
+        for context in self._runtime_contexts.values():
+            self.close_all_positions(context.instrument_id)
         self._reset_position_state()
+
+    def seed_warmup(
+        self,
+        bars: list[Bar],
+        *,
+        last_replayed_close_ns: int | None = None,
+    ) -> None:
+        for bar in bars:
+            self.fast_ema.handle_bar(bar)
+            self.slow_ema.handle_bar(bar)
+            self.rsi.handle_bar(bar)
+            self.atr.handle_bar(bar)
+            if self.atr.initialized:
+                self._atr_history.append(self.atr.value)
+            if self.indicators_initialized() and len(self._atr_history) >= self.config.atr_ma_period:
+                self._prev_fast = self.fast_ema.value
+                self._prev_slow = self.slow_ema.value
+        self._last_warmup_close_ns = last_replayed_close_ns
+
+    def active_ccxt_symbols(self) -> set[str]:
+        symbols = set(self._runtime_ccxt_symbols)
+        if self.config.ccxt_symbol:
+            symbols.add(self.config.ccxt_symbol)
+        return symbols
+
+    def activate_component(
+        self,
+        component,
+        bars: list[Bar],
+        *,
+        last_replayed_close_ns: int | None = None,
+    ) -> bool:
+        ccxt_symbol = component.instrument_spec.ccxt_symbol
+        if not ccxt_symbol or ccxt_symbol in self.active_ccxt_symbols():
+            return False
+        if component.bar_type in self._runtime_contexts:
+            return False
+
+        context = _RuntimeDemoEMAContext(
+            parent=self,
+            config=component.strategy.config,
+            instrument=component.instrument,
+            instrument_id=component.instrument.id,
+            bar_type=component.bar_type,
+            ccxt_symbol=ccxt_symbol,
+        )
+        context.seed_warmup(
+            bars,
+            last_replayed_close_ns=last_replayed_close_ns,
+        )
+        if not context._indicators_ready():
+            self.log.warning(
+                "Runtime activation warmup failed "
+                f"{ccxt_symbol}: bars={len(bars)} ready=False"
+            )
+            return False
+
+        self._runtime_contexts[component.bar_type] = context
+        self._runtime_ccxt_symbols.add(ccxt_symbol)
+        self.subscribe_bars(component.bar_type)
+        self.log.info(
+            "Runtime symbol activated "
+            f"{component.instrument.id}: bars={len(bars)} ready=True"
+        )
+        return True
 
     def _evaluate_entry(self, bar: Bar, crossed_up: bool, crossed_down: bool):
         rsi = self.rsi.value
@@ -125,7 +430,7 @@ class DemoEMACrossStrategy(Strategy):
         self._entry_atr = current_atr
         self._trailing_active = False
         self._bars_in_position = 0
-        self._submit_market(side)
+        self._submit_market(side, Decimal(str(price)))
 
     def _manage_position(self, bar: Bar):
         self._bars_in_position += 1
@@ -184,11 +489,16 @@ class DemoEMACrossStrategy(Strategy):
         self._trailing_active = False
         self._bars_in_position = 0
 
-    def _submit_market(self, side: OrderSide):
+    def _order_quantity(self, instrument, price: Decimal):
+        if self.config.trade_notional_usdt > 0 and price > 0:
+            return instrument.make_qty(self.config.trade_notional_usdt / price)
+        return instrument.make_qty(self.config.trade_size)
+
+    def _submit_market(self, side: OrderSide, price: Decimal):
         instrument = self.cache.instrument(self.config.instrument_id)
         order = self.order_factory.market(
             self.config.instrument_id,
             side,
-            instrument.make_qty(self.config.trade_size),
+            self._order_quantity(instrument, price),
         )
         self.submit_order(order)

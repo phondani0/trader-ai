@@ -51,6 +51,7 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
                 ("adaptive_trend_rider", "XRP/USDT:USDT"),
                 ("volume_spike_trend", "ETH/USDT:USDT"),
                 ("squeeze_breakout", "BTC/USDT:USDT"),
+                ("demo_ema_cross", "XRP/USDT:USDT"),
             ],
         )
         self.assertTrue(

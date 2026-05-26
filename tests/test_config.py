@@ -68,6 +68,17 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual(squeeze.scanner_execution["discovery_gate"], "hard")
         self.assertEqual(squeeze.params["trade_notional_usdt"], "25")
 
+        demo = strategies["demo_ema_cross"]
+        self.assertTrue(demo.enabled)
+        self.assertEqual(demo.discovery_gate, "soft")
+        self.assertEqual(demo.instruments, ["xrpusdt_linear_bybit"])
+        self.assertTrue(demo.scanner_execution["enabled"])
+        self.assertEqual(demo.scanner_execution["max_symbols"], 2)
+        self.assertEqual(demo.scanner_execution["min_score"], 13.0)
+        self.assertEqual(demo.scanner_execution["min_24h_volume"], 75_000_000.0)
+        self.assertEqual(demo.scanner_execution["discovery_gate"], "hard")
+        self.assertEqual(demo.params["trade_notional_usdt"], "25")
+
 
 if __name__ == "__main__":
     unittest.main()
