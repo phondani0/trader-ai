@@ -57,7 +57,7 @@ _scanner: MarketScanner | None = None
 _runtime_node: TradingNode | None = None
 _runtime_settings = None
 _runtime_symbols: set[str] = set()
-_runtime_strategy = None
+_runtime_strategies: dict[str, object] = {}
 
 
 def _trigger_discovery_scan(_event: object | None = None) -> None:
@@ -74,7 +74,7 @@ def _trigger_discovery_scan(_event: object | None = None) -> None:
                 node=_runtime_node,
                 active_symbols=_runtime_symbols,
                 candidates=candidates,
-                runtime_strategy=_runtime_strategy,
+                runtime_strategies=_runtime_strategies,
             )
 
 
@@ -356,6 +356,7 @@ def activate_runtime_scanner_symbols(
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     warmer=None,
     runtime_strategy=None,
+    runtime_strategies: dict[str, object] | None = None,
 ) -> list[BacktestComponents]:
     from loguru import logger
 
@@ -374,7 +375,11 @@ def activate_runtime_scanner_symbols(
             f"{', '.join(tradable)}"
         )
 
-    if runtime_strategy is None:
+    strategy_map = dict(runtime_strategies or {})
+    if runtime_strategy is not None:
+        strategy_map.setdefault("adaptive_trend_rider", runtime_strategy)
+
+    if not strategy_map:
         return []
     if not bool(getattr(node, "is_running", False)):
         logger.info("Runtime scanner activation waiting for TradingNode RUNNING")
@@ -385,6 +390,9 @@ def activate_runtime_scanner_symbols(
     seen_symbols = set(active_symbols)
     for resolved_strategy_name, strategy_config in strategy_configs.items():
         if not strategy_config.enabled:
+            continue
+        runtime_strategy_for_name = strategy_map.get(resolved_strategy_name)
+        if runtime_strategy_for_name is None:
             continue
 
         scanner_config = strategy_config.scanner_execution
@@ -419,7 +427,7 @@ def activate_runtime_scanner_symbols(
                 last_replayed_close_ns = (
                     bars[-1].ts_event + timeframe_ns if bars else None
                 )
-                activated = runtime_strategy.activate_component(
+                activated = runtime_strategy_for_name.activate_component(
                     component,
                     bars,
                     last_replayed_close_ns=last_replayed_close_ns,
@@ -660,18 +668,14 @@ def build_live_node(
             bars_limit=settings.warmup_bars,
         )
 
-    global _runtime_node, _runtime_settings, _runtime_symbols, _runtime_strategy
+    global _runtime_node, _runtime_settings, _runtime_symbols, _runtime_strategies
     _runtime_node = node
     _runtime_settings = settings
     _runtime_symbols = component_ccxt_symbols(components)
-    _runtime_strategy = next(
-        (
-            component.strategy
-            for component in components
-            if callable(getattr(component.strategy, "activate_component", None))
-        ),
-        None,
-    )
+    _runtime_strategies = {}
+    for component in components:
+        if callable(getattr(component.strategy, "activate_component", None)):
+            _runtime_strategies.setdefault(component.strategy_name, component.strategy)
 
     # 5. Wire the sidecar tasks (Scanner and Journal) to the Node's Clock
     discovery_interval = getattr(settings, "discovery_interval", 10)

@@ -14,6 +14,7 @@ if str(SRC_ROOT) not in sys.path:
 
 
 from trader_ai.runners import live  # noqa: E402
+from trader_ai.config import StrategyExecutionConfig  # noqa: E402
 
 
 class LiveRunnerTimerCallbackTest(unittest.TestCase):
@@ -239,6 +240,68 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
 
         self.assertEqual(components, [])
         runtime_strategy.activate_component.assert_not_called()
+
+    def test_activate_runtime_scanner_symbols_routes_to_matching_strategy(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "FARTCOIN/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+        ]
+        node = Mock()
+        node.is_running = True
+        adaptive_strategy = Mock()
+        volume_strategy = Mock()
+        loader = Mock(return_value=[])
+        active_symbols = {"BTC/USDT:USDT"}
+        configs = {
+            "adaptive_trend_rider": StrategyExecutionConfig(
+                enabled=True,
+                instruments=[],
+                discovery_gate="hard",
+                params={"trade_notional_usdt": "25"},
+                scanner_execution={
+                    "enabled": False,
+                    "max_symbols": 0,
+                    "min_score": 10.0,
+                    "min_24h_volume": 50_000_000.0,
+                    "blacklist": [],
+                    "discovery_gate": "hard",
+                },
+            ),
+            "volume_spike_trend": StrategyExecutionConfig(
+                enabled=True,
+                instruments=[],
+                discovery_gate="hard",
+                params={"trade_notional_usdt": "25"},
+                scanner_execution={
+                    "enabled": True,
+                    "max_symbols": 1,
+                    "min_score": 10.0,
+                    "min_24h_volume": 50_000_000.0,
+                    "blacklist": [],
+                    "discovery_gate": "hard",
+                },
+            ),
+        }
+
+        with patch.object(live, "load_strategy_configs", return_value=configs):
+            components = live.activate_runtime_scanner_symbols(
+                settings=settings,
+                scanner=scanner,
+                node=node,
+                active_symbols=active_symbols,
+                cache_dir=PROJECT_ROOT / "data" / "cache",
+                runtime_strategies={
+                    "adaptive_trend_rider": adaptive_strategy,
+                    "volume_spike_trend": volume_strategy,
+                },
+                warmer=loader,
+            )
+
+        self.assertEqual(len(components), 1)
+        self.assertEqual(components[0].strategy_name, "volume_spike_trend")
+        adaptive_strategy.activate_component.assert_not_called()
+        volume_strategy.activate_component.assert_called_once()
 
 
 if __name__ == "__main__":
