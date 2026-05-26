@@ -57,6 +57,7 @@ _scanner: MarketScanner | None = None
 _runtime_node: TradingNode | None = None
 _runtime_settings = None
 _runtime_symbols: set[str] = set()
+_runtime_strategy = None
 
 
 def _trigger_discovery_scan(_event: object | None = None) -> None:
@@ -73,6 +74,7 @@ def _trigger_discovery_scan(_event: object | None = None) -> None:
                 node=_runtime_node,
                 active_symbols=_runtime_symbols,
                 candidates=candidates,
+                runtime_strategy=_runtime_strategy,
             )
 
 
@@ -353,12 +355,14 @@ def activate_runtime_scanner_symbols(
     candidates: list[dict] | None = None,
     cache_dir: str | Path = DEFAULT_CACHE_DIR,
     warmer=None,
+    runtime_strategy=None,
 ) -> list[BacktestComponents]:
     from loguru import logger
 
     if candidates is None:
         candidates = scanner.scan_for_momentum()
 
+    warmer = warmer or load_ccxt_bars
     tradable = [
         str(candidate.get("symbol"))
         for candidate in candidates
@@ -369,7 +373,71 @@ def activate_runtime_scanner_symbols(
             "Runtime scanner discoveries already covered by preloaded strategies: "
             f"{', '.join(tradable)}"
         )
-    return []
+
+    if runtime_strategy is None:
+        return []
+    if not bool(getattr(node, "is_running", False)):
+        logger.info("Runtime scanner activation waiting for TradingNode RUNNING")
+        return []
+
+    strategy_configs = load_strategy_configs(STRATEGIES_PATH)
+    activated_components: list[BacktestComponents] = []
+    seen_symbols = set(active_symbols)
+    for resolved_strategy_name, strategy_config in strategy_configs.items():
+        if not strategy_config.enabled:
+            continue
+
+        scanner_config = strategy_config.scanner_execution
+        selected_symbols = select_scanner_execution_symbols(
+            candidates,
+            configured_symbols=seen_symbols,
+            config=ScannerExecutionConfig.from_mapping(scanner_config),
+        )
+        for symbol in selected_symbols:
+            component = build_dynamic_bybit_component(
+                settings,
+                strategy_name=resolved_strategy_name,
+                ccxt_symbol=symbol,
+                strategy_params=strategy_config.params,
+                discovery_gate=str(scanner_config.get("discovery_gate", "hard")),
+            )
+            try:
+                bars = warmer(
+                    cache_dir=cache_dir,
+                    instrument_name=component.instrument_name,
+                    instrument_spec=component.instrument_spec,
+                    instrument=component.instrument,
+                    bar_type=component.bar_type,
+                    limit=settings.warmup_bars,
+                )
+                timeframe_ns = _timeframe_to_ns(component.instrument_spec.ccxt_timeframe)
+                bars = _closed_warmup_bars(
+                    bars,
+                    timeframe_ns=timeframe_ns,
+                    now_ns=time.time_ns(),
+                )
+                last_replayed_close_ns = (
+                    bars[-1].ts_event + timeframe_ns if bars else None
+                )
+                activated = runtime_strategy.activate_component(
+                    component,
+                    bars,
+                    last_replayed_close_ns=last_replayed_close_ns,
+                )
+            except Exception as exc:
+                logger.warning(f"Runtime scanner activation failed for {symbol}: {exc}")
+                activated = False
+
+            if activated:
+                activated_components.append(component)
+                active_symbols.add(symbol)
+                seen_symbols.add(symbol)
+                logger.info(
+                    "Runtime scanner activated "
+                    f"{component.strategy_name}/{component.instrument_name}"
+                )
+
+    return activated_components
 
 
 def build_dynamic_bybit_component(
@@ -592,10 +660,18 @@ def build_live_node(
             bars_limit=settings.warmup_bars,
         )
 
-    global _runtime_node, _runtime_settings, _runtime_symbols
+    global _runtime_node, _runtime_settings, _runtime_symbols, _runtime_strategy
     _runtime_node = node
     _runtime_settings = settings
     _runtime_symbols = component_ccxt_symbols(components)
+    _runtime_strategy = next(
+        (
+            component.strategy
+            for component in components
+            if callable(getattr(component.strategy, "activate_component", None))
+        ),
+        None,
+    )
 
     # 5. Wire the sidecar tasks (Scanner and Journal) to the Node's Clock
     discovery_interval = getattr(settings, "discovery_interval", 10)

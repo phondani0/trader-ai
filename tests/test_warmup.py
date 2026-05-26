@@ -169,6 +169,44 @@ class WarmupTest(unittest.TestCase):
         self.assertEqual(replayed_bars, bars[:1])
         self.assertEqual(reports[0]["bars"], 1)
 
+    def test_adaptive_strategy_can_activate_runtime_component(self):
+        settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        primary = live.build_live_components(
+            settings,
+            instrument_name="btcusdt_linear_bybit",
+            strategy_name="adaptive_trend_rider",
+        )[0]
+        runtime = live.build_dynamic_bybit_component(
+            settings,
+            strategy_name="adaptive_trend_rider",
+            ccxt_symbol="FARTCOIN/USDT:USDT",
+            strategy_params={
+                "fast_ema_period": 3,
+                "slow_ema_period": 5,
+                "rsi_period": 3,
+                "atr_period": 3,
+                "volume_window": 3,
+                "atr_ma_period": 3,
+            },
+            discovery_gate="hard",
+        )
+        bars = generate_synthetic_bars(
+            settings=settings,
+            instrument=runtime.instrument,
+            bar_type=runtime.bar_type,
+        )[:30]
+        primary.strategy.subscribe_bars = Mock()
+
+        activated = primary.strategy.activate_component(
+            runtime,
+            bars,
+            last_replayed_close_ns=bars[-1].ts_event,
+        )
+
+        self.assertTrue(activated)
+        self.assertIn("FARTCOIN/USDT:USDT", primary.strategy.active_ccxt_symbols())
+        primary.strategy.subscribe_bars.assert_called_once_with(runtime.bar_type)
+
 
 if __name__ == "__main__":
     unittest.main()

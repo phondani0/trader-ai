@@ -187,6 +187,59 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         self.assertEqual(components, [])
         node.trader.add_strategy.assert_not_called()
 
+    def test_activate_runtime_scanner_symbols_activates_unpreloaded_symbol(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "FARTCOIN/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+        ]
+        node = Mock()
+        runtime_strategy = Mock()
+        runtime_strategy.active_ccxt_symbols.return_value = {
+            "BTC/USDT:USDT",
+            "ETH/USDT:USDT",
+            "XRP/USDT:USDT",
+        }
+        loader = Mock(return_value=[])
+        active_symbols = set(runtime_strategy.active_ccxt_symbols.return_value)
+
+        components = live.activate_runtime_scanner_symbols(
+            settings=settings,
+            scanner=scanner,
+            node=node,
+            active_symbols=active_symbols,
+            cache_dir=PROJECT_ROOT / "data" / "cache",
+            runtime_strategy=runtime_strategy,
+            warmer=loader,
+        )
+
+        self.assertEqual(len(components), 1)
+        self.assertEqual(components[0].instrument_spec.ccxt_symbol, "FARTCOIN/USDT:USDT")
+        runtime_strategy.activate_component.assert_called_once()
+        node.trader.add_strategy.assert_not_called()
+        self.assertIn("FARTCOIN/USDT:USDT", active_symbols)
+
+    def test_activate_runtime_scanner_symbols_waits_for_running_node(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "FARTCOIN/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+        ]
+        node = Mock()
+        node.is_running = False
+        runtime_strategy = Mock()
+
+        components = live.activate_runtime_scanner_symbols(
+            settings=settings,
+            scanner=scanner,
+            node=node,
+            active_symbols={"BTC/USDT:USDT"},
+            runtime_strategy=runtime_strategy,
+        )
+
+        self.assertEqual(components, [])
+        runtime_strategy.activate_component.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
