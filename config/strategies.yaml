@@ -48,3 +48,22 @@ volume_spike_trend:
     warmup_log_interval_bars: 10
     decision_diagnostics: true
     decision_log_interval_bars: 10
+
+squeeze_breakout:
+  enabled: true
+  instruments:
+    - btcusdt_linear_bybit
+  discovery_gate: soft
+  scanner_execution:
+    enabled: true
+    max_symbols: 2
+    min_score: 14.0
+    min_24h_volume: 75000000.0
+    preload_runtime_symbols: false
+    runtime_universe_size: 0
+    discovery_gate: hard
+    blacklist:
+      - XAU/USDT:USDT
+      - XAUT/USDT:USDT
+  params:
+    trade_notional_usdt: "25"

@@ -96,6 +96,9 @@ def create_strategy(
             slow_ema_period=int(
                 strategy_params.pop("slow_ema_period", slow_ema_period)
             ),
+            use_discovery_journal=use_discovery_journal,
+            discovery_gate=discovery_gate,
+            ccxt_symbol=ccxt_symbol,
             **strategy_params,
         )
         return SqueezeBreakoutStrategy(config)

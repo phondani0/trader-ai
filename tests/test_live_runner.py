@@ -50,6 +50,7 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
                 ("adaptive_trend_rider", "ETH/USDT:USDT"),
                 ("adaptive_trend_rider", "XRP/USDT:USDT"),
                 ("volume_spike_trend", "ETH/USDT:USDT"),
+                ("squeeze_breakout", "BTC/USDT:USDT"),
             ],
         )
         self.assertTrue(
@@ -116,9 +117,13 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             scanner_candidates=candidates,
         )
 
+        configured_components = live.build_live_components(settings)
+        configured_btc_count = [
+            component.instrument_spec.ccxt_symbol for component in configured_components
+        ].count("BTC/USDT:USDT")
         symbols = [component.instrument_spec.ccxt_symbol for component in components]
         self.assertIn("NEAR/USDT:USDT", symbols)
-        self.assertEqual(symbols.count("BTC/USDT:USDT"), 1)
+        self.assertEqual(symbols.count("BTC/USDT:USDT"), configured_btc_count)
         self.assertNotIn("THIN/USDT:USDT", symbols)
 
     def test_build_startup_live_components_uses_scanner_snapshot(self):

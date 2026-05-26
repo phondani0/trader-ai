@@ -57,6 +57,17 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual(volume_spike.scanner_execution["discovery_gate"], "hard")
         self.assertEqual(volume_spike.params["volume_multiplier"], 3.0)
 
+        squeeze = strategies["squeeze_breakout"]
+        self.assertTrue(squeeze.enabled)
+        self.assertEqual(squeeze.discovery_gate, "soft")
+        self.assertEqual(squeeze.instruments, ["btcusdt_linear_bybit"])
+        self.assertTrue(squeeze.scanner_execution["enabled"])
+        self.assertEqual(squeeze.scanner_execution["max_symbols"], 2)
+        self.assertEqual(squeeze.scanner_execution["min_score"], 14.0)
+        self.assertEqual(squeeze.scanner_execution["min_24h_volume"], 75_000_000.0)
+        self.assertEqual(squeeze.scanner_execution["discovery_gate"], "hard")
+        self.assertEqual(squeeze.params["trade_notional_usdt"], "25")
+
 
 if __name__ == "__main__":
     unittest.main()

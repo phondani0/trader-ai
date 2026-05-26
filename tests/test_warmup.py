@@ -144,6 +144,45 @@ class WarmupTest(unittest.TestCase):
         self.assertIn("WLD/USDT:USDT", primary.strategy.active_ccxt_symbols())
         primary.strategy.subscribe_bars.assert_called_once_with(runtime.bar_type)
 
+    def test_squeeze_strategy_can_activate_runtime_component(self):
+        settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        primary = live.build_live_components(
+            settings,
+            instrument_name="btcusdt_linear_bybit",
+            strategy_name="squeeze_breakout",
+        )[0]
+        runtime = live.build_dynamic_bybit_component(
+            settings,
+            strategy_name="squeeze_breakout",
+            ccxt_symbol="RENDER/USDT:USDT",
+            strategy_params={
+                "dc_period": 3,
+                "rsi_period": 3,
+                "atr_period": 3,
+                "atr_ma_period": 3,
+                "volume_window": 3,
+                "squeeze_lookback": 3,
+                "trade_notional_usdt": "25",
+            },
+            discovery_gate="hard",
+        )
+        bars = generate_synthetic_bars(
+            settings=settings,
+            instrument=runtime.instrument,
+            bar_type=runtime.bar_type,
+        )[:30]
+        primary.strategy.subscribe_bars = Mock()
+
+        activated = primary.strategy.activate_component(
+            runtime,
+            bars,
+            last_replayed_close_ns=bars[-1].ts_event,
+        )
+
+        self.assertTrue(activated)
+        self.assertIn("RENDER/USDT:USDT", primary.strategy.active_ccxt_symbols())
+        primary.strategy.subscribe_bars.assert_called_once_with(runtime.bar_type)
+
     def test_warmup_replays_loaded_bars_for_each_component(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         components = live.build_live_components(
