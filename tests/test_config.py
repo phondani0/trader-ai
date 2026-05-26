@@ -47,9 +47,14 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual(adaptive.scanner_execution["discovery_gate"], "hard")
 
         volume_spike = strategies["volume_spike_trend"]
-        self.assertFalse(volume_spike.enabled)
+        self.assertTrue(volume_spike.enabled)
         self.assertEqual(volume_spike.discovery_gate, "soft")
         self.assertEqual(volume_spike.instruments, ["ethusdt_linear_bybit"])
+        self.assertTrue(volume_spike.scanner_execution["enabled"])
+        self.assertEqual(volume_spike.scanner_execution["max_symbols"], 3)
+        self.assertEqual(volume_spike.scanner_execution["min_score"], 12.0)
+        self.assertEqual(volume_spike.scanner_execution["min_24h_volume"], 50_000_000.0)
+        self.assertEqual(volume_spike.scanner_execution["discovery_gate"], "hard")
         self.assertEqual(volume_spike.params["volume_multiplier"], 3.0)
 
 
