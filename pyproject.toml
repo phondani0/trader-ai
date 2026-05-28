@@ -18,6 +18,7 @@ dependencies = [
 backtest = "trader_ai.cli.backtest:main"
 benchmark = "trader_ai.cli.benchmark:main"
 compare-strategies = "trader_ai.cli.compare_strategies:main"
+integration-smoke = "trader_ai.cli.integration_smoke:main"
 papertrade = "trader_ai.cli.papertrade:main"
 parameter-sweep = "trader_ai.cli.parameter_sweep:main"
 research = "trader_ai.cli.batch_research:main"
