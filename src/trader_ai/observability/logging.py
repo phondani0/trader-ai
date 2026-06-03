@@ -7,7 +7,12 @@ import sys
 from typing import IO
 from typing import Any
 
+from opentelemetry.sdk.metrics.export import MetricReader
+from opentelemetry.sdk.trace.export import SpanExporter
+
+from trader_ai.observability.metrics import metrics
 from trader_ai.observability.settings import ObservabilitySettings
+from trader_ai.observability.tracing import tracer
 
 
 _settings = ObservabilitySettings()
@@ -57,6 +62,8 @@ logger = StructuredLogger()
 def configure_observability(
     settings: ObservabilitySettings | None = None,
     *,
+    metric_reader: MetricReader | None = None,
+    span_exporter: SpanExporter | None = None,
     stdout: IO[str] | None = None,
 ) -> ObservabilitySettings:
     global _settings
@@ -64,4 +71,6 @@ def configure_observability(
 
     _settings = settings or ObservabilitySettings.from_env()
     _stdout = stdout or sys.stdout
+    metrics.configure(_settings, metric_reader=metric_reader)
+    tracer.configure(_settings, span_exporter=span_exporter)
     return _settings
