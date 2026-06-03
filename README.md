@@ -55,6 +55,37 @@ uv run integration-smoke --mode bybit-demo --duration 120
 
 It refuses `TRADING_MODE=live` and refuses to run without demo API credentials. CI should use local-sim mode only.
 
+## Observability
+
+The live runner can emit structured JSON logs plus OpenTelemetry metrics and traces. The local OSS stack is:
+
+- OpenTelemetry Collector
+- Prometheus
+- Loki
+- Tempo
+- Grafana
+
+Start the stack:
+
+```bash
+docker compose -f deploy/observability/docker-compose.yml up -d
+```
+
+Grafana is available at `http://localhost:3000` with `admin` / `admin`.
+
+Run the app with OTLP export enabled:
+
+```bash
+OBSERVABILITY_ENABLED=true \
+OTEL_SERVICE_NAME=trader-ai \
+TRADING_ENV=paper \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
+LOG_JSON=true \
+uv run start
+```
+
+For PM2 on the VPS, set the same env vars and point `OTEL_EXPORTER_OTLP_ENDPOINT` at the Collector host reachable from the bot process.
+
 ## Strategy Set
 
 Supported native strategies:
