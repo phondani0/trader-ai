@@ -14,10 +14,32 @@ if str(SRC_ROOT) not in sys.path:
 
 
 from trader_ai.runners import live  # noqa: E402
+from trader_ai.cli import live as live_cli  # noqa: E402
 from trader_ai.config import StrategyExecutionConfig  # noqa: E402
 
 
 class LiveRunnerTimerCallbackTest(unittest.TestCase):
+    def test_live_cli_configures_observability_before_run_live(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["start", "--settings", str(PROJECT_ROOT / "config" / "settings.yaml")],
+            ),
+            patch.object(live_cli, "load_runtime_env") as load_runtime_env,
+            patch.object(live_cli, "configure_observability") as configure,
+            patch.object(live_cli, "run_live") as run_live,
+        ):
+            live_cli.main()
+
+        load_runtime_env.assert_called_once_with()
+        configure.assert_called_once_with()
+        run_live.assert_called_once_with(
+            settings_path=str(PROJECT_ROOT / "config" / "settings.yaml"),
+            instrument_name=None,
+            strategy_name=None,
+        )
+
     def test_discovery_timer_callback_accepts_nautilus_time_event(self):
         scanner = Mock()
 
@@ -25,6 +47,29 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             live._trigger_discovery_scan(object())
 
         scanner.scan_for_momentum.assert_called_once_with()
+
+    def test_discovery_timer_records_metrics_and_span(self):
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = []
+
+        with (
+            patch.object(live, "_scanner", scanner),
+            patch.object(live, "_runtime_node", None),
+            patch.object(live, "metrics") as metrics,
+            patch.object(live, "tracer") as tracer,
+        ):
+            live._trigger_discovery_scan(object())
+
+        metrics.increment.assert_called_once_with(
+            "trader_scanner_runs_total",
+            attributes={"result": "success"},
+        )
+        metrics.record.assert_called_once()
+        self.assertEqual(
+            metrics.record.call_args.args[0],
+            "trader_scanner_duration_seconds",
+        )
+        tracer.start_as_current_span.assert_called_once_with("scanner.discovery")
 
     def test_journal_timer_callback_accepts_nautilus_time_event(self):
         journal = Mock()
@@ -309,6 +354,43 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         self.assertEqual(components[0].strategy_name, "volume_spike_trend")
         adaptive_strategy.activate_component.assert_not_called()
         volume_strategy.activate_component.assert_called_once()
+
+    def test_activate_runtime_scanner_symbols_records_activation_metric(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "FARTCOIN/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+        ]
+        node = Mock()
+        node.is_running = True
+        runtime_strategy = Mock()
+        loader = Mock(return_value=[])
+        active_symbols = {"BTC/USDT:USDT"}
+
+        with (
+            patch.object(live, "metrics") as metrics,
+            patch.object(live, "tracer") as tracer,
+        ):
+            components = live.activate_runtime_scanner_symbols(
+                settings=settings,
+                scanner=scanner,
+                node=node,
+                active_symbols=active_symbols,
+                cache_dir=PROJECT_ROOT / "data" / "cache",
+                runtime_strategy=runtime_strategy,
+                warmer=loader,
+            )
+
+        self.assertEqual(len(components), 1)
+        metrics.increment.assert_called_with(
+            "trader_runtime_activations_total",
+            attributes={
+                "result": "success",
+                "strategy": "adaptive_trend_rider",
+                "symbol": "FARTCOIN/USDT:USDT",
+            },
+        )
+        tracer.start_as_current_span.assert_called()
 
 
 if __name__ == "__main__":

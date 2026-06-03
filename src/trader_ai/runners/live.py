@@ -45,6 +45,9 @@ from trader_ai.runners.backtest import build_backtest_components
 from trader_ai.runners.backtest import build_dynamic_bybit_linear_components
 from trader_ai.runners.scanner_execution import ScannerExecutionConfig
 from trader_ai.runners.scanner_execution import select_scanner_execution_symbols
+from trader_ai.observability import logger
+from trader_ai.observability import metrics
+from trader_ai.observability import tracer
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 STRATEGIES_PATH = PROJECT_ROOT / "config" / "strategies.yaml"
@@ -62,29 +65,65 @@ _runtime_strategies: dict[str, object] = {}
 
 def _trigger_discovery_scan(_event: object | None = None) -> None:
     """Sidecar task: Run MarketScanner V2."""
-    from loguru import logger
-
     if _scanner:
-        logger.info("Running scheduled MarketScanner discovery...")
-        candidates = _scanner.scan_for_momentum()
-        if _runtime_node is not None and _runtime_settings is not None:
-            activate_runtime_scanner_symbols(
-                settings=_runtime_settings,
-                scanner=_scanner,
-                node=_runtime_node,
-                active_symbols=_runtime_symbols,
-                candidates=candidates,
-                runtime_strategies=_runtime_strategies,
-            )
+        started_at = time.perf_counter()
+        result = "success"
+        with tracer.start_as_current_span("scanner.discovery"):
+            try:
+                logger.info(
+                    "Running scheduled MarketScanner discovery...",
+                    log_type="scanner.discovery.started",
+                )
+                candidates = _scanner.scan_for_momentum()
+                if _runtime_node is not None and _runtime_settings is not None:
+                    activate_runtime_scanner_symbols(
+                        settings=_runtime_settings,
+                        scanner=_scanner,
+                        node=_runtime_node,
+                        active_symbols=_runtime_symbols,
+                        candidates=candidates,
+                        runtime_strategies=_runtime_strategies,
+                    )
+            except Exception:
+                result = "error"
+                raise
+            finally:
+                metrics.increment(
+                    "trader_scanner_runs_total",
+                    attributes={"result": result},
+                )
+                metrics.record(
+                    "trader_scanner_duration_seconds",
+                    time.perf_counter() - started_at,
+                    attributes={"result": result},
+                )
 
 
 def _trigger_journal_review(_event: object | None = None) -> None:
     """Sidecar task: Run DiscoveryJournal audit."""
-    from loguru import logger
-
     if _journal:
-        logger.info("Running scheduled DiscoveryJournal review...")
-        _journal.update_performance()
+        started_at = time.perf_counter()
+        result = "success"
+        with tracer.start_as_current_span("journal.review"):
+            try:
+                logger.info(
+                    "Running scheduled DiscoveryJournal review...",
+                    log_type="journal.review.started",
+                )
+                _journal.update_performance()
+            except Exception:
+                result = "error"
+                raise
+            finally:
+                metrics.increment(
+                    "trader_journal_reviews_total",
+                    attributes={"result": result},
+                )
+                metrics.record(
+                    "trader_journal_review_duration_seconds",
+                    time.perf_counter() - started_at,
+                    attributes={"result": result},
+                )
 
 
 def build_live_client_configs(
@@ -301,12 +340,14 @@ def build_startup_live_components(settings, *, scanner=None) -> list[BacktestCom
     if scanner is None:
         return build_live_components(settings)
 
-    from loguru import logger
-
     try:
         candidates = scanner.scan_for_momentum()
     except Exception as exc:
-        logger.warning(f"Startup scanner snapshot failed: {exc}")
+        logger.warning(
+            "Startup scanner snapshot failed",
+            log_type="scanner.startup.failed",
+            error=str(exc),
+        )
         candidates = []
 
     candidates = [
@@ -358,8 +399,6 @@ def activate_runtime_scanner_symbols(
     runtime_strategy=None,
     runtime_strategies: dict[str, object] | None = None,
 ) -> list[BacktestComponents]:
-    from loguru import logger
-
     if candidates is None:
         candidates = scanner.scan_for_momentum()
 
@@ -371,8 +410,9 @@ def activate_runtime_scanner_symbols(
     ]
     if tradable:
         logger.info(
-            "Runtime scanner discoveries already covered by preloaded strategies: "
-            f"{', '.join(tradable)}"
+            "Runtime scanner discoveries already covered by preloaded strategies",
+            log_type="runtime.activation.preloaded",
+            symbols=", ".join(tradable),
         )
 
     strategy_map = dict(runtime_strategies or {})
@@ -382,7 +422,10 @@ def activate_runtime_scanner_symbols(
     if not strategy_map:
         return []
     if not bool(getattr(node, "is_running", False)):
-        logger.info("Runtime scanner activation waiting for TradingNode RUNNING")
+        logger.info(
+            "Runtime scanner activation waiting for TradingNode RUNNING",
+            log_type="runtime.activation.waiting",
+        )
         return []
 
     strategy_configs = load_strategy_configs(STRATEGIES_PATH)
@@ -402,48 +445,79 @@ def activate_runtime_scanner_symbols(
             config=ScannerExecutionConfig.from_mapping(scanner_config),
         )
         for symbol in selected_symbols:
-            component = build_dynamic_bybit_component(
-                settings,
-                strategy_name=resolved_strategy_name,
-                ccxt_symbol=symbol,
-                strategy_params=strategy_config.params,
-                discovery_gate=str(scanner_config.get("discovery_gate", "hard")),
-            )
-            try:
-                bars = warmer(
-                    cache_dir=cache_dir,
-                    instrument_name=component.instrument_name,
-                    instrument_spec=component.instrument_spec,
-                    instrument=component.instrument,
-                    bar_type=component.bar_type,
-                    limit=settings.warmup_bars,
+            activation_attributes = {
+                "strategy": resolved_strategy_name,
+                "symbol": symbol,
+            }
+            with tracer.start_as_current_span(
+                "runtime.activation",
+                attributes=activation_attributes,
+            ):
+                component = build_dynamic_bybit_component(
+                    settings,
+                    strategy_name=resolved_strategy_name,
+                    ccxt_symbol=symbol,
+                    strategy_params=strategy_config.params,
+                    discovery_gate=str(scanner_config.get("discovery_gate", "hard")),
                 )
-                timeframe_ns = _timeframe_to_ns(component.instrument_spec.ccxt_timeframe)
-                bars = _closed_warmup_bars(
-                    bars,
-                    timeframe_ns=timeframe_ns,
-                    now_ns=time.time_ns(),
-                )
-                last_replayed_close_ns = (
-                    bars[-1].ts_event + timeframe_ns if bars else None
-                )
-                activated = runtime_strategy_for_name.activate_component(
-                    component,
-                    bars,
-                    last_replayed_close_ns=last_replayed_close_ns,
-                )
-            except Exception as exc:
-                logger.warning(f"Runtime scanner activation failed for {symbol}: {exc}")
-                activated = False
+                try:
+                    bars = warmer(
+                        cache_dir=cache_dir,
+                        instrument_name=component.instrument_name,
+                        instrument_spec=component.instrument_spec,
+                        instrument=component.instrument,
+                        bar_type=component.bar_type,
+                        limit=settings.warmup_bars,
+                    )
+                    timeframe_ns = _timeframe_to_ns(
+                        component.instrument_spec.ccxt_timeframe
+                    )
+                    bars = _closed_warmup_bars(
+                        bars,
+                        timeframe_ns=timeframe_ns,
+                        now_ns=time.time_ns(),
+                    )
+                    last_replayed_close_ns = (
+                        bars[-1].ts_event + timeframe_ns if bars else None
+                    )
+                    activated = runtime_strategy_for_name.activate_component(
+                        component,
+                        bars,
+                        last_replayed_close_ns=last_replayed_close_ns,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Runtime scanner activation failed",
+                        log_type="runtime.activation.failed",
+                        error=str(exc),
+                        **activation_attributes,
+                    )
+                    metrics.increment(
+                        "trader_runtime_activations_total",
+                        attributes={
+                            "result": "error",
+                            **activation_attributes,
+                        },
+                    )
+                    activated = False
 
-            if activated:
-                activated_components.append(component)
-                active_symbols.add(symbol)
-                seen_symbols.add(symbol)
-                logger.info(
-                    "Runtime scanner activated "
-                    f"{component.strategy_name}/{component.instrument_name}"
-                )
+                if activated:
+                    activated_components.append(component)
+                    active_symbols.add(symbol)
+                    seen_symbols.add(symbol)
+                    logger.info(
+                        "Runtime scanner activated",
+                        log_type="runtime.activation.succeeded",
+                        instrument=component.instrument_name,
+                        **activation_attributes,
+                    )
+                    metrics.increment(
+                        "trader_runtime_activations_total",
+                        attributes={
+                            "result": "success",
+                            **activation_attributes,
+                        },
+                    )
 
     return activated_components
 
@@ -473,8 +547,6 @@ def warmup_live_components(
     loader=load_ccxt_bars,
     now_ns: int | None = None,
 ) -> list[dict[str, object]]:
-    from loguru import logger
-
     resolved_now_ns = time.time_ns() if now_ns is None else now_ns
     reports: list[dict[str, object]] = []
     for component in components:
@@ -512,9 +584,18 @@ def warmup_live_components(
                     }
                 )
                 logger.warning(
-                    "Warmup skipped for "
-                    f"{component.strategy_name}/{component.instrument_name}: "
-                    "strategy does not support warmup"
+                    "Warmup skipped because strategy does not support warmup",
+                    log_type="warmup.skipped",
+                    strategy=component.strategy_name,
+                    instrument=component.instrument_name,
+                )
+                metrics.increment(
+                    "trader_warmups_total",
+                    attributes={
+                        "result": "skipped",
+                        "strategy": component.strategy_name,
+                        "instrument": component.instrument_name,
+                    },
                 )
                 continue
 
@@ -537,10 +618,20 @@ def warmup_live_components(
                 }
             )
             logger.info(
-                "Warmup replayed "
-                f"{len(bars)} bars for "
-                f"{component.strategy_name}/{component.instrument_name}; "
-                f"ready={ready}"
+                "Warmup replayed bars",
+                log_type="warmup.completed",
+                strategy=component.strategy_name,
+                instrument=component.instrument_name,
+                bars=len(bars),
+                ready=ready,
+            )
+            metrics.increment(
+                "trader_warmups_total",
+                attributes={
+                    "result": "success",
+                    "strategy": component.strategy_name,
+                    "instrument": component.instrument_name,
+                },
             )
         except Exception as exc:
             reports.append(
@@ -553,8 +644,19 @@ def warmup_live_components(
                 }
             )
             logger.warning(
-                "Warmup failed for "
-                f"{component.strategy_name}/{component.instrument_name}: {exc}"
+                "Warmup failed",
+                log_type="warmup.failed",
+                strategy=component.strategy_name,
+                instrument=component.instrument_name,
+                error=str(exc),
+            )
+            metrics.increment(
+                "trader_warmups_total",
+                attributes={
+                    "result": "error",
+                    "strategy": component.strategy_name,
+                    "instrument": component.instrument_name,
+                },
             )
 
     return reports
