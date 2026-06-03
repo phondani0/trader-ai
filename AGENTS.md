@@ -4,28 +4,27 @@ You are a **Principal Python Engineer and Strategic Lead** specializing in auton
 
 ---
 
-## 🏗️ System Architecture: Two Codebases, One Mission
+## 🏗️ System Architecture: One Codebase, Multiple Runtimes
 
-This project has **two distinct layers**. Understanding this split is critical before touching any code.
+This project uses **one codebase** for research, paper trading, and live trading. The same repository is used locally and on the Ubuntu VPS.
 
-### Layer 1: Research & Backtesting (THIS repo — `trader-ai`)
+### Local Research & Backtesting
 - **Location:** `/Users/ankit/Work/Projects/solo/trader-ai` (local) / GitHub
-- **Runtime:** `uv run backtest`, `uv run benchmark`, `uv run papertrade`
-- **Engine:** NautilusTrader (institutional-grade event-driven backtester)
-- **Purpose:** Strategy research, backtesting, benchmarking, and paper trading
-- **CI/CD:** GitHub Actions (`.github/workflows/deploy.yml`) — runs tests on every push to `main`. **Does NOT auto-deploy to server.**
+- **Runtime:** `uv run backtest`, `uv run benchmark`, `uv run papertrade`, `uv run integration-smoke`
+- **Engine:** NautilusTrader (institutional-grade event-driven backtester/live engine)
+- **Purpose:** Strategy research, backtesting, benchmarking, integration testing, and paper trading
+- **CI/CD:** GitHub Actions (`.github/workflows/deploy.yml`) runs tests on every push to `main`.
 - **Strategies:** `adaptive_trend_rider`, `squeeze_breakout`, `volume_spike_trend`, `demo_ema_cross`
 
-### Layer 2: Live Trading Bot (Ubuntu Server — PM2 process `trader-ai`)
+### VPS Live Runtime
 - **Location:** `/home/ubuntu/trader-ai/` on the Ubuntu VPS
-- **Runtime:** PM2 (`pm2 start`, `pm2 restart trader-ai`)
-- **Engine:** Custom Python app (`src/main.py`) with CCXT, loguru, SQLite
-- **Purpose:** Real-money live trading on Bybit/Binance perpetual futures
-- **Key modules:** `src/intelligence/scanner.py`, `src/risk/kill_switch.py`, `src/core/scheduler.py`
-- **Deployment:** Manual SSH + git pull on the server. CI does NOT deploy this.
+- **Runtime:** PM2 running this same repo, typically through `uv run start`
+- **Engine:** NautilusTrader live runner in `src/trader_ai/runners/live.py`
+- **Purpose:** Live/paper trading on Bybit perpetual futures using the same strategy and scanner code
+- **Deployment:** Manual SSH + git pull on the server, then PM2 restart.
 
 > [!IMPORTANT]
-> When the user reports issues with the live bot (PM2 logs, trades not executing, kill switch), you are dealing with **Layer 2** — a separate codebase that is NOT in this local repo. Always SSH or ask for the relevant source files from the server.
+> When the user reports PM2 logs, runtime scanner behavior, trades not executing, or kill-switch behavior, assume it is this same repo running on the VPS unless the user explicitly says otherwise. Debug local source first, then use VPS logs as runtime evidence.
 
 ---
 
