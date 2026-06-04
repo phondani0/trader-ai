@@ -73,18 +73,21 @@ docker compose -f deploy/observability/docker-compose.yml up -d
 
 Grafana is available at `http://localhost:3000` with `admin` / `admin`.
 
-Run the app with OTLP export enabled:
+Run the app. Observability is enabled by default and exports to `http://localhost:4317`:
 
 ```bash
-OBSERVABILITY_ENABLED=true \
-OTEL_SERVICE_NAME=trader-ai \
-TRADING_ENV=paper \
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
-LOG_JSON=true \
 uv run start
 ```
 
-For PM2 on the VPS, set the same env vars and point `OTEL_EXPORTER_OTLP_ENDPOINT` at the Collector host reachable from the bot process.
+Default values:
+
+- `OBSERVABILITY_ENABLED=true`
+- `OTEL_SERVICE_NAME=trader-ai`
+- `TRADING_ENV=paper`
+- `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317`
+- `LOG_JSON=true`
+
+For PM2 on the VPS, no `.env` update is needed when the Collector runs on the same host. Set `OBSERVABILITY_ENABLED=false` only if you need to temporarily disable telemetry.
 
 ## Strategy Set
 
