@@ -68,10 +68,15 @@ The live runner can emit structured JSON logs plus OpenTelemetry metrics and tra
 Start the stack:
 
 ```bash
-docker compose -f deploy/observability/docker-compose.yml up -d
+docker compose up -d
 ```
 
-Grafana is available at `http://localhost:3000` with `admin` / `admin`.
+Grafana is available at `http://localhost:3300` with `admin` / `admin`.
+Override the host port only when needed:
+
+```bash
+GRAFANA_PORT=3000 docker compose up -d
+```
 
 Run the app. Observability is enabled by default and exports logs, metrics, and traces to `http://localhost:4317`:
 
@@ -108,6 +113,12 @@ trader-ai/
 │   └── settings.yaml
 ├── data/
 │   └── cache/
+├── observability/
+│   ├── grafana/
+│   ├── loki.yaml
+│   ├── otel-collector.yaml
+│   ├── prometheus.yml
+│   └── tempo.yaml
 ├── src/
 │   └── trader_ai/
 │       ├── cli/
@@ -119,6 +130,7 @@ trader-ai/
 ├── tests/
 │   ├── fixtures/
 │   └── test_*.py
+├── docker-compose.yml
 ├── pyproject.toml
 └── README.md
 ```
