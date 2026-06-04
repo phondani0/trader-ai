@@ -19,9 +19,11 @@ def test_deploy_workflow_reconciles_observability_stack_before_pm2_restart():
     deploy_script = deploy_script_path.read_text(encoding="utf-8")
 
     assert "bash scripts/deploy_remote.sh" in workflow_script
-    assert "docker compose up -d --remove-orphans" in deploy_script
-    assert "docker compose ps" in deploy_script
-    assert deploy_script.index("docker compose up -d --remove-orphans") < deploy_script.index(
+    assert "configure_docker_command" in deploy_script
+    assert 'DOCKER_CMD=(sudo docker)' in deploy_script
+    assert '"${DOCKER_CMD[@]}" compose up -d --remove-orphans' in deploy_script
+    assert '"${DOCKER_CMD[@]}" compose ps' in deploy_script
+    assert deploy_script.index("configure_docker_command") < deploy_script.index(
         "pm2 restart trader-ai"
     )
     assert 'wait_for_http "Loki" "http://127.0.0.1:3100/ready"' in deploy_script

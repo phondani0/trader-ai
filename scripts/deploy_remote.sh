@@ -7,6 +7,31 @@ fi
 
 export PATH="$HOME/.local/bin:$PATH"
 
+DOCKER_CMD=(docker)
+
+configure_docker_command() {
+  if docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(docker)
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(sudo docker)
+    return 0
+  fi
+
+  cat >&2 <<'EOF'
+Docker is installed, but this deploy user cannot access the Docker daemon.
+
+Fix on the VPS with one of these:
+  sudo usermod -aG docker "$USER"
+  # then log out and log back in
+
+Or configure passwordless sudo for docker compose deploys.
+EOF
+  return 1
+}
+
 wait_for_http() {
   local name="$1"
   local url="$2"
@@ -24,8 +49,9 @@ wait_for_http() {
 
 uv sync --frozen
 
-docker compose up -d --remove-orphans
-docker compose ps
+configure_docker_command
+"${DOCKER_CMD[@]}" compose up -d --remove-orphans
+"${DOCKER_CMD[@]}" compose ps
 
 wait_for_http "Loki" "http://127.0.0.1:3100/ready"
 wait_for_http "Tempo" "http://127.0.0.1:3200/ready"
