@@ -27,6 +27,14 @@ schema_config:
 limits_config:
   allow_structured_metadata: true
   volume_enabled: true
+  retention_period: 336h
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 2
 
 ruler:
   alertmanager_url: http://localhost:9093

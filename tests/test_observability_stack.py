@@ -23,6 +23,16 @@ def test_observability_stack_declares_required_services():
     }
 
 
+def test_prometheus_has_time_and_size_retention_limits():
+    compose_path = PROJECT_ROOT / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+
+    prometheus_command = compose["services"]["prometheus"]["command"]
+
+    assert "--storage.tsdb.retention.time=15d" in prometheus_command
+    assert "--storage.tsdb.retention.size=4GB" in prometheus_command
+
+
 def test_otel_collector_routes_to_prometheus_loki_and_tempo():
     collector_path = OBSERVABILITY_ROOT / "otel-collector.yaml"
     collector = yaml.safe_load(collector_path.read_text(encoding="utf-8"))
@@ -52,14 +62,33 @@ def test_observability_stack_avoids_common_local_grafana_port_conflict():
     assert "3000:3000" not in grafana_ports
 
 
-def test_tempo_config_is_compatible_with_latest_local_stack():
+def test_tempo_config_has_trace_retention_for_latest_local_stack():
+    compose_path = PROJECT_ROOT / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     tempo_path = OBSERVABILITY_ROOT / "tempo.yaml"
     tempo = yaml.safe_load(tempo_path.read_text(encoding="utf-8"))
+    tempo_command = compose["services"]["tempo"]["command"]
 
     assert "compactor" not in tempo
+    assert "backend_scheduler" not in tempo
+    assert "backend_worker" not in tempo
     assert tempo["distributor"]["receivers"]["otlp"]["protocols"]["grpc"][
         "endpoint"
     ] == "0.0.0.0:4317"
+    assert (
+        "-backend-scheduler.provider.work.compaction.block-retention=72h"
+        in tempo_command
+    )
+    assert "-backend-worker.compaction.block-retention=72h" in tempo_command
+
+
+def test_loki_config_has_log_retention_limits():
+    loki_path = OBSERVABILITY_ROOT / "loki.yaml"
+    loki = yaml.safe_load(loki_path.read_text(encoding="utf-8"))
+
+    assert loki["limits_config"]["retention_period"] == "336h"
+    assert loki["compactor"]["retention_enabled"] is True
+    assert loki["compactor"]["retention_delete_delay"] == "2h"
 
 
 def test_grafana_datasources_include_prometheus_loki_and_tempo():

@@ -19,6 +19,8 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--storage.tsdb.retention.size=4GB"
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -38,7 +40,10 @@ services:
 
   tempo:
     image: grafana/tempo:latest
-    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    command:
+      - "-config.file=/etc/tempo/tempo.yaml"
+      - "-backend-scheduler.provider.work.compaction.block-retention=72h"
+      - "-backend-worker.compaction.block-retention=72h"
     volumes:
       - ./observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo

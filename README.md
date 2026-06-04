@@ -92,6 +92,12 @@ Default values:
 - `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317`
 - `LOG_JSON=true`
 
+Local retention defaults are intentionally bounded for a small VPS:
+
+- Prometheus metrics: `15d`, capped at `4GB`
+- Loki logs: `14d`
+- Tempo traces: `3d`
+
 For PM2 on the VPS, no `.env` update is needed when the Collector runs on the same host. Set `OBSERVABILITY_ENABLED=false` only if you need to temporarily disable telemetry.
 
 ## Strategy Set
