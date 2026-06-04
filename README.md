@@ -73,7 +73,7 @@ docker compose -f deploy/observability/docker-compose.yml up -d
 
 Grafana is available at `http://localhost:3000` with `admin` / `admin`.
 
-Run the app. Observability is enabled by default and exports to `http://localhost:4317`:
+Run the app. Observability is enabled by default and exports logs, metrics, and traces to `http://localhost:4317`:
 
 ```bash
 uv run start

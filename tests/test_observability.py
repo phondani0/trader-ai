@@ -8,6 +8,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
@@ -28,6 +29,28 @@ from trader_ai.observability import tracer  # noqa: E402
 class ObservabilityTest(unittest.TestCase):
     def tearDown(self) -> None:
         configure_observability(ObservabilitySettings(enabled=False))
+
+    def test_settings_defaults_enable_local_collector_export(self):
+        with patch.dict(os.environ, {}, clear=True):
+            settings = ObservabilitySettings.from_env()
+
+        self.assertTrue(settings.enabled)
+        self.assertEqual(settings.service_name, "trader-ai")
+        self.assertEqual(settings.environment, "paper")
+        self.assertEqual(settings.otlp_endpoint, "http://localhost:4317")
+        self.assertTrue(settings.log_json)
+
+    def test_settings_can_disable_observability_with_environment(self):
+        with patch.dict(
+            os.environ,
+            {
+                "OBSERVABILITY_ENABLED": "false",
+            },
+            clear=True,
+        ):
+            settings = ObservabilitySettings.from_env()
+
+        self.assertFalse(settings.enabled)
 
     def test_settings_loads_environment_defaults(self):
         with patch.dict(
@@ -78,6 +101,46 @@ class ObservabilityTest(unittest.TestCase):
         self.assertEqual(payload["strategy"], "adaptive_trend_rider")
         self.assertEqual(payload["symbol"], "WLD/USDT:USDT")
         self.assertEqual(payload["activation_count"], 1)
+
+    def test_logger_info_exports_same_payload_to_opentelemetry_logs(self):
+        output = StringIO()
+        log_exporter = InMemoryLogRecordExporter()
+        configure_observability(
+            ObservabilitySettings(
+                enabled=True,
+                service_name="trader-ai-test",
+                environment="test",
+                run_id="run-123",
+                log_json=True,
+            ),
+            log_exporter=log_exporter,
+            stdout=output,
+        )
+
+        logger.info(
+            "Runtime scanner activated",
+            log_type="runtime.activation",
+            strategy="adaptive_trend_rider",
+            symbol="WLD/USDT:USDT",
+        )
+
+        stdout_payload = json.loads(output.getvalue())
+        exported = log_exporter.get_finished_logs()
+        self.assertEqual(stdout_payload["log_type"], "runtime.activation")
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].log_record.body, "Runtime scanner activated")
+        self.assertEqual(exported[0].log_record.severity_text, "INFO")
+        self.assertEqual(
+            exported[0].log_record.attributes,
+            {
+                "log_type": "runtime.activation",
+                "service": "trader-ai-test",
+                "env": "test",
+                "run_id": "run-123",
+                "strategy": "adaptive_trend_rider",
+                "symbol": "WLD/USDT:USDT",
+            },
+        )
 
     def test_logger_requires_log_type_for_structured_fields(self):
         output = StringIO()
