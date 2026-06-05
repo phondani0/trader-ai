@@ -58,8 +58,17 @@ def test_observability_stack_avoids_common_local_grafana_port_conflict():
 
     grafana_ports = compose["services"]["grafana"]["ports"]
 
-    assert "${GRAFANA_PORT:-3300}:3000" in grafana_ports
+    assert "127.0.0.1:${GRAFANA_PORT:-3300}:3000" in grafana_ports
+    assert "${GRAFANA_PORT:-3300}:3000" not in grafana_ports
     assert "3000:3000" not in grafana_ports
+
+
+def test_tailscale_helper_uses_local_grafana_endpoint():
+    helper_path = PROJECT_ROOT / "scripts" / "expose_grafana_tailscale.sh"
+    helper = helper_path.read_text(encoding="utf-8")
+
+    assert "tailscale serve --bg --yes --https=443 http://127.0.0.1:3300" in helper
+    assert "tailscale serve status" in helper
 
 
 def test_tempo_config_has_trace_retention_for_latest_local_stack():

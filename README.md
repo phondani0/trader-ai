@@ -71,12 +71,21 @@ Start the stack:
 docker compose up -d
 ```
 
-Grafana is available at `http://localhost:3300` with `admin` / `admin`.
+Grafana is bound to `127.0.0.1:3300` on the host with `admin` / `admin`.
+It is not exposed publicly by Compose.
 Override the host port only when needed:
 
 ```bash
 GRAFANA_PORT=3000 docker compose up -d
 ```
+
+Minimum remote access path:
+
+```bash
+bash scripts/expose_grafana_tailscale.sh
+```
+
+That uses Tailscale Serve to publish Grafana to your tailnet over HTTPS without opening a public port. If you prefer a one-off tunnel, use SSH port forwarding to `127.0.0.1:3300` on the VPS.
 
 Run the app. Observability is enabled by default and exports logs, metrics, and traces to `http://localhost:4317`:
 
