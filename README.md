@@ -85,7 +85,7 @@ Minimum remote access path:
 bash scripts/expose_grafana_tailscale.sh
 ```
 
-That uses Tailscale Serve to publish Grafana to your tailnet over HTTPS without opening a public port. If you prefer a one-off tunnel, use SSH port forwarding to `127.0.0.1:3300` on the VPS.
+That uses Tailscale Services to publish Grafana as `svc:trader-ai-grafana` over HTTPS without opening a public port. If you prefer a one-off tunnel, use SSH port forwarding to `127.0.0.1:3300` on the VPS.
 
 Run the app. Observability is enabled by default and exports logs, metrics, and traces to `http://localhost:4317`:
 

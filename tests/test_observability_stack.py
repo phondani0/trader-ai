@@ -67,7 +67,11 @@ def test_tailscale_helper_uses_local_grafana_endpoint():
     helper_path = PROJECT_ROOT / "scripts" / "expose_grafana_tailscale.sh"
     helper = helper_path.read_text(encoding="utf-8")
 
-    assert "tailscale serve --bg --yes --https=443 http://127.0.0.1:3300" in helper
+    assert (
+        "sudo tailscale serve --service=svc:trader-ai-grafana --https=443 "
+        "http://127.0.0.1:3300"
+        in helper
+    )
     assert "tailscale serve status" in helper
 
 
