@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from decimal import Decimal
+from uuid import uuid4
 
 from nautilus_trader.config import StrategyConfig
 from nautilus_trader.indicators import AverageTrueRange
@@ -14,6 +15,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
 from trader_ai.core.database import DatabaseManager
+from trader_ai.execution.instrumentation import execution_instrumentation
+from trader_ai.execution.observer import ExecutionObserverMixin
 
 
 class SqueezeBreakoutConfig(StrategyConfig, frozen=True):
@@ -181,6 +184,14 @@ class _RuntimeSqueezeContext:
         return gate == "hard" or self.config.use_discovery_journal
 
     def _open_position(self, side: OrderSide, price: float, current_atr: float) -> None:
+        self._current_trade_id = f"T-{uuid4().hex}"
+        execution_instrumentation.signal_generated(
+            strategy="squeeze_breakout",
+            symbol=self.ccxt_symbol or str(self.instrument_id),
+            side=side.name if hasattr(side, "name") else str(side),
+            trade_id=self._current_trade_id,
+            entry_price=price,
+        )
         if side == OrderSide.BUY:
             self._stop_price = price - self.config.initial_stop_atr_mult * current_atr
         else:
@@ -251,15 +262,30 @@ class _RuntimeSqueezeContext:
         return instrument.make_qty(self.config.trade_size)
 
     def _submit_market(self, side: OrderSide, price: Decimal) -> None:
+        quantity = self._order_quantity(price)
         order = self.parent.order_factory.market(
             self.instrument_id,
             side,
-            self._order_quantity(price),
+            quantity,
+        )
+        trade_id = getattr(self, "_current_trade_id", str(order.client_order_id))
+        self._order_trade_ids = getattr(self, "_order_trade_ids", {})
+        self._order_trade_ids[str(order.client_order_id)] = trade_id
+        execution_instrumentation.order_submitted(
+            strategy="squeeze_breakout",
+            symbol=self.ccxt_symbol or str(self.instrument_id),
+            side=side.name if hasattr(side, "name") else str(side),
+            trade_id=trade_id,
+            order_id=str(order.client_order_id),
+            quantity=float(str(quantity)),
+            notional_usdt=float(price) * float(str(quantity)),
         )
         self.parent.submit_order(order)
 
 
-class SqueezeBreakoutStrategy(Strategy):
+class SqueezeBreakoutStrategy(ExecutionObserverMixin, Strategy):
+    execution_strategy_name = "squeeze_breakout"
+
     """Donchian breakout strategy that enters on channel breaks after
     a volatility squeeze, with ATR-based trailing stops."""
 
@@ -437,6 +463,14 @@ class SqueezeBreakoutStrategy(Strategy):
             self._open_position(OrderSide.SELL, close, current_atr)
 
     def _open_position(self, side: OrderSide, price: float, current_atr: float):
+        self._current_trade_id = f"T-{uuid4().hex}"
+        execution_instrumentation.signal_generated(
+            strategy="squeeze_breakout",
+            symbol=self.config.ccxt_symbol or str(self.config.instrument_id),
+            side=side.name if hasattr(side, "name") else str(side),
+            trade_id=self._current_trade_id,
+            entry_price=price,
+        )
         if side == OrderSide.BUY:
             self._stop_price = price - self.config.initial_stop_atr_mult * current_atr
         else:
@@ -514,9 +548,22 @@ class SqueezeBreakoutStrategy(Strategy):
 
     def _submit_market(self, side: OrderSide, price: Decimal):
         instrument = self.cache.instrument(self.config.instrument_id)
+        quantity = self._order_quantity(instrument, price)
         order = self.order_factory.market(
             self.config.instrument_id,
             side,
-            self._order_quantity(instrument, price),
+            quantity,
+        )
+        trade_id = getattr(self, "_current_trade_id", str(order.client_order_id))
+        self._order_trade_ids = getattr(self, "_order_trade_ids", {})
+        self._order_trade_ids[str(order.client_order_id)] = trade_id
+        execution_instrumentation.order_submitted(
+            strategy="squeeze_breakout",
+            symbol=self.config.ccxt_symbol or str(self.config.instrument_id),
+            side=side.name if hasattr(side, "name") else str(side),
+            trade_id=trade_id,
+            order_id=str(order.client_order_id),
+            quantity=float(str(quantity)),
+            notional_usdt=float(price) * float(str(quantity)),
         )
         self.submit_order(order)

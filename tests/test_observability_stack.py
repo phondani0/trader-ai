@@ -146,3 +146,19 @@ def test_trader_ai_dashboard_has_live_logs_panel():
 
     assert log_panels
     assert log_panels[0]["targets"][0]["expr"] == '{service_name="trader-ai"}'
+
+
+def test_trader_ai_dashboard_has_execution_metric_panels():
+    dashboard_path = OBSERVABILITY_ROOT / "grafana" / "dashboards" / "trader-ai-live.json"
+    dashboard = yaml.safe_load(dashboard_path.read_text(encoding="utf-8"))
+    expressions = {
+        target["expr"]
+        for panel in dashboard["panels"]
+        for target in panel.get("targets", [])
+        if "expr" in target
+    }
+
+    assert "sum by (strategy, symbol, result) (rate(trader_orders_total[5m]))" in expressions
+    assert "sum by (strategy, symbol) (rate(trader_order_fills_total[5m]))" in expressions
+    assert "sum by (strategy, reason) (rate(trader_order_rejections_total[5m]))" in expressions
+    assert "histogram_quantile(0.95, sum by (le, strategy) (rate(trader_signal_to_fill_seconds_bucket[5m])))" in expressions

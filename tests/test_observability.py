@@ -24,10 +24,13 @@ from trader_ai.observability import configure_observability  # noqa: E402
 from trader_ai.observability import logger  # noqa: E402
 from trader_ai.observability import metrics  # noqa: E402
 from trader_ai.observability import tracer  # noqa: E402
+from trader_ai.execution.instrumentation import execution_instrumentation  # noqa: E402
 
 
 class ObservabilityTest(unittest.TestCase):
     def tearDown(self) -> None:
+        for trade_id in list(execution_instrumentation._trade_root_spans):
+            execution_instrumentation.end_trade_execution(trade_id=trade_id, result="error")
         configure_observability(ObservabilitySettings(enabled=False))
 
     def test_settings_defaults_enable_local_collector_export(self):
@@ -230,6 +233,153 @@ class ObservabilityTest(unittest.TestCase):
                 "symbol": "WLD/USDT:USDT",
             },
         )
+
+    def test_execution_instrumentation_order_submit_emits_log_metric_and_span(self):
+        output = StringIO()
+        metric_reader = InMemoryMetricReader()
+        span_exporter = InMemorySpanExporter()
+        configure_observability(
+            ObservabilitySettings(
+                enabled=True,
+                service_name="trader-ai-test",
+                environment="paper",
+                run_id="run-123",
+                log_json=True,
+            ),
+            metric_reader=metric_reader,
+            span_exporter=span_exporter,
+            stdout=output,
+        )
+
+        execution_instrumentation.order_submitted(
+            strategy="adaptive_trend_rider",
+            symbol="ETH/USDT:USDT",
+            side="BUY",
+            trade_id="T-123",
+            order_id="O-123",
+            quantity=0.07,
+            notional_usdt=150.0,
+        )
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["log_type"], "trade.order.submitted")
+        self.assertEqual(payload["trade_id"], "T-123")
+        self.assertEqual(payload["order_id"], "O-123")
+        self.assertEqual(payload["strategy"], "adaptive_trend_rider")
+        self.assertEqual(payload["symbol"], "ETH/USDT:USDT")
+
+        metric = self._metric_by_name(metric_reader, "trader_orders_total")
+        data_point = metric.data.data_points[0]
+        self.assertEqual(data_point.value, 1)
+        self.assertEqual(
+            dict(data_point.attributes),
+            {
+                "strategy": "adaptive_trend_rider",
+                "symbol": "ETH/USDT:USDT",
+                "side": "BUY",
+                "result": "submitted",
+            },
+        )
+
+        spans = span_exporter.get_finished_spans()
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0].name, "order.submit")
+        self.assertEqual(spans[0].attributes["trade_id"], "T-123")
+        self.assertEqual(spans[0].attributes["order_id"], "O-123")
+        self.assertEqual(spans[0].attributes["notional_usdt"], 150.0)
+
+    def test_execution_instrumentation_rejection_keeps_raw_ids_out_of_metric_labels(self):
+        output = StringIO()
+        metric_reader = InMemoryMetricReader()
+        configure_observability(
+            ObservabilitySettings(enabled=True, log_json=True),
+            metric_reader=metric_reader,
+            stdout=output,
+        )
+
+        execution_instrumentation.order_rejected(
+            strategy="squeeze_breakout",
+            symbol="SOL/USDT:USDT",
+            side="SELL",
+            trade_id="T-raw-456",
+            order_id="O-raw-456",
+            reason="insufficient_margin",
+        )
+
+        metric = self._metric_by_name(metric_reader, "trader_order_rejections_total")
+        labels = dict(metric.data.data_points[0].attributes)
+
+        self.assertEqual(
+            labels,
+            {
+                "strategy": "squeeze_breakout",
+                "symbol": "SOL/USDT:USDT",
+                "reason": "insufficient_margin",
+            },
+        )
+        self.assertNotIn("trade_id", labels)
+        self.assertNotIn("order_id", labels)
+        self.assertEqual(json.loads(output.getvalue())["order_id"], "O-raw-456")
+
+    def test_execution_instrumentation_keeps_execution_spans_in_one_trace(self):
+        span_exporter = InMemorySpanExporter()
+        configure_observability(
+            ObservabilitySettings(enabled=True, log_json=True),
+            span_exporter=span_exporter,
+            stdout=StringIO(),
+        )
+
+        execution_instrumentation.signal_generated(
+            strategy="adaptive_trend_rider",
+            symbol="ETH/USDT:USDT",
+            side="BUY",
+            trade_id="T-trace",
+        )
+        execution_instrumentation.order_submitted(
+            strategy="adaptive_trend_rider",
+            symbol="ETH/USDT:USDT",
+            side="BUY",
+            trade_id="T-trace",
+            order_id="O-trace",
+            quantity=0.07,
+        )
+        execution_instrumentation.position_closed(
+            strategy="adaptive_trend_rider",
+            symbol="ETH/USDT:USDT",
+            side="BUY",
+            trade_id="T-trace",
+            position_id="P-trace",
+            result="closed",
+            pnl_usdt=4.2,
+        )
+
+        spans_by_name = {span.name: span for span in span_exporter.get_finished_spans()}
+        root_span = spans_by_name["trade.execution"]
+        child_spans = [
+            spans_by_name["signal.generated"],
+            spans_by_name["order.submit"],
+            spans_by_name["position.close"],
+        ]
+
+        self.assertEqual(root_span.attributes["trade_id"], "T-trace")
+        self.assertEqual(
+            {span.context.trace_id for span in child_spans},
+            {root_span.context.trace_id},
+        )
+        self.assertEqual(
+            {span.parent.span_id for span in child_spans},
+            {root_span.context.span_id},
+        )
+
+    @staticmethod
+    def _metric_by_name(metric_reader: InMemoryMetricReader, name: str):
+        metric_data = metric_reader.get_metrics_data()
+        for resource_metric in metric_data.resource_metrics:
+            for scope_metric in resource_metric.scope_metrics:
+                for metric in scope_metric.metrics:
+                    if metric.name == name:
+                        return metric
+        raise AssertionError(f"Metric {name} not exported")
 
 
 if __name__ == "__main__":

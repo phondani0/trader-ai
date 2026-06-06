@@ -49,6 +49,16 @@ class Tracer:
             return nullcontext()
         return self._tracer.start_as_current_span(name, attributes=attributes or {})
 
+    def start_span(
+        self,
+        name: str,
+        *,
+        attributes: dict[str, Any] | None = None,
+    ):
+        if self._tracer is None:
+            return None
+        return self._tracer.start_span(name, attributes=attributes or {})
+
 
 tracer = Tracer()
 
