@@ -66,7 +66,7 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual(squeeze.scanner_execution["min_score"], 14.0)
         self.assertEqual(squeeze.scanner_execution["min_24h_volume"], 75_000_000.0)
         self.assertEqual(squeeze.scanner_execution["discovery_gate"], "hard")
-        self.assertEqual(squeeze.params["trade_notional_usdt"], "25")
+        self.assertEqual(squeeze.params["trade_notional_usdt"], "150")
 
         demo = strategies["demo_ema_cross"]
         self.assertTrue(demo.enabled)
@@ -77,7 +77,7 @@ class ConfigLoadingTest(unittest.TestCase):
         self.assertEqual(demo.scanner_execution["min_score"], 13.0)
         self.assertEqual(demo.scanner_execution["min_24h_volume"], 75_000_000.0)
         self.assertEqual(demo.scanner_execution["discovery_gate"], "hard")
-        self.assertEqual(demo.params["trade_notional_usdt"], "25")
+        self.assertEqual(demo.params["trade_notional_usdt"], "150")
 
 
 if __name__ == "__main__":

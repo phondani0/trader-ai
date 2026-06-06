@@ -123,7 +123,7 @@ class WarmupTest(unittest.TestCase):
                 "rsi_period": 3,
                 "atr_period": 3,
                 "volume_window": 3,
-                "trade_notional_usdt": "25",
+                "trade_notional_usdt": "150",
             },
             discovery_gate="hard",
         )
@@ -162,7 +162,7 @@ class WarmupTest(unittest.TestCase):
                 "atr_ma_period": 3,
                 "volume_window": 3,
                 "squeeze_lookback": 3,
-                "trade_notional_usdt": "25",
+                "trade_notional_usdt": "150",
             },
             discovery_gate="hard",
         )
@@ -200,7 +200,7 @@ class WarmupTest(unittest.TestCase):
                 "rsi_period": 3,
                 "atr_period": 3,
                 "atr_ma_period": 3,
-                "trade_notional_usdt": "25",
+                "trade_notional_usdt": "150",
             },
             discovery_gate="hard",
         )

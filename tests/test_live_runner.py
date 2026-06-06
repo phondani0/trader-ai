@@ -310,7 +310,7 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
                 enabled=True,
                 instruments=[],
                 discovery_gate="hard",
-                params={"trade_notional_usdt": "25"},
+                params={"trade_notional_usdt": "150"},
                 scanner_execution={
                     "enabled": False,
                     "max_symbols": 0,
@@ -324,7 +324,7 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
                 enabled=True,
                 instruments=[],
                 discovery_gate="hard",
-                params={"trade_notional_usdt": "25"},
+                params={"trade_notional_usdt": "150"},
                 scanner_execution={
                     "enabled": True,
                     "max_symbols": 1,
