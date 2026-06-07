@@ -340,7 +340,7 @@ def _dedupe_selected_symbols(
     return selected
 
 
-def build_startup_live_components(settings, *, scanner=None) -> list[BacktestComponents]:
+def build_startup_live_components(settings, *, scanner=None, db=None) -> list[BacktestComponents]:
     if scanner is None:
         return build_live_components(settings)
 
@@ -358,7 +358,37 @@ def build_startup_live_components(settings, *, scanner=None) -> list[BacktestCom
         *candidates,
         *build_runtime_preload_candidates(scanner),
     ]
-    return build_live_components(settings, scanner_candidates=candidates)
+    components = build_live_components(settings, scanner_candidates=candidates)
+
+    if db is not None:
+        try:
+            db_positions = db.get_open_strategy_positions()
+            configured_symbols = component_ccxt_symbols(components)
+            strategy_configs = load_strategy_configs(STRATEGIES_PATH)
+            for pos in db_positions:
+                symbol = pos["symbol"]
+                strategy_name = pos["strategy_name"]
+                if symbol not in configured_symbols and strategy_name in strategy_configs:
+                    strat_cfg = strategy_configs[strategy_name]
+                    if strat_cfg.enabled:
+                        components.append(
+                            build_dynamic_bybit_component(
+                                settings,
+                                strategy_name=strategy_name,
+                                ccxt_symbol=symbol,
+                                strategy_params=strat_cfg.params,
+                                discovery_gate=str(strat_cfg.scanner_execution.get("discovery_gate", "hard")),
+                            )
+                        )
+                        configured_symbols.add(symbol)
+        except Exception as exc:
+            logger.warning(
+                "Failed to inject recovered components",
+                log_type="recovery.inject.failed",
+                error=str(exc)
+            )
+
+    return components
 
 
 def build_runtime_preload_candidates(
@@ -728,7 +758,7 @@ def build_live_node(
     components = (
         initial_components
         if instrument_name is not None or strategy_name is not None
-        else build_startup_live_components(settings, scanner=_scanner)
+        else build_startup_live_components(settings, scanner=_scanner, db=_db)
     )
 
     is_paper = os.environ.get("TRADING_MODE", "paper").lower() == "paper"
@@ -776,13 +806,23 @@ def build_live_node(
         for row in _db.get_open_strategy_positions()
     ]
     
-    recovery_service.reconcile(exchange_positions, db_state, trigger="startup")
+    decisions = recovery_service.reconcile(exchange_positions, db_state, trigger="startup")
     
     for component in components:
         if hasattr(component.strategy, "set_recovery_service"):
             component.strategy.set_recovery_service(recovery_service)
             
         ccxt_symbol = component.instrument_spec.ccxt_symbol
+        decision = next((d for d in decisions if d.symbol == ccxt_symbol), None)
+        
+        if decision:
+            if decision.action == "block":
+                if hasattr(component.strategy, "block_symbol"):
+                    component.strategy.block_symbol(ccxt_symbol, decision.reason)
+            elif decision.action == "recover" and decision.db_state is not None:
+                if hasattr(component.strategy, "hydrate_position"):
+                    component.strategy.hydrate_position(decision.db_state)
+        
         if ccxt_symbol in recovery_service.blocked_symbols:
             if hasattr(component.strategy, "block_symbol"):
                 component.strategy.block_symbol(ccxt_symbol, "startup_reconciliation_blocked")

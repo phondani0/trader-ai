@@ -559,6 +559,40 @@ class SqueezeBreakoutStrategy(ExecutionObserverMixin, Strategy):
     def block_symbol(self, symbol: str, reason: str) -> None:
         self._blocked_symbols.add(symbol)
 
+    def hydrate_position(self, state: StrategyPositionState) -> None:
+        if state.strategy_name != self.execution_strategy_name:
+            return
+
+        side_str = state.side.upper()
+        if side_str in ("BUY", "LONG"):
+            self._position_side = OrderSide.BUY
+        elif side_str in ("SELL", "SHORT"):
+            self._position_side = OrderSide.SELL
+        else:
+            return
+
+        self._current_trade_id = state.trade_id
+        self._entry_price = state.entry_price
+        self._best_price = state.best_price
+        self._stop_price = state.stop_price
+        self._entry_atr = state.entry_atr
+        self._trailing_active = state.trailing_active
+        self._bars_in_position = state.bars_in_position
+
+        json_state = state.strategy_state_json or {}
+        self._cooldown_remaining = json_state.get("cooldown_remaining", 0)
+
+        self.log.info(
+            "Hydrated position state",
+            log_type="strategy.position.hydrated",
+            strategy=self.execution_strategy_name,
+            symbol=state.symbol,
+            trade_id=state.trade_id,
+            side=side_str,
+            entry_price=self._entry_price,
+            stop_price=self._stop_price,
+        )
+
     def persist_position_state(self) -> StrategyPositionState | None:
         if self._position_side is None:
             return None
