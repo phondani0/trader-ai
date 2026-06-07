@@ -226,7 +226,7 @@ class PositionRecoveryService:
         if exchange_pos is not None and db_pos is None:
             return ReconciliationDecision(
                 symbol=exchange_pos.symbol,
-                action="block",
+                action="adopt",
                 reason="unmanaged_exchange_position",
                 exchange_snapshot=exchange_pos,
             )
@@ -320,6 +320,14 @@ class PositionRecoveryService:
             logger.info(
                 "Position externally closed",
                 log_type="position.externally_closed",
+                **log_fields,
+            )
+
+        elif action == "adopt":
+            counts["adopted"] += 1
+            logger.info(
+                "Unmanaged position scheduled for adoption",
+                log_type="position.scheduled_for_adoption",
                 **log_fields,
             )
 

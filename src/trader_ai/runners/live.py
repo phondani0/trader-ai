@@ -340,7 +340,13 @@ def _dedupe_selected_symbols(
     return selected
 
 
-def build_startup_live_components(settings, *, scanner=None, db=None) -> list[BacktestComponents]:
+def build_startup_live_components(
+    settings, 
+    *, 
+    scanner=None, 
+    db=None,
+    exchange_positions=None,
+) -> list[BacktestComponents]:
     if scanner is None:
         return build_live_components(settings)
 
@@ -360,14 +366,29 @@ def build_startup_live_components(settings, *, scanner=None, db=None) -> list[Ba
     ]
     components = build_live_components(settings, scanner_candidates=candidates)
 
+    symbols_to_inject = set()
     if db is not None:
         try:
             db_positions = db.get_open_strategy_positions()
+            for pos in db_positions:
+                symbols_to_inject.add((pos["symbol"], pos["strategy_name"]))
+        except Exception:
+            pass
+            
+    if exchange_positions is not None:
+        strategy_configs = load_strategy_configs(STRATEGIES_PATH)
+        # Attempt to map unmanaged positions to an active strategy
+        active_strategies = [name for name, cfg in strategy_configs.items() if cfg.enabled]
+        if active_strategies:
+            default_strat = active_strategies[0] # Pick the first active one for adoption attempt
+            for pos in exchange_positions:
+                symbols_to_inject.add((pos.symbol, default_strat))
+
+    if symbols_to_inject:
+        try:
             configured_symbols = component_ccxt_symbols(components)
             strategy_configs = load_strategy_configs(STRATEGIES_PATH)
-            for pos in db_positions:
-                symbol = pos["symbol"]
-                strategy_name = pos["strategy_name"]
+            for symbol, strategy_name in symbols_to_inject:
                 if symbol not in configured_symbols and strategy_name in strategy_configs:
                     strat_cfg = strategy_configs[strategy_name]
                     if strat_cfg.enabled:
@@ -755,30 +776,15 @@ def build_live_node(
     run_id = getattr(settings, "run_id", None) or uuid4().hex
     recovery_service = PositionRecoveryService(_db, run_id=run_id)
 
-    components = (
-        initial_components
-        if instrument_name is not None or strategy_name is not None
-        else build_startup_live_components(settings, scanner=_scanner, db=_db)
-    )
-
     is_paper = os.environ.get("TRADING_MODE", "paper").lower() == "paper"
     api_key = os.environ.get("EXCHANGE_API_KEY", "")
     api_secret = os.environ.get("EXCHANGE_SECRET_KEY", "")
 
-    venue_str = primary_component.venue.value.upper()
-    data_clients, exec_clients = build_live_client_configs(
-        components,
-        is_paper=is_paper,
-        api_key=api_key,
-        api_secret=api_secret,
-    )
-
-    # Reconcile Positions Before Node Boot
     exchange.apiKey = api_key
     exchange.secret = api_secret
     if is_paper and hasattr(exchange, "set_sandbox_mode"):
         exchange.set_sandbox_mode(True)
-        
+
     try:
         raw_positions = exchange.fetch_positions()
         exchange_positions = []
@@ -801,6 +807,25 @@ def build_live_node(
         )
         exchange_positions = []
 
+    components = (
+        initial_components
+        if instrument_name is not None or strategy_name is not None
+        else build_startup_live_components(
+            settings, 
+            scanner=_scanner, 
+            db=_db,
+            exchange_positions=exchange_positions,
+        )
+    )
+
+    venue_str = primary_component.venue.value.upper()
+    data_clients, exec_clients = build_live_client_configs(
+        components,
+        is_paper=is_paper,
+        api_key=api_key,
+        api_secret=api_secret,
+    )
+
     db_state = [
         StrategyPositionState(**row)
         for row in _db.get_open_strategy_positions()
@@ -822,6 +847,9 @@ def build_live_node(
             elif decision.action == "recover" and decision.db_state is not None:
                 if hasattr(component.strategy, "hydrate_position"):
                     component.strategy.hydrate_position(decision.db_state)
+            elif decision.action == "adopt" and decision.exchange_snapshot is not None:
+                if hasattr(component.strategy, "schedule_adoption"):
+                    component.strategy.schedule_adoption(decision.exchange_snapshot)
         
         if ccxt_symbol in recovery_service.blocked_symbols:
             if hasattr(component.strategy, "block_symbol"):

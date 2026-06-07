@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from collections import deque
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 from nautilus_trader.config import StrategyConfig
@@ -503,7 +504,15 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
         )
         self._last_decision_log_bar = self._bars_seen
 
-    def _evaluate_entry(self, bar: Bar):
+    def _evaluate_entry(self, bar: Bar) -> None:
+        if self._position_side is not None:
+            return
+
+        if getattr(self, "_pending_adoption", None) is not None:
+            self._execute_adoption(bar, self._pending_adoption)
+            self._pending_adoption = None
+            return
+
         if self._journal_blocks_entry():
             self._record_decision("discovery_gate")
             return
@@ -639,6 +648,49 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
 
     def block_symbol(self, symbol: str, reason: str) -> None:
         self._blocked_symbols.add(symbol)
+
+    def schedule_adoption(self, snapshot: Any) -> None:
+        self._pending_adoption = snapshot
+
+    def _execute_adoption(self, bar: Bar, snapshot: Any) -> None:
+        from uuid import uuid4
+        side_str = snapshot.side.upper()
+        if side_str in ("BUY", "LONG"):
+            self._position_side = OrderSide.BUY
+        elif side_str in ("SELL", "SHORT"):
+            self._position_side = OrderSide.SELL
+        else:
+            self.log.warning(f"Cannot adopt {snapshot.symbol}: unknown side {side_str}")
+            return
+
+        self._current_trade_id = uuid4().hex
+        self._entry_price = snapshot.avg_entry_price
+        self._best_price = snapshot.avg_entry_price
+        self._entry_atr = float(self.atr.value) if self.atr.initialized else (snapshot.avg_entry_price * 0.02)
+
+        # Conservative stop loss
+        if self._position_side == OrderSide.BUY:
+            self._stop_price = self._entry_price - (self._entry_atr * 3.0)
+        else:
+            self._stop_price = self._entry_price + (self._entry_atr * 3.0)
+
+        self._trailing_active = True
+        self._bars_in_position = 0
+        self._cooldown_remaining = 0
+
+        self.persist_position_state()
+
+        self.log.info(
+            "Safely adopted external position",
+            log_type="strategy.position.adopted",
+            strategy=self.execution_strategy_name,
+            symbol=snapshot.symbol,
+            trade_id=self._current_trade_id,
+            side=side_str,
+            quantity=snapshot.quantity,
+            entry_price=self._entry_price,
+            conservative_stop=self._stop_price,
+        )
 
     def hydrate_position(self, state: StrategyPositionState) -> None:
         if state.strategy_name != self.execution_strategy_name:
