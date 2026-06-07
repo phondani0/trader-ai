@@ -119,6 +119,43 @@ Supported native strategies:
 
 The core target lane is liquid crypto perpetuals on `15m` bars.
 
+## Live Warmup Engine
+
+Indicators (EMA, RSI, ATR) need dozens of historical bars before they output meaningful values. The warmup engine pre-loads history via CCXT REST and replays it through each strategy's indicators **before** the WebSocket stream begins — so the bot is ready to trade on bar one.
+
+**Two warmup paths:**
+
+| Path | When | What happens |
+|---|---|---|
+| **Startup warmup** | Node boot | `warmup_live_components()` fetches `warmup_bars` of history for every configured instrument and calls `strategy.seed_warmup()` |
+| **Runtime warmup** | Scanner discovers a new symbol mid-session | `activate_component()` fetches history, warms a new context, and **rejects** the symbol if indicators aren't ready |
+
+**Safety guards:**
+
+- **Incomplete candle filter** — the still-forming bar is dropped to avoid look-ahead bias
+- **Duplicate-bar guard** — `_last_warmup_close_ns` prevents the WebSocket from re-processing bars already replayed during warmup
+
+**Configuration** (`config/settings.yaml`):
+
+```yaml
+warmup_enabled: true   # master on/off switch
+warmup_bars: 120       # 120 × 15m = 30h of history
+```
+
+## Position Recovery Engine
+
+The bot features a Restart Safety Barrier that protects capital during service interruptions, VPS reboots, and network disconnects.
+
+When the live node starts, it reconciles the exchange reality (Open Positions via CCXT) with its SQLite intent (`strategy_positions`).
+
+**The Safety Barrier Rules:**
+- ✅ **Matching Intent:** If the exchange and SQLite agree on symbol, side, and quantity, the strategy adopts the position and resumes management (including trailing stops).
+- ❌ **Unmanaged Positions:** If the exchange has an open position but SQLite does not, the symbol is explicitly **blocked** from entry to avoid competing with manual trades.
+- ❌ **Size Mismatches:** If the exchange quantity is >10% larger than SQLite, the symbol is **blocked** (the user likely added to the position manually).
+- ❌ **Side Mismatches:** A hard failure is logged and the symbol is **blocked**.
+
+*The trading gate will refuse all new entries until the `PositionRecoveryService` completes its audit on startup.*
+
 ## Layout
 
 ```text

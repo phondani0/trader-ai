@@ -1,4 +1,3 @@
-import asyncio
 from nautilus_trader.config import TradingNodeConfig, LiveDataEngineConfig, LiveExecEngineConfig
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.adapters.binance.config import BinanceDataClientConfig, BinanceExecClientConfig

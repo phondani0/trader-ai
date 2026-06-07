@@ -1,6 +1,7 @@
 """
 Database Manager.
-Handles persistence for trades, discoveries, and performance metrics.
+Handles persistence for trades, discoveries, performance metrics,
+and strategy position recovery state.
 """
 
 from __future__ import annotations
@@ -41,7 +42,10 @@ class DatabaseManager:
         self._init_db()
 
     def _get_connection(self):
-        return sqlite3.connect(self.db_path, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
 
     def _init_db(self):
         """Initialize database schema."""
@@ -136,6 +140,141 @@ class DatabaseManager:
                 """
             )
 
+            # 4. Strategy position recovery ledger
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS strategy_positions (
+                    strategy_name TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    position_id TEXT NOT NULL,
+                    instrument_id TEXT NOT NULL,
+                    venue TEXT NOT NULL DEFAULT 'BYBIT',
+                    trade_id TEXT NOT NULL,
+                    side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT', 'BUY', 'SELL')),
+                    quantity REAL NOT NULL CHECK(quantity >= 0),
+                    exchange_entry_price REAL NOT NULL CHECK(exchange_entry_price >= 0),
+                    strategy_entry_price REAL CHECK(strategy_entry_price >= 0),
+                    entry_atr REAL CHECK(entry_atr >= 0),
+                    stop_price REAL CHECK(stop_price >= 0),
+                    best_price REAL CHECK(best_price >= 0),
+                    trailing_active INTEGER NOT NULL DEFAULT 0 CHECK(trailing_active IN (0, 1)),
+                    bars_in_position INTEGER NOT NULL DEFAULT 0 CHECK(bars_in_position >= 0),
+                    entry_time TEXT,
+                    last_bar_time TEXT,
+                    last_exchange_sync_time TEXT,
+                    status TEXT NOT NULL CHECK(status IN (
+                        'opening', 'open', 'recovered', 'adopted', 'external',
+                        'blocked', 'closing', 'closed', 'externally_closed',
+                        'reconciliation_failed'
+                    )),
+                    entry_reason TEXT,
+                    exit_reason TEXT,
+                    recovery_reason TEXT,
+                    discovery_journal_id INTEGER,
+                    signal_payload_json TEXT,
+                    exchange_snapshot_json TEXT,
+                    strategy_state_json TEXT,
+                    original_run_id TEXT,
+                    last_run_id TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    closed_at TEXT,
+                    PRIMARY KEY (strategy_name, symbol, position_id)
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_positions_status
+                ON strategy_positions(status)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_positions_symbol_status
+                ON strategy_positions(symbol, status)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_positions_trade_id
+                ON strategy_positions(trade_id)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_positions_updated_at
+                ON strategy_positions(updated_at)
+                """
+            )
+
+            # 5. Strategy order correlation
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS strategy_orders (
+                    client_order_id TEXT PRIMARY KEY,
+                    venue_order_id TEXT,
+                    position_id TEXT,
+                    trade_id TEXT NOT NULL,
+                    strategy_name TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    instrument_id TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    order_type TEXT,
+                    quantity REAL CHECK(quantity >= 0),
+                    status TEXT NOT NULL,
+                    reduce_only INTEGER NOT NULL DEFAULT 0 CHECK(reduce_only IN (0, 1)),
+                    submitted_at TEXT,
+                    filled_at TEXT,
+                    closed_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    raw_event_json TEXT
+                )
+                """
+            )
+
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_orders_trade_id
+                ON strategy_orders(trade_id)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_orders_position_id
+                ON strategy_orders(position_id)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_strategy_orders_symbol_status
+                ON strategy_orders(symbol, status)
+                """
+            )
+
+            # 6. Reconciliation audit log
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reconciliation_runs (
+                    run_id TEXT PRIMARY KEY,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    trigger TEXT NOT NULL CHECK(trigger IN ('startup', 'reconnect', 'manual', 'test')),
+                    result TEXT NOT NULL CHECK(result IN ('running', 'clean', 'recovered', 'blocked', 'failed')),
+                    exchange_open_count INTEGER NOT NULL DEFAULT 0,
+                    db_open_count INTEGER NOT NULL DEFAULT 0,
+                    recovered_count INTEGER NOT NULL DEFAULT 0,
+                    adopted_count INTEGER NOT NULL DEFAULT 0,
+                    externally_closed_count INTEGER NOT NULL DEFAULT 0,
+                    blocked_count INTEGER NOT NULL DEFAULT 0,
+                    failed_count INTEGER NOT NULL DEFAULT 0,
+                    details_json TEXT
+                )
+                """
+            )
+
             self._ensure_column(
                 cursor, "discovery_journal", "last_seen_time", "TIMESTAMP"
             )
@@ -163,6 +302,8 @@ class DatabaseManager:
             self._ensure_column(cursor, "discovery_journal", "min_price", "REAL")
             self._ensure_column(cursor, "trades", "regime", "TEXT")
             self._ensure_column(cursor, "trades", "reason_entry", "TEXT")
+
+            self._migrate_managed_positions(cursor)
             conn.commit()
         logger.info(f"💾 Database initialized at {self.db_path}")
 
@@ -174,6 +315,56 @@ class DatabaseManager:
         columns = {row[1] for row in cursor.fetchall()}
         if column not in columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _migrate_managed_positions(cursor: sqlite3.Cursor) -> None:
+        """One-time migration: copy managed_positions rows to strategy_positions."""
+        cursor.execute("PRAGMA table_info(managed_positions)")
+        if not cursor.fetchall():
+            return
+
+        cursor.execute(
+            """
+            SELECT symbol, order_id, side, quantity, entry_price,
+                   entry_time, strategy_name, stop_loss, updated_at
+            FROM managed_positions
+            """
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            return
+
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        for row in rows:
+            symbol, order_id, side, quantity, entry_price, entry_time, strategy_name, stop_loss, updated_at = row
+            position_id = f"migrated-{symbol}-{updated_at or now}"
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO strategy_positions (
+                    strategy_name, symbol, position_id, instrument_id, venue,
+                    trade_id, side, quantity, exchange_entry_price,
+                    strategy_entry_price, stop_price,
+                    status, entry_time, recovery_reason,
+                    original_run_id, last_run_id,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'BYBIT', ?, ?, ?, ?, ?, ?, 'recovered', ?, 'schema_migration', 'migration', 'migration', ?, ?)
+                """,
+                (
+                    strategy_name or "unknown",
+                    symbol,
+                    position_id,
+                    symbol,
+                    order_id or position_id,
+                    side or "LONG",
+                    float(quantity or 0),
+                    float(entry_price or 0),
+                    float(entry_price or 0),
+                    float(stop_loss) if stop_loss is not None else None,
+                    entry_time,
+                    now,
+                    now,
+                ),
+            )
 
     def record_discovery(self, data: Dict):
         """Insert or refresh a discovery event while avoiding duplicate pending rows."""
@@ -447,6 +638,251 @@ class DatabaseManager:
         """Delete persisted runtime metadata for a managed symbol."""
         with self._get_connection() as conn:
             conn.execute("DELETE FROM managed_positions WHERE symbol = ?", (symbol,))
+            conn.commit()
+
+    # --- Strategy Position Recovery Methods ---
+
+    def upsert_strategy_position(self, data: Dict[str, Any]) -> None:
+        """Insert or update a strategy position row."""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        query = """
+            INSERT INTO strategy_positions (
+                strategy_name, symbol, position_id, instrument_id, venue,
+                trade_id, side, quantity, exchange_entry_price,
+                strategy_entry_price, entry_atr, stop_price, best_price,
+                trailing_active, bars_in_position,
+                entry_time, last_bar_time, status,
+                entry_reason, strategy_state_json,
+                original_run_id, last_run_id,
+                created_at, updated_at
+            ) VALUES (
+                :strategy_name, :symbol, :position_id, :instrument_id, :venue,
+                :trade_id, :side, :quantity, :exchange_entry_price,
+                :strategy_entry_price, :entry_atr, :stop_price, :best_price,
+                :trailing_active, :bars_in_position,
+                :entry_time, :last_bar_time, :status,
+                :entry_reason, :strategy_state_json,
+                :original_run_id, :last_run_id,
+                :created_at, :updated_at
+            )
+            ON CONFLICT(strategy_name, symbol, position_id) DO UPDATE SET
+                quantity = excluded.quantity,
+                exchange_entry_price = excluded.exchange_entry_price,
+                stop_price = excluded.stop_price,
+                best_price = excluded.best_price,
+                trailing_active = excluded.trailing_active,
+                bars_in_position = excluded.bars_in_position,
+                last_bar_time = excluded.last_bar_time,
+                status = excluded.status,
+                strategy_state_json = excluded.strategy_state_json,
+                last_run_id = excluded.last_run_id,
+                updated_at = excluded.updated_at
+        """
+        params = {
+            "strategy_name": data["strategy_name"],
+            "symbol": data["symbol"],
+            "position_id": data["position_id"],
+            "instrument_id": data.get("instrument_id", data["symbol"]),
+            "venue": data.get("venue", "BYBIT"),
+            "trade_id": data["trade_id"],
+            "side": data["side"],
+            "quantity": float(data.get("quantity", 0)),
+            "exchange_entry_price": float(data.get("exchange_entry_price", 0)),
+            "strategy_entry_price": (
+                float(data["strategy_entry_price"])
+                if data.get("strategy_entry_price") is not None
+                else None
+            ),
+            "entry_atr": (
+                float(data["entry_atr"]) if data.get("entry_atr") is not None else None
+            ),
+            "stop_price": (
+                float(data["stop_price"]) if data.get("stop_price") is not None else None
+            ),
+            "best_price": (
+                float(data["best_price"]) if data.get("best_price") is not None else None
+            ),
+            "trailing_active": int(bool(data.get("trailing_active", False))),
+            "bars_in_position": int(data.get("bars_in_position", 0)),
+            "entry_time": data.get("entry_time"),
+            "last_bar_time": data.get("last_bar_time", now),
+            "status": data.get("status", "open"),
+            "entry_reason": data.get("entry_reason"),
+            "strategy_state_json": (
+                json.dumps(data["strategy_state_json"], sort_keys=True)
+                if data.get("strategy_state_json") is not None
+                else None
+            ),
+            "original_run_id": data.get("original_run_id"),
+            "last_run_id": data.get("last_run_id"),
+            "created_at": data.get("created_at", now),
+            "updated_at": now,
+        }
+        with self._get_connection() as conn:
+            conn.execute(query, params)
+            conn.commit()
+
+    def get_open_strategy_positions(self) -> List[Dict]:
+        """Fetch all strategy positions with an active status."""
+        query = """
+            SELECT * FROM strategy_positions
+            WHERE status IN ('opening', 'open', 'recovered', 'adopted')
+            ORDER BY strategy_name, symbol
+        """
+        with self._get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(query)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def mark_position_closed(
+        self,
+        strategy_name: str,
+        symbol: str,
+        position_id: str,
+        exit_reason: str,
+    ) -> None:
+        """Mark a strategy position as closed."""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE strategy_positions
+                SET status = 'closed', exit_reason = ?, closed_at = ?, updated_at = ?
+                WHERE strategy_name = ? AND symbol = ? AND position_id = ?
+                """,
+                (exit_reason, now, now, strategy_name, symbol, position_id),
+            )
+            conn.commit()
+
+    def mark_position_externally_closed(
+        self,
+        strategy_name: str,
+        symbol: str,
+        position_id: str,
+    ) -> None:
+        """Mark a strategy position as closed by an external actor."""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE strategy_positions
+                SET status = 'externally_closed', closed_at = ?, updated_at = ?
+                WHERE strategy_name = ? AND symbol = ? AND position_id = ?
+                """,
+                (now, now, strategy_name, symbol, position_id),
+            )
+            conn.commit()
+
+    def upsert_strategy_order(self, data: Dict[str, Any]) -> None:
+        """Insert or update a strategy order row."""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        query = """
+            INSERT INTO strategy_orders (
+                client_order_id, venue_order_id, position_id,
+                trade_id, strategy_name, symbol, instrument_id,
+                side, order_type, quantity, status, reduce_only,
+                submitted_at, filled_at, closed_at,
+                created_at, updated_at, raw_event_json
+            ) VALUES (
+                :client_order_id, :venue_order_id, :position_id,
+                :trade_id, :strategy_name, :symbol, :instrument_id,
+                :side, :order_type, :quantity, :status, :reduce_only,
+                :submitted_at, :filled_at, :closed_at,
+                :created_at, :updated_at, :raw_event_json
+            )
+            ON CONFLICT(client_order_id) DO UPDATE SET
+                venue_order_id = COALESCE(excluded.venue_order_id, strategy_orders.venue_order_id),
+                position_id = COALESCE(excluded.position_id, strategy_orders.position_id),
+                status = excluded.status,
+                filled_at = COALESCE(excluded.filled_at, strategy_orders.filled_at),
+                closed_at = COALESCE(excluded.closed_at, strategy_orders.closed_at),
+                updated_at = excluded.updated_at,
+                raw_event_json = COALESCE(excluded.raw_event_json, strategy_orders.raw_event_json)
+        """
+        params = {
+            "client_order_id": data["client_order_id"],
+            "venue_order_id": data.get("venue_order_id"),
+            "position_id": data.get("position_id"),
+            "trade_id": data["trade_id"],
+            "strategy_name": data["strategy_name"],
+            "symbol": data["symbol"],
+            "instrument_id": data.get("instrument_id", data["symbol"]),
+            "side": data["side"],
+            "order_type": data.get("order_type"),
+            "quantity": float(data.get("quantity", 0)),
+            "status": data["status"],
+            "reduce_only": int(bool(data.get("reduce_only", False))),
+            "submitted_at": data.get("submitted_at"),
+            "filled_at": data.get("filled_at"),
+            "closed_at": data.get("closed_at"),
+            "created_at": data.get("created_at", now),
+            "updated_at": now,
+            "raw_event_json": (
+                json.dumps(data["raw_event_json"], sort_keys=True)
+                if data.get("raw_event_json") is not None
+                else None
+            ),
+        }
+        with self._get_connection() as conn:
+            conn.execute(query, params)
+            conn.commit()
+
+    def create_reconciliation_run(
+        self,
+        run_id: str,
+        trigger: str,
+    ) -> None:
+        """Start a reconciliation audit row."""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO reconciliation_runs (run_id, started_at, trigger, result)
+                VALUES (?, ?, ?, 'running')
+                """,
+                (run_id, now, trigger),
+            )
+            conn.commit()
+
+    def finish_reconciliation_run(
+        self,
+        run_id: str,
+        result: str,
+        counts: Dict[str, int],
+    ) -> None:
+        """Complete a reconciliation audit row."""
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE reconciliation_runs
+                SET finished_at = ?,
+                    result = ?,
+                    exchange_open_count = ?,
+                    db_open_count = ?,
+                    recovered_count = ?,
+                    adopted_count = ?,
+                    externally_closed_count = ?,
+                    blocked_count = ?,
+                    failed_count = ?,
+                    details_json = ?
+                WHERE run_id = ?
+                """,
+                (
+                    now,
+                    result,
+                    counts.get("exchange_open", 0),
+                    counts.get("db_open", 0),
+                    counts.get("recovered", 0),
+                    counts.get("adopted", 0),
+                    counts.get("externally_closed", 0),
+                    counts.get("blocked", 0),
+                    counts.get("failed", 0),
+                    json.dumps(counts, sort_keys=True),
+                    run_id,
+                ),
+            )
             conn.commit()
 
     def get_recent_trades(self, days: int = 14) -> List[Dict]:

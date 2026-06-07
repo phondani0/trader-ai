@@ -18,6 +18,7 @@ from nautilus_trader.trading.strategy import Strategy
 from trader_ai.core.database import DatabaseManager
 from trader_ai.execution.instrumentation import execution_instrumentation
 from trader_ai.execution.observer import ExecutionObserverMixin
+from trader_ai.execution.recovery import StrategyPositionState
 
 
 class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
@@ -318,6 +319,8 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
         self._last_decision_log_bar: int = 0
         self._runtime_contexts: dict[BarType, _RuntimeVolumeContext] = {}
         self._runtime_ccxt_symbols: set[str] = set()
+        self._recovery_service = None
+        self._blocked_symbols: set[str] = set()
 
     def on_start(self):
         self.register_indicator_for_bars(self.config.bar_type, self.fast_ema)
@@ -505,6 +508,14 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
             self._record_decision("discovery_gate")
             return
 
+        if self.config.ccxt_symbol in self._blocked_symbols:
+            self._record_decision("recovery_blocked")
+            return
+
+        if self._recovery_service is not None and not self._recovery_service.is_entry_allowed(self.config.ccxt_symbol):
+            self._record_decision("recovery_gate")
+            return
+
         avg_volume = sum(self._volumes) / len(self._volumes)
         is_spike = bar.volume.as_double() >= avg_volume * self.config.volume_multiplier
         if not is_spike:
@@ -622,6 +633,35 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
         self._entry_atr = 0.0
         self._trailing_active = False
         self._bars_in_position = 0
+
+    def set_recovery_service(self, service) -> None:
+        self._recovery_service = service
+
+    def block_symbol(self, symbol: str, reason: str) -> None:
+        self._blocked_symbols.add(symbol)
+
+    def persist_position_state(self) -> StrategyPositionState | None:
+        if self._position_side is None:
+            return None
+        trade_id = getattr(self, "_current_trade_id", "unknown")
+        return StrategyPositionState(
+            strategy_name="volume_spike_trend",
+            symbol=self.config.ccxt_symbol or str(self.config.instrument_id),
+            instrument_id=str(self.config.instrument_id),
+            position_id=trade_id,
+            trade_id=trade_id,
+            side=self._position_side.name if hasattr(self._position_side, "name") else str(self._position_side),
+            quantity=0.0,
+            entry_price=self._entry_price,
+            entry_atr=self._entry_atr,
+            stop_price=self._stop_price,
+            best_price=self._best_price,
+            trailing_active=self._trailing_active,
+            bars_in_position=self._bars_in_position,
+            strategy_state_json={
+                "cooldown_remaining": self._cooldown_remaining,
+            },
+        )
 
     def _order_quantity(self, instrument, price: Decimal):
         if self.config.trade_notional_usdt > 0 and price > 0:

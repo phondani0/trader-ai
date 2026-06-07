@@ -5,6 +5,7 @@ import time
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import ccxt
 from nautilus_trader.adapters.binance.common.enums import BinanceAccountType
@@ -38,6 +39,9 @@ from trader_ai.config import load_settings
 from trader_ai.config import load_strategy_configs
 from trader_ai.core.database import DatabaseManager
 from trader_ai.data import load_ccxt_bars
+from trader_ai.execution.recovery import ExchangePositionSnapshot
+from trader_ai.execution.recovery import PositionRecoveryService
+from trader_ai.execution.recovery import StrategyPositionState
 from trader_ai.intelligence.journal import DiscoveryJournal
 from trader_ai.intelligence.scanner import MarketScanner
 from trader_ai.runners.backtest import BacktestComponents
@@ -717,6 +721,9 @@ def build_live_node(
         exchange = exchange_class()
         _journal = DiscoveryJournal(exchange, _db, asdict(settings))
         _scanner = MarketScanner(exchange, asdict(settings), _journal)
+        
+    run_id = getattr(settings, "run_id", None) or uuid4().hex
+    recovery_service = PositionRecoveryService(_db, run_id=run_id)
 
     components = (
         initial_components
@@ -735,6 +742,50 @@ def build_live_node(
         api_key=api_key,
         api_secret=api_secret,
     )
+
+    # Reconcile Positions Before Node Boot
+    exchange.apiKey = api_key
+    exchange.secret = api_secret
+    if is_paper and hasattr(exchange, "set_sandbox_mode"):
+        exchange.set_sandbox_mode(True)
+        
+    try:
+        raw_positions = exchange.fetch_positions()
+        exchange_positions = []
+        for p in raw_positions:
+            if float(p.get("contracts", 0)) > 0:
+                side = p.get("side", "long").upper()
+                exchange_positions.append(ExchangePositionSnapshot(
+                    instrument_id=p.get("symbol", ""),
+                    symbol=p.get("symbol", ""),
+                    side=side,
+                    quantity=float(p.get("contracts", 0)),
+                    avg_entry_price=float(p.get("entryPrice", 0)),
+                    unrealized_pnl=float(p.get("unrealizedPnl", 0) or 0)
+                ))
+    except Exception as exc:
+        logger.error(
+            "Failed to fetch exchange positions for recovery",
+            log_type="recovery.exchange_fetch_failed",
+            error=str(exc)
+        )
+        exchange_positions = []
+
+    db_state = [
+        StrategyPositionState(**row)
+        for row in _db.get_open_strategy_positions()
+    ]
+    
+    recovery_service.reconcile(exchange_positions, db_state, trigger="startup")
+    
+    for component in components:
+        if hasattr(component.strategy, "set_recovery_service"):
+            component.strategy.set_recovery_service(recovery_service)
+            
+        ccxt_symbol = component.instrument_spec.ccxt_symbol
+        if ccxt_symbol in recovery_service.blocked_symbols:
+            if hasattr(component.strategy, "block_symbol"):
+                component.strategy.block_symbol(ccxt_symbol, "startup_reconciliation_blocked")
 
     # 1. Configure the TradingNode
     node_config = TradingNodeConfig(

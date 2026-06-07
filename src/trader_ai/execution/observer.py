@@ -67,6 +67,7 @@ class ExecutionObserverMixin:
             trade_id=self._event_trade_id(event),
             position_id=_position_id(event),
         )
+        self._persist_recovery_state()
 
     def on_position_changed(self, event: Any) -> None:
         execution_instrumentation.position_updated(
@@ -76,6 +77,7 @@ class ExecutionObserverMixin:
             trade_id=self._event_trade_id(event),
             position_id=_position_id(event),
         )
+        self._persist_recovery_state()
 
     def on_position_closed(self, event: Any) -> None:
         execution_instrumentation.position_closed(
@@ -86,6 +88,30 @@ class ExecutionObserverMixin:
             position_id=_position_id(event),
             result="closed",
             pnl_usdt=_event_optional_float(event, "realized_pnl"),
+        )
+        self._persist_recovery_closed(event)
+
+    def _persist_recovery_state(self) -> None:
+        recovery_service = getattr(self, "_recovery_service", None)
+        if recovery_service is None:
+            return
+        
+        persist_func = getattr(self, "persist_position_state", None)
+        if callable(persist_func):
+            state = persist_func()
+            if state is not None:
+                recovery_service.persist_state(state)
+
+    def _persist_recovery_closed(self, event: Any) -> None:
+        recovery_service = getattr(self, "_recovery_service", None)
+        if recovery_service is None:
+            return
+            
+        recovery_service.mark_closed(
+            strategy_name=self._execution_strategy(),
+            symbol=self._execution_symbol(),
+            position_id=self._event_trade_id(event),
+            exit_reason=_event_reason(event),
         )
 
     def _execution_strategy(self) -> str:
