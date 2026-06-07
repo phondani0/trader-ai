@@ -144,15 +144,14 @@ warmup_bars: 120       # 120 × 15m = 30h of history
 
 ## Position Recovery Engine
 
-The bot features a Restart Safety Barrier that protects capital during service interruptions, VPS reboots, and network disconnects.
+The bot features a Restart-Safe Position Recovery system that protects capital during service interruptions, VPS reboots, and network disconnects.
 
 When the live node starts, it reconciles the exchange reality (Open Positions via CCXT) with its SQLite intent (`strategy_positions`).
 
-**The Safety Barrier Rules:**
-- ✅ **Matching Intent:** If the exchange and SQLite agree on symbol, side, and quantity, the strategy adopts the position and resumes management (including trailing stops).
-- ❌ **Unmanaged Positions:** If the exchange has an open position but SQLite does not, the symbol is explicitly **blocked** from entry to avoid competing with manual trades.
-- ❌ **Size Mismatches:** If the exchange quantity is >10% larger than SQLite, the symbol is **blocked** (the user likely added to the position manually).
-- ❌ **Side Mismatches:** A hard failure is logged and the symbol is **blocked**.
+**The Three Pillars of Recovery:**
+- 🛡️ **Safety Barrier:** Reconciles positions before booting. Mismatches in size/side explicitly block the symbol from new entries to avoid overlapping trades.
+- 💧 **State Hydration:** If an open position matches SQLite perfectly, the strategy resumes management. It restores entry prices, trade IDs, active trailing stops, and internal cooldown/trend bars natively.
+- 🛟 **Safe Adoption:** If an unmanaged position exists on the exchange (e.g., opened manually by the user), the bot dynamically assigns it to an active strategy. It adopts the trade, calculates current volatility, and immediately wraps the position in a conservative trailing stop-loss (± 3.0 ATR).
 
 *The trading gate will refuse all new entries until the `PositionRecoveryService` completes its audit on startup.*
 
