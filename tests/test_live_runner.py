@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -16,6 +17,11 @@ if str(SRC_ROOT) not in sys.path:
 from trader_ai.runners import live  # noqa: E402
 from trader_ai.cli import live as live_cli  # noqa: E402
 from trader_ai.config import StrategyExecutionConfig  # noqa: E402
+from trader_ai.core.database import DatabaseManager  # noqa: E402
+from trader_ai.execution.recovery import ExchangePositionSnapshot  # noqa: E402
+from trader_ai.execution.recovery import PositionRecoveryService  # noqa: E402
+from trader_ai.execution.recovery import StrategyPositionState  # noqa: E402
+from trader_ai.execution.recovery import strategy_position_state_from_row  # noqa: E402
 
 
 class LiveRunnerTimerCallbackTest(unittest.TestCase):
@@ -391,6 +397,208 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             },
         )
         tracer.start_as_current_span.assert_called()
+
+    def test_restart_recovery_injects_db_owned_component_and_hydrates_strategy(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        try:
+            db = DatabaseManager(db_path=tmp.name)
+            recovery_service = PositionRecoveryService(db, run_id="restart-test")
+            recovery_service.persist_state(
+                StrategyPositionState(
+                    strategy_name="adaptive_trend_rider",
+                    symbol="BSB/USDT:USDT",
+                    instrument_id="BSBUSDT-LINEAR.BYBIT",
+                    position_id="T-restart",
+                    trade_id="T-restart",
+                    side="SELL",
+                    quantity=12.0,
+                    entry_price=0.62,
+                    entry_atr=0.02,
+                    stop_price=0.68,
+                    best_price=0.60,
+                    trailing_active=True,
+                    bars_in_position=7,
+                    strategy_state_json={
+                        "cooldown_remaining": 2,
+                        "trend_bars": 4,
+                        "prev_trend": -1,
+                    },
+                )
+            )
+            scanner = Mock()
+            scanner.scan_for_momentum.return_value = []
+            scanner.get_dynamic_universe_symbols.return_value = []
+
+            components = live.build_startup_live_components(
+                settings,
+                scanner=scanner,
+                db=db,
+            )
+            component = next(
+                c for c in components
+                if c.strategy_name == "adaptive_trend_rider"
+                and c.instrument_spec.ccxt_symbol == "BSB/USDT:USDT"
+            )
+            db_state = [
+                strategy_position_state_from_row(row)
+                for row in db.get_open_strategy_positions()
+            ]
+            decisions = recovery_service.reconcile(
+                [
+                    ExchangePositionSnapshot(
+                        instrument_id="BSBUSDT-LINEAR.BYBIT",
+                        symbol="BSB/USDT:USDT",
+                        side="SHORT",
+                        quantity=12.0,
+                        avg_entry_price=0.62,
+                    )
+                ],
+                db_state,
+                trigger="startup",
+            )
+
+            decision = decisions[0]
+            self.assertEqual(decision.action, "recover")
+            component.strategy.hydrate_position(decision.db_state)
+
+            self.assertEqual(component.strategy._current_trade_id, "T-restart")
+            self.assertEqual(component.strategy._position_side.name, "SELL")
+            self.assertAlmostEqual(component.strategy._entry_price, 0.62)
+            self.assertAlmostEqual(component.strategy._stop_price, 0.68)
+            self.assertAlmostEqual(component.strategy._entry_atr, 0.02)
+            self.assertAlmostEqual(component.strategy._best_price, 0.60)
+            self.assertTrue(component.strategy._trailing_active)
+            self.assertEqual(component.strategy._bars_in_position, 7)
+            self.assertEqual(component.strategy._cooldown_remaining, 2)
+            self.assertEqual(component.strategy._trend_bars, 4)
+            self.assertEqual(component.strategy._prev_trend, -1)
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
+
+    def test_restart_recovery_blocks_unmanaged_exchange_position_without_injection(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        try:
+            db = DatabaseManager(db_path=tmp.name)
+            scanner = Mock()
+            scanner.scan_for_momentum.return_value = []
+            scanner.get_dynamic_universe_symbols.return_value = []
+
+            components = live.build_startup_live_components(
+                settings,
+                scanner=scanner,
+                db=db,
+                exchange_positions=[
+                    ExchangePositionSnapshot(
+                        instrument_id="MANUALUSDT-LINEAR.BYBIT",
+                        symbol="MANUAL/USDT:USDT",
+                        side="LONG",
+                        quantity=1.0,
+                        avg_entry_price=1.0,
+                    )
+                ],
+            )
+            symbols = {component.instrument_spec.ccxt_symbol for component in components}
+            self.assertNotIn("MANUAL/USDT:USDT", symbols)
+
+            recovery_service = PositionRecoveryService(db, run_id="manual-test")
+            decisions = recovery_service.reconcile(
+                [
+                    ExchangePositionSnapshot(
+                        instrument_id="MANUALUSDT-LINEAR.BYBIT",
+                        symbol="MANUAL/USDT:USDT",
+                        side="LONG",
+                        quantity=1.0,
+                        avg_entry_price=1.0,
+                    )
+                ],
+                [],
+                trigger="startup",
+            )
+
+            self.assertEqual(decisions[0].action, "block")
+            self.assertIn("MANUAL/USDT:USDT", recovery_service.blocked_symbols)
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
+
+    def test_restart_recovery_marks_db_position_externally_closed_when_exchange_flat(self):
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        try:
+            db = DatabaseManager(db_path=tmp.name)
+            db.upsert_strategy_position(
+                {
+                    "strategy_name": "adaptive_trend_rider",
+                    "symbol": "BSB/USDT:USDT",
+                    "position_id": "T-flat",
+                    "instrument_id": "BSBUSDT-LINEAR.BYBIT",
+                    "trade_id": "T-flat",
+                    "side": "LONG",
+                    "quantity": 5.0,
+                    "exchange_entry_price": 0.6,
+                    "strategy_entry_price": 0.6,
+                    "entry_atr": 0.02,
+                    "stop_price": 0.54,
+                    "best_price": 0.62,
+                    "status": "open",
+                }
+            )
+            recovery_service = PositionRecoveryService(db, run_id="flat-test")
+            db_state = [
+                strategy_position_state_from_row(row)
+                for row in db.get_open_strategy_positions()
+            ]
+
+            decisions = recovery_service.reconcile([], db_state, trigger="startup")
+
+            self.assertEqual(decisions[0].action, "externally_closed")
+            self.assertEqual(db.get_open_strategy_positions(), [])
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
+
+    def test_restart_recovery_blocks_invalid_db_strategy_state(self):
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        try:
+            db = DatabaseManager(db_path=tmp.name)
+            db.upsert_strategy_position(
+                {
+                    "strategy_name": "adaptive_trend_rider",
+                    "symbol": "BSB/USDT:USDT",
+                    "position_id": "T-invalid",
+                    "instrument_id": "BSBUSDT-LINEAR.BYBIT",
+                    "trade_id": "T-invalid",
+                    "side": "LONG",
+                    "quantity": 5.0,
+                    "exchange_entry_price": 0.6,
+                    "strategy_entry_price": 0.6,
+                    "status": "open",
+                }
+            )
+            recovery_service = PositionRecoveryService(db, run_id="invalid-test")
+            db_state = [
+                strategy_position_state_from_row(row)
+                for row in db.get_open_strategy_positions()
+            ]
+
+            decisions = recovery_service.reconcile(
+                [
+                    ExchangePositionSnapshot(
+                        instrument_id="BSBUSDT-LINEAR.BYBIT",
+                        symbol="BSB/USDT:USDT",
+                        side="LONG",
+                        quantity=5.0,
+                        avg_entry_price=0.6,
+                    )
+                ],
+                db_state,
+                trigger="startup",
+            )
+
+            self.assertEqual(decisions[0].action, "block")
+            self.assertEqual(decisions[0].reason, "invalid_strategy_state")
+            self.assertIn("BSB/USDT:USDT", recovery_service.blocked_symbols)
+        finally:
+            Path(tmp.name).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from trader_ai.execution.instrumentation import execution_instrumentation
@@ -67,7 +68,7 @@ class ExecutionObserverMixin:
             trade_id=self._event_trade_id(event),
             position_id=_position_id(event),
         )
-        self._persist_recovery_state()
+        self._persist_recovery_state(event)
 
     def on_position_changed(self, event: Any) -> None:
         execution_instrumentation.position_updated(
@@ -77,7 +78,7 @@ class ExecutionObserverMixin:
             trade_id=self._event_trade_id(event),
             position_id=_position_id(event),
         )
-        self._persist_recovery_state()
+        self._persist_recovery_state(event)
 
     def on_position_closed(self, event: Any) -> None:
         execution_instrumentation.position_closed(
@@ -91,7 +92,7 @@ class ExecutionObserverMixin:
         )
         self._persist_recovery_closed(event)
 
-    def _persist_recovery_state(self) -> None:
+    def _persist_recovery_state(self, event: Any | None = None) -> None:
         recovery_service = getattr(self, "_recovery_service", None)
         if recovery_service is None:
             return
@@ -100,6 +101,9 @@ class ExecutionObserverMixin:
         if callable(persist_func):
             state = persist_func()
             if state is not None:
+                event_quantity = _event_position_quantity(event)
+                if state.quantity <= 0 and event_quantity is not None:
+                    state = replace(state, quantity=event_quantity)
                 recovery_service.persist_state(state)
 
     def _persist_recovery_closed(self, event: Any) -> None:
@@ -183,6 +187,8 @@ def _event_float(event: Any, name: str) -> float:
 
 
 def _event_optional_float(event: Any, name: str) -> float | None:
+    if event is None:
+        return None
     value = getattr(event, name, None)
     if value is None:
         return None
@@ -196,3 +202,11 @@ def _event_optional_float(event: Any, name: str) -> float | None:
         return float(text)
     except ValueError:
         return None
+
+
+def _event_position_quantity(event: Any | None) -> float | None:
+    for name in ("quantity", "signed_qty", "last_qty"):
+        value = _event_optional_float(event, name)
+        if value is not None:
+            return abs(value)
+    return None

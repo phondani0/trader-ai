@@ -7,6 +7,7 @@ Implements the decision matrix from the position-recovery-persistence-design spe
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +54,42 @@ class ReconciliationDecision:
     db_state: StrategyPositionState | None = None
 
 
+def strategy_position_state_from_row(row: dict[str, Any]) -> StrategyPositionState:
+    """Convert a raw SQLite strategy_positions row into recovery state."""
+    strategy_state_json = row.get("strategy_state_json")
+    if isinstance(strategy_state_json, str) and strategy_state_json:
+        strategy_state_json = json.loads(strategy_state_json)
+    elif not isinstance(strategy_state_json, dict):
+        strategy_state_json = None
+
+    return StrategyPositionState(
+        strategy_name=str(row["strategy_name"]),
+        symbol=str(row["symbol"]),
+        instrument_id=str(row["instrument_id"]),
+        position_id=str(row["position_id"]),
+        trade_id=str(row["trade_id"]),
+        side=str(row["side"]),
+        quantity=float(row.get("quantity") or 0.0),
+        entry_price=float(
+            row.get("strategy_entry_price")
+            if row.get("strategy_entry_price") is not None
+            else row.get("exchange_entry_price") or 0.0
+        ),
+        entry_atr=(
+            float(row["entry_atr"]) if row.get("entry_atr") is not None else None
+        ),
+        stop_price=(
+            float(row["stop_price"]) if row.get("stop_price") is not None else None
+        ),
+        best_price=(
+            float(row["best_price"]) if row.get("best_price") is not None else None
+        ),
+        trailing_active=bool(row.get("trailing_active")),
+        bars_in_position=int(row.get("bars_in_position") or 0),
+        strategy_state_json=strategy_state_json,
+    )
+
+
 _SIDE_ALIASES: dict[str, str] = {
     "BUY": "LONG",
     "SELL": "SHORT",
@@ -63,6 +100,19 @@ _SIDE_ALIASES: dict[str, str] = {
 
 def _normalize_side(side: str) -> str:
     return _SIDE_ALIASES.get(side.upper(), side.upper())
+
+
+def _has_valid_strategy_state(state: StrategyPositionState) -> bool:
+    return (
+        state.quantity > 0
+        and state.entry_price > 0
+        and state.entry_atr is not None
+        and state.entry_atr > 0
+        and state.stop_price is not None
+        and state.stop_price > 0
+        and state.best_price is not None
+        and state.best_price > 0
+    )
 
 
 class PositionRecoveryService:
@@ -226,7 +276,7 @@ class PositionRecoveryService:
         if exchange_pos is not None and db_pos is None:
             return ReconciliationDecision(
                 symbol=exchange_pos.symbol,
-                action="adopt",
+                action="block",
                 reason="unmanaged_exchange_position",
                 exchange_snapshot=exchange_pos,
             )
@@ -250,6 +300,15 @@ class PositionRecoveryService:
         exchange_pos: ExchangePositionSnapshot,
         db_pos: StrategyPositionState,
     ) -> ReconciliationDecision:
+        if not _has_valid_strategy_state(db_pos):
+            return ReconciliationDecision(
+                symbol=exchange_pos.symbol,
+                action="block",
+                reason="invalid_strategy_state",
+                exchange_snapshot=exchange_pos,
+                db_state=db_pos,
+            )
+
         exchange_side = _normalize_side(exchange_pos.side)
         db_side = _normalize_side(db_pos.side)
 
@@ -320,14 +379,6 @@ class PositionRecoveryService:
             logger.info(
                 "Position externally closed",
                 log_type="position.externally_closed",
-                **log_fields,
-            )
-
-        elif action == "adopt":
-            counts["adopted"] += 1
-            logger.info(
-                "Unmanaged position scheduled for adoption",
-                log_type="position.scheduled_for_adoption",
                 **log_fields,
             )
 

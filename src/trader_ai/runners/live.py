@@ -41,7 +41,7 @@ from trader_ai.core.database import DatabaseManager
 from trader_ai.data import load_ccxt_bars
 from trader_ai.execution.recovery import ExchangePositionSnapshot
 from trader_ai.execution.recovery import PositionRecoveryService
-from trader_ai.execution.recovery import StrategyPositionState
+from trader_ai.execution.recovery import strategy_position_state_from_row
 from trader_ai.intelligence.journal import DiscoveryJournal
 from trader_ai.intelligence.scanner import MarketScanner
 from trader_ai.runners.backtest import BacktestComponents
@@ -375,15 +375,6 @@ def build_startup_live_components(
         except Exception:
             pass
             
-    if exchange_positions is not None:
-        strategy_configs = load_strategy_configs(STRATEGIES_PATH)
-        # Attempt to map unmanaged positions to an active strategy
-        active_strategies = [name for name, cfg in strategy_configs.items() if cfg.enabled]
-        if active_strategies:
-            default_strat = active_strategies[0] # Pick the first active one for adoption attempt
-            for pos in exchange_positions:
-                symbols_to_inject.add((pos.symbol, default_strat))
-
     if symbols_to_inject:
         try:
             configured_symbols = component_ccxt_symbols(components)
@@ -827,7 +818,7 @@ def build_live_node(
     )
 
     db_state = [
-        StrategyPositionState(**row)
+        strategy_position_state_from_row(row)
         for row in _db.get_open_strategy_positions()
     ]
     
@@ -847,10 +838,7 @@ def build_live_node(
             elif decision.action == "recover" and decision.db_state is not None:
                 if hasattr(component.strategy, "hydrate_position"):
                     component.strategy.hydrate_position(decision.db_state)
-            elif decision.action == "adopt" and decision.exchange_snapshot is not None:
-                if hasattr(component.strategy, "schedule_adoption"):
-                    component.strategy.schedule_adoption(decision.exchange_snapshot)
-        
+
         if ccxt_symbol in recovery_service.blocked_symbols:
             if hasattr(component.strategy, "block_symbol"):
                 component.strategy.block_symbol(ccxt_symbol, "startup_reconciliation_blocked")

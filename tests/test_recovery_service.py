@@ -17,6 +17,7 @@ from trader_ai.execution.recovery import (
     ExchangePositionSnapshot,
     PositionRecoveryService,
     StrategyPositionState,
+    strategy_position_state_from_row,
 )
 
 
@@ -76,7 +77,9 @@ class PositionRecoveryServiceTest(unittest.TestCase):
             side=side,
             quantity=qty,
             entry_price=50000.0,
+            entry_atr=500.0,
             stop_price=49000.0,
+            best_price=50500.0,
         )
 
     def test_clean_reconciliation_no_positions(self):
@@ -107,9 +110,9 @@ class PositionRecoveryServiceTest(unittest.TestCase):
         decisions = self.service.reconcile(exchange, [])
 
         self.assertEqual(len(decisions), 1)
-        self.assertEqual(decisions[0].action, "adopt")
+        self.assertEqual(decisions[0].action, "block")
         self.assertEqual(decisions[0].reason, "unmanaged_exchange_position")
-        self.assertNotIn("ETH/USDT:USDT", self.service.blocked_symbols)
+        self.assertIn("ETH/USDT:USDT", self.service.blocked_symbols)
 
     def test_externally_closed_db_open_exchange_flat(self):
         db = [self._make_db("NEAR/USDT:USDT")]
@@ -152,10 +155,10 @@ class PositionRecoveryServiceTest(unittest.TestCase):
         self.service.reconcile([], [])
         self.assertTrue(self.service.is_entry_allowed("BTC/USDT:USDT"))
 
-    def test_is_entry_allowed_for_adopted_symbol(self):
+    def test_is_entry_blocked_for_unmanaged_exchange_symbol(self):
         exchange = [self._make_exchange("ETH/USDT:USDT")]
         self.service.reconcile(exchange, [])
-        self.assertTrue(self.service.is_entry_allowed("ETH/USDT:USDT"))
+        self.assertFalse(self.service.is_entry_allowed("ETH/USDT:USDT"))
         self.assertTrue(self.service.is_entry_allowed("BTC/USDT:USDT"))
 
     def test_persist_state(self):
@@ -211,11 +214,40 @@ class PositionRecoveryServiceTest(unittest.TestCase):
 
         actions = {d.symbol: d.action for d in decisions}
         self.assertEqual(actions["BTC/USDT:USDT"], "recover")
-        self.assertEqual(actions["ETH/USDT:USDT"], "adopt")
+        self.assertEqual(actions["ETH/USDT:USDT"], "block")
         self.assertEqual(actions["NEAR/USDT:USDT"], "externally_closed")
 
-        self.assertNotIn("ETH/USDT:USDT", self.service.blocked_symbols)
+        self.assertIn("ETH/USDT:USDT", self.service.blocked_symbols)
         self.assertNotIn("BTC/USDT:USDT", self.service.blocked_symbols)
+
+    def test_strategy_position_state_from_database_row(self):
+        self.service.persist_state(
+            StrategyPositionState(
+                strategy_name="test_strat",
+                symbol="BTC/USDT:USDT",
+                instrument_id="BTCUSDT-LINEAR.BYBIT",
+                position_id="P-row",
+                trade_id="T-row",
+                side="LONG",
+                quantity=0.2,
+                entry_price=50000.0,
+                entry_atr=100.0,
+                stop_price=49700.0,
+                best_price=50100.0,
+                trailing_active=True,
+                bars_in_position=2,
+                strategy_state_json={"cooldown_remaining": 1},
+            )
+        )
+
+        row = self.db.get_open_strategy_positions()[0]
+        state = strategy_position_state_from_row(row)
+
+        self.assertEqual(state.strategy_name, "test_strat")
+        self.assertEqual(state.symbol, "BTC/USDT:USDT")
+        self.assertEqual(state.quantity, 0.2)
+        self.assertEqual(state.entry_price, 50000.0)
+        self.assertEqual(state.strategy_state_json, {"cooldown_remaining": 1})
 
 
 if __name__ == "__main__":

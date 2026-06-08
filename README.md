@@ -151,7 +151,7 @@ When the live node starts, it reconciles the exchange reality (Open Positions vi
 **The Three Pillars of Recovery:**
 - 🛡️ **Safety Barrier:** Reconciles positions before booting. Mismatches in size/side explicitly block the symbol from new entries to avoid overlapping trades.
 - 💧 **State Hydration:** If an open position matches SQLite perfectly, the strategy resumes management. It restores entry prices, trade IDs, active trailing stops, and internal cooldown/trend bars natively.
-- 🛟 **Safe Adoption:** If an unmanaged position exists on the exchange (e.g., opened manually by the user), the bot dynamically assigns it to an active strategy. It adopts the trade, calculates current volatility, and immediately wraps the position in a conservative trailing stop-loss (± 3.0 ATR).
+- 🚧 **Unmanaged Position Guard:** If an open exchange position has no matching SQLite record, the symbol is blocked from new entries and logged for review. The bot will not automatically manage or close positions it cannot prove it owns.
 
 *The trading gate will refuse all new entries until the `PositionRecoveryService` completes its audit on startup.*
 

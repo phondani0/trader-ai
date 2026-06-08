@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from trader_ai.execution.observer import ExecutionObserverMixin
+from trader_ai.execution.recovery import StrategyPositionState
 
 
 class FakeStrategy(ExecutionObserverMixin):
@@ -11,6 +12,14 @@ class FakeStrategy(ExecutionObserverMixin):
 
     def __init__(self) -> None:
         self.config = SimpleNamespace(ccxt_symbol="ETH/USDT:USDT")
+
+
+class FakeRecoveryService:
+    def __init__(self) -> None:
+        self.persisted_state = None
+
+    def persist_state(self, state: StrategyPositionState) -> None:
+        self.persisted_state = state
 
 
 def test_execution_instrumentation_observer_records_order_fill_event():
@@ -117,3 +126,30 @@ def test_execution_instrumentation_observer_records_position_close_event():
         result="closed",
         pnl_usdt=12.5,
     )
+
+
+def test_execution_observer_persists_event_quantity_when_strategy_state_has_zero_quantity():
+    strategy = FakeStrategy()
+    recovery_service = FakeRecoveryService()
+    strategy._recovery_service = recovery_service
+
+    def persist_position_state():
+        return StrategyPositionState(
+            strategy_name="adaptive_trend_rider",
+            symbol="ETH/USDT:USDT",
+            instrument_id="ETHUSDT-LINEAR.BYBIT",
+            position_id="T-123",
+            trade_id="T-123",
+            side="BUY",
+            quantity=0.0,
+            entry_price=2100.0,
+        )
+
+    strategy.persist_position_state = persist_position_state
+    event = SimpleNamespace(side="BUY", quantity=0.07, position_id="P-123")
+
+    with patch("trader_ai.execution.observer.execution_instrumentation"):
+        strategy.on_position_opened(event)
+
+    assert recovery_service.persisted_state is not None
+    assert recovery_service.persisted_state.quantity == 0.07
