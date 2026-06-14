@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from trader_ai.execution.exit_orders import cancel_sibling_exit_order
+from trader_ai.execution.exit_orders import submit_pending_exit_orders
 from trader_ai.execution.instrumentation import execution_instrumentation
 
 
@@ -59,6 +61,7 @@ class ExecutionObserverMixin:
             quantity=_event_float(event, "last_qty"),
             fill_price=_event_float(event, "last_px"),
         )
+        cancel_sibling_exit_order(owner=self, filled_order_id=_order_id(event))
 
     def on_position_opened(self, event: Any) -> None:
         execution_instrumentation.position_opened(
@@ -69,6 +72,7 @@ class ExecutionObserverMixin:
             position_id=_position_id(event),
         )
         self._persist_recovery_state(event)
+        self._submit_pending_exit_orders(event)
 
     def on_position_changed(self, event: Any) -> None:
         execution_instrumentation.position_updated(
@@ -79,6 +83,7 @@ class ExecutionObserverMixin:
             position_id=_position_id(event),
         )
         self._persist_recovery_state(event)
+        self._submit_pending_exit_orders(event)
 
     def on_position_closed(self, event: Any) -> None:
         execution_instrumentation.position_closed(
@@ -117,6 +122,9 @@ class ExecutionObserverMixin:
             position_id=self._event_trade_id(event),
             exit_reason=_event_reason(event),
         )
+
+    def _submit_pending_exit_orders(self, event: Any) -> None:
+        submit_pending_exit_orders(owner=self, trade_id=self._event_trade_id(event))
 
     def _execution_strategy(self) -> str:
         return str(getattr(self, "execution_strategy_name", "unknown"))

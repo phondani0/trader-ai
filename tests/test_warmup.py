@@ -17,6 +17,7 @@ from trader_ai.config import load_settings  # noqa: E402
 from trader_ai.data import generate_synthetic_bars  # noqa: E402
 from trader_ai.runners import live  # noqa: E402
 from trader_ai.runners.backtest import build_backtest_components  # noqa: E402
+from trader_ai.strategies.bar_types import exit_management_bar_type  # noqa: E402
 
 
 class WarmupTest(unittest.TestCase):
@@ -142,7 +143,10 @@ class WarmupTest(unittest.TestCase):
 
         self.assertTrue(activated)
         self.assertIn("WLD/USDT:USDT", primary.strategy.active_ccxt_symbols())
-        primary.strategy.subscribe_bars.assert_called_once_with(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(
+            exit_management_bar_type(runtime.bar_type)
+        )
 
     def test_squeeze_strategy_can_activate_runtime_component(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
@@ -181,7 +185,10 @@ class WarmupTest(unittest.TestCase):
 
         self.assertTrue(activated)
         self.assertIn("RENDER/USDT:USDT", primary.strategy.active_ccxt_symbols())
-        primary.strategy.subscribe_bars.assert_called_once_with(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(
+            exit_management_bar_type(runtime.bar_type)
+        )
 
     def test_demo_ema_strategy_can_activate_runtime_component(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
@@ -219,7 +226,10 @@ class WarmupTest(unittest.TestCase):
 
         self.assertTrue(activated)
         self.assertIn("SOL/USDT:USDT", primary.strategy.active_ccxt_symbols())
-        primary.strategy.subscribe_bars.assert_called_once_with(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(
+            exit_management_bar_type(runtime.bar_type)
+        )
 
     def test_warmup_replays_loaded_bars_for_each_component(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
@@ -320,7 +330,10 @@ class WarmupTest(unittest.TestCase):
 
         self.assertTrue(activated)
         self.assertIn("FARTCOIN/USDT:USDT", primary.strategy.active_ccxt_symbols())
-        primary.strategy.subscribe_bars.assert_called_once_with(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(runtime.bar_type)
+        primary.strategy.subscribe_bars.assert_any_call(
+            exit_management_bar_type(runtime.bar_type)
+        )
 
 
 if __name__ == "__main__":

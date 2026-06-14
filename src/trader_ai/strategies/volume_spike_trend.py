@@ -16,9 +16,15 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy
 
 from trader_ai.core.database import DatabaseManager
+from trader_ai.execution.exit_orders import ExitOrderRequest
+from trader_ai.execution.exit_orders import activate_profit_runner_if_ready
+from trader_ai.execution.exit_orders import cancel_exit_orders
+from trader_ai.execution.exit_orders import record_exit_order_request
+from trader_ai.execution.exit_orders import replace_exit_stop_if_improved
 from trader_ai.execution.instrumentation import execution_instrumentation
 from trader_ai.execution.observer import ExecutionObserverMixin
 from trader_ai.execution.recovery import StrategyPositionState
+from trader_ai.strategies.bar_types import exit_management_bar_type
 
 
 class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
@@ -38,12 +44,19 @@ class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     initial_stop_atr_mult: float = 1.5
     trailing_stop_atr_mult: float = 2.0
     trailing_activation_atr_mult: float = 2.0
-    max_hold_bars: int = 64
+    max_hold_bars: int = 288
     cooldown_bars: int = 12
     use_discovery_journal: bool = False
     discovery_gate: str = "off"
     ccxt_symbol: str = ""
     trade_notional_usdt: Decimal = Decimal("0")
+    take_profit_order_enabled: bool = False
+    take_profit_r_multiple: Decimal = Decimal("2.0")
+    profit_runner_enabled: bool = True
+    profit_runner_activation_r_multiple: Decimal = Decimal("2.0")
+    profit_runner_stop_lock_r_multiple: Decimal = Decimal("0.5")
+    trailing_stop_enabled: bool = True
+    trailing_replace_min_bps: int = 25
     warmup_diagnostics: bool = True
     warmup_log_interval_bars: int = 10
     decision_diagnostics: bool = True
@@ -120,6 +133,11 @@ class _RuntimeVolumeContext:
             self._record_decision("cooldown")
         else:
             self._evaluate_entry(bar)
+
+    def on_exit_bar(self, bar: Bar) -> None:
+        if self._position_side is None:
+            return
+        self._manage_position(bar, count_hold_bar=False)
 
     def _handle_indicators(self, bar: Bar) -> None:
         self.fast_ema.handle_bar(bar)
@@ -209,8 +227,9 @@ class _RuntimeVolumeContext:
         self._bars_in_position = 0
         self._submit_market(side, Decimal(str(price)))
 
-    def _manage_position(self, bar: Bar) -> None:
-        self._bars_in_position += 1
+    def _manage_position(self, bar: Bar, *, count_hold_bar: bool = True) -> None:
+        if count_hold_bar:
+            self._bars_in_position += 1
         high = bar.high.as_double()
         low = bar.low.as_double()
         current_atr = self.atr.value
@@ -244,8 +263,25 @@ class _RuntimeVolumeContext:
                 self._stop_price = max(self._stop_price, self._best_price - trail_distance)
             else:
                 self._stop_price = min(self._stop_price, self._best_price + trail_distance)
+            if self.config.trailing_stop_enabled:
+                replace_exit_stop_if_improved(
+                    owner=self.parent,
+                    trade_id=getattr(self, "_current_trade_id", ""),
+                    stop_price=Decimal(str(self._stop_price)),
+                    min_improvement_bps=self.config.trailing_replace_min_bps,
+                )
+        activate_profit_runner_if_ready(
+            owner=self.parent,
+            trade_id=getattr(self, "_current_trade_id", ""),
+            latest_price=Decimal(str(bar.close)),
+            min_improvement_bps=self.config.trailing_replace_min_bps,
+        )
 
     def _close_and_reset(self) -> None:
+        cancel_exit_orders(
+            owner=self.parent,
+            trade_id=getattr(self, "_current_trade_id", ""),
+        )
         self.parent.close_all_positions(self.instrument_id)
         self._reset_position_state()
         self._cooldown_remaining = self.config.cooldown_bars
@@ -266,6 +302,7 @@ class _RuntimeVolumeContext:
         return instrument.make_qty(self.config.trade_size)
 
     def _submit_market(self, side: OrderSide, price: Decimal) -> None:
+        instrument = self.parent.cache.instrument(self.instrument_id) or self.instrument
         quantity = self._order_quantity(price)
         order = self.parent.order_factory.market(
             self.instrument_id,
@@ -275,6 +312,9 @@ class _RuntimeVolumeContext:
         trade_id = getattr(self, "_current_trade_id", str(order.client_order_id))
         self._order_trade_ids = getattr(self, "_order_trade_ids", {})
         self._order_trade_ids[str(order.client_order_id)] = trade_id
+        parent_order_trade_ids = getattr(self.parent, "_order_trade_ids", {})
+        parent_order_trade_ids[str(order.client_order_id)] = trade_id
+        self.parent._order_trade_ids = parent_order_trade_ids
         execution_instrumentation.order_submitted(
             strategy="volume_spike_trend",
             symbol=self.ccxt_symbol or str(self.instrument_id),
@@ -283,6 +323,26 @@ class _RuntimeVolumeContext:
             order_id=str(order.client_order_id),
             quantity=float(str(quantity)),
             notional_usdt=float(price) * float(str(quantity)),
+        )
+        record_exit_order_request(
+            owner=self.parent,
+            entry_order=order,
+            request=ExitOrderRequest(
+                instrument=instrument,
+                instrument_id=self.instrument_id,
+                position_side=side,
+                quantity=quantity,
+                entry_price=price,
+                stop_price=Decimal(str(self._stop_price)),
+                strategy_name="volume_spike_trend",
+                symbol=self.ccxt_symbol or str(self.instrument_id),
+                trade_id=trade_id,
+                take_profit_order_enabled=self.config.take_profit_order_enabled,
+                take_profit_r_multiple=self.config.take_profit_r_multiple,
+                profit_runner_enabled=self.config.profit_runner_enabled,
+                profit_runner_activation_r_multiple=self.config.profit_runner_activation_r_multiple,
+                profit_runner_stop_lock_r_multiple=self.config.profit_runner_stop_lock_r_multiple,
+            ),
         )
         self.parent.submit_order(order)
 
@@ -318,6 +378,7 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
         self._last_decision_reason: str | None = None
         self._last_decision_log_bar: int = 0
         self._runtime_contexts: dict[BarType, _RuntimeVolumeContext] = {}
+        self._runtime_exit_contexts: dict[BarType, _RuntimeVolumeContext] = {}
         self._runtime_ccxt_symbols: set[str] = set()
         self._recovery_service = None
         self._blocked_symbols: set[str] = set()
@@ -328,8 +389,24 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
         self.register_indicator_for_bars(self.config.bar_type, self.rsi)
         self.register_indicator_for_bars(self.config.bar_type, self.atr)
         self.subscribe_bars(self.config.bar_type)
+        self._exit_bar_type = exit_management_bar_type(self.config.bar_type)
+        if self._exit_bar_type != self.config.bar_type:
+            self.subscribe_bars(self._exit_bar_type)
 
     def on_bar(self, bar: Bar):
+        if (
+            bar.bar_type == getattr(self, "_exit_bar_type", None)
+            and self._exit_bar_type != self.config.bar_type
+        ):
+            if self._position_side is not None:
+                self._manage_position(bar, count_hold_bar=False)
+            return
+
+        runtime_exit_context = self._runtime_exit_contexts.get(bar.bar_type)
+        if runtime_exit_context is not None:
+            runtime_exit_context.on_exit_bar(bar)
+            return
+
         runtime_context = self._runtime_contexts.get(bar.bar_type)
         if runtime_context is not None:
             runtime_context.on_bar(bar)
@@ -418,8 +495,13 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
             return False
 
         self._runtime_contexts[component.bar_type] = context
+        runtime_exit_bar_type = exit_management_bar_type(component.bar_type)
+        if runtime_exit_bar_type != component.bar_type:
+            self._runtime_exit_contexts[runtime_exit_bar_type] = context
         self._runtime_ccxt_symbols.add(ccxt_symbol)
         self.subscribe_bars(component.bar_type)
+        if runtime_exit_bar_type != component.bar_type:
+            self.subscribe_bars(runtime_exit_bar_type)
         self.log.info(
             "Runtime symbol activated "
             f"{component.instrument.id}: bars={len(bars)} ready=True"
@@ -580,8 +662,9 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
 
         return False
 
-    def _manage_position(self, bar: Bar):
-        self._bars_in_position += 1
+    def _manage_position(self, bar: Bar, *, count_hold_bar: bool = True):
+        if count_hold_bar:
+            self._bars_in_position += 1
         high = bar.high.as_double()
         low = bar.low.as_double()
         current_atr = self.atr.value
@@ -622,8 +705,25 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
             else:
                 new_stop = self._best_price + trail_distance
                 self._stop_price = min(self._stop_price, new_stop)
+            if self.config.trailing_stop_enabled:
+                replace_exit_stop_if_improved(
+                    owner=self,
+                    trade_id=getattr(self, "_current_trade_id", ""),
+                    stop_price=Decimal(str(self._stop_price)),
+                    min_improvement_bps=self.config.trailing_replace_min_bps,
+                )
+        activate_profit_runner_if_ready(
+            owner=self,
+            trade_id=getattr(self, "_current_trade_id", ""),
+            latest_price=Decimal(str(bar.close)),
+            min_improvement_bps=self.config.trailing_replace_min_bps,
+        )
 
     def _close_and_reset(self):
+        cancel_exit_orders(
+            owner=self,
+            trade_id=getattr(self, "_current_trade_id", ""),
+        )
         self.close_all_positions(self.config.instrument_id)
         self._reset_position_state()
         self._cooldown_remaining = self.config.cooldown_bars
@@ -720,5 +820,25 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
             order_id=str(order.client_order_id),
             quantity=float(str(quantity)),
             notional_usdt=float(price) * float(str(quantity)),
+        )
+        record_exit_order_request(
+            owner=self,
+            entry_order=order,
+            request=ExitOrderRequest(
+                instrument=instrument,
+                instrument_id=self.config.instrument_id,
+                position_side=side,
+                quantity=quantity,
+                entry_price=price,
+                stop_price=Decimal(str(self._stop_price)),
+                strategy_name="volume_spike_trend",
+                symbol=self.config.ccxt_symbol or str(self.config.instrument_id),
+                trade_id=trade_id,
+                take_profit_order_enabled=self.config.take_profit_order_enabled,
+                take_profit_r_multiple=self.config.take_profit_r_multiple,
+                profit_runner_enabled=self.config.profit_runner_enabled,
+                profit_runner_activation_r_multiple=self.config.profit_runner_activation_r_multiple,
+                profit_runner_stop_lock_r_multiple=self.config.profit_runner_stop_lock_r_multiple,
+            ),
         )
         self.submit_order(order)
