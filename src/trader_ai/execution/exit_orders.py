@@ -134,6 +134,18 @@ def submit_exit_orders_after_entry(
     try:
         return ensure_exit_orders(owner=owner, request=request)
     except Exception as exc:
+        execution_instrumentation.exit_order_failed(
+            strategy=request.strategy_name,
+            symbol=request.symbol,
+            side=exit_order_side(request.position_side).name,
+            trade_id=request.trade_id,
+            order_role="exit_orders",
+            reason=exc.__class__.__name__,
+            result="error",
+            instrument_id=str(request.instrument_id),
+            stop_price=float(request.stop_price),
+            entry_price=float(request.entry_price),
+        )
         execution_instrumentation.runtime_error(
             component="exit_orders",
             reason=exc.__class__.__name__,
@@ -191,6 +203,17 @@ def ensure_exit_orders(*, owner: Any, request: ExitOrderRequest) -> ExitOrderHan
             ),
         )
         owner.submit_order(stop_order)
+        execution_instrumentation.exit_order_submitted(
+            strategy=request.strategy_name,
+            symbol=request.symbol,
+            side=side.name,
+            trade_id=request.trade_id,
+            order_id=str(stop_order.client_order_id),
+            order_role="stop",
+            quantity=_quantity_as_float(request.quantity),
+            price=float(request.stop_price),
+            result="submitted",
+        )
 
     if request.take_profit_order_enabled and take_profit_order is None:
         take_profit_order = owner.order_factory.limit(
@@ -208,6 +231,17 @@ def ensure_exit_orders(*, owner: Any, request: ExitOrderRequest) -> ExitOrderHan
             ),
         )
         owner.submit_order(take_profit_order)
+        execution_instrumentation.exit_order_submitted(
+            strategy=request.strategy_name,
+            symbol=request.symbol,
+            side=side.name,
+            trade_id=request.trade_id,
+            order_id=str(take_profit_order.client_order_id),
+            order_role="take_profit",
+            quantity=_quantity_as_float(request.quantity),
+            price=float(take_profit_price),
+            result="submitted",
+        )
 
     handles = ExitOrderHandles(
         request=request,
@@ -266,15 +300,17 @@ def replace_exit_stop_if_improved(
     )
     _remove_exit_order_indexes(owner=owner, trade_id=trade_id)
     _store_exit_order_handles(owner=owner, handles=updated)
-    execution_instrumentation.order_submitted(
+    execution_instrumentation.exit_stop_replaced(
         strategy=request.strategy_name,
         symbol=request.symbol,
         side=exit_order_side(request.position_side).name,
         trade_id=request.trade_id,
-        order_id=str(new_stop_order.client_order_id),
+        old_order_id=str(handles.stop_order.client_order_id),
+        new_order_id=str(new_stop_order.client_order_id),
         quantity=_quantity_as_float(request.quantity),
-        result="exit_stop_replaced",
-        stop_price=float(stop_price),
+        previous_stop_price=float(current_stop),
+        new_stop_price=float(stop_price),
+        result="replaced",
     )
     return True
 
@@ -321,6 +357,16 @@ def activate_profit_runner_if_ready(
             profit_runner_active=True,
         )
         _store_exit_order_handles(owner=owner, handles=updated)
+        execution_instrumentation.profit_runner_activated(
+            strategy=request.strategy_name,
+            symbol=request.symbol,
+            side=request.position_side.name,
+            trade_id=request.trade_id,
+            latest_price=float(latest_price),
+            activation_price=float(calculate_profit_runner_activation_price(request)),
+            locked_stop_price=float(locked_stop),
+            result="activated",
+        )
         return True
     return False
 
@@ -339,6 +385,16 @@ def cancel_sibling_exit_order(*, owner: Any, filled_order_id: str) -> bool:
     if sibling is None:
         return False
     owner.cancel_order(sibling)
+    execution_instrumentation.exit_order_canceled(
+        strategy=handles.request.strategy_name,
+        symbol=handles.request.symbol,
+        side=exit_order_side(handles.request.position_side).name,
+        trade_id=trade_id,
+        order_id=str(sibling.client_order_id),
+        order_role="take_profit" if role == "stop" else "stop",
+        reason="sibling_filled",
+        result="canceled",
+    )
     getattr(owner, "_exit_orders_by_trade_id", {}).pop(trade_id, None)
     _remove_exit_order_indexes(owner=owner, trade_id=trade_id)
     return True
@@ -350,10 +406,23 @@ def cancel_exit_orders(*, owner: Any, trade_id: str) -> bool:
         return False
 
     cancelled = False
-    for order in (handles.stop_order, handles.take_profit_order):
+    for role, order in (
+        ("stop", handles.stop_order),
+        ("take_profit", handles.take_profit_order),
+    ):
         if order is None:
             continue
         owner.cancel_order(order)
+        execution_instrumentation.exit_order_canceled(
+            strategy=handles.request.strategy_name,
+            symbol=handles.request.symbol,
+            side=exit_order_side(handles.request.position_side).name,
+            trade_id=trade_id,
+            order_id=str(order.client_order_id),
+            order_role=role,
+            reason="trade_exit_cleanup",
+            result="canceled",
+        )
         cancelled = True
     _remove_exit_order_indexes(owner=owner, trade_id=trade_id)
     return cancelled

@@ -78,6 +78,8 @@ Based on benchmarking on 15,000 bars (~156 days) of BTCUSDT-PERP on Binance:
 - **Documentation Sync:** Every CLI command change in `pyproject.toml` MUST be reflected in `README.md`.
 - **Proactivity:** Evaluate decisions for **Business Risk**. If a user asks for a feature that increases risk (e.g., removing Stop Loss), push back and provide a safer alternative.
 - **Minimalist Code:** Avoid "noisy" comments. Code should be self-documenting. Use comments only for complex algorithmic logic.
+- **Observability Gate:** Every live-trading behavior change MUST add or update structured logs, metrics, and traces for each lifecycle event it introduces. Logs must use normal `logger.info(...)`-style structured fields through the existing observability/instrumentation layer, with stable `log_type`, `strategy`, `symbol`, `trade_id`, `order_id`, `result`, and `reason` fields where applicable. Metrics must be queryable in Prometheus with bounded labels. If Grafana cannot answer "did this lifecycle event happen, for which symbol/strategy/trade, and with what result?", the change is incomplete.
+- **Exit Lifecycle Signals:** Entry, exit-order submission, stop replacement, profit-runner activation, exit-order cancellation, order rejection/failure, position open, and position close are non-optional observability events. New exit behavior must include Loki-friendly `log_type` values and Prometheus counters before it is considered production-ready.
 - **Commit Gate:** Always ask the user for permission before running `git commit`. Never auto-commit.
 
 ---

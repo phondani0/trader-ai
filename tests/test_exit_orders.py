@@ -152,6 +152,34 @@ def test_submit_pending_exit_orders_does_not_submit_take_profit_order_by_default
     owner.submit_order.assert_called_once_with(handles.stop_order)
 
 
+def test_submit_pending_exit_orders_emits_exit_order_submitted_event(monkeypatch):
+    owner = FakeOwner()
+    exit_order_submitted = Mock()
+    monkeypatch.setattr(
+        "trader_ai.execution.exit_orders.execution_instrumentation.exit_order_submitted",
+        exit_order_submitted,
+    )
+    record_exit_order_request(
+        owner=owner,
+        entry_order=SimpleNamespace(client_order_id="O-entry"),
+        request=_request(),
+    )
+
+    handles = submit_pending_exit_orders(owner=owner, trade_id="T-1")
+
+    exit_order_submitted.assert_called_once_with(
+        strategy="adaptive_trend_rider",
+        symbol="ETH/USDT:USDT",
+        side="SELL",
+        trade_id="T-1",
+        order_id=str(handles.stop_order.client_order_id),
+        order_role="stop",
+        quantity=0.0,
+        price=95.0,
+        result="submitted",
+    )
+
+
 def test_submit_pending_exit_orders_reuses_existing_tagged_orders():
     stop = SimpleNamespace(
         client_order_id="O-existing-stop",
@@ -206,6 +234,42 @@ def test_replace_exit_stop_if_improved_submits_new_stop_then_cancels_old_stop():
     assert str(owner._exit_orders_by_trade_id["T-1"].stop_order.client_order_id) in owner._exit_order_trade_ids
 
 
+def test_replace_exit_stop_if_improved_emits_stop_replaced_event(monkeypatch):
+    owner = FakeOwner()
+    exit_stop_replaced = Mock()
+    monkeypatch.setattr(
+        "trader_ai.execution.exit_orders.execution_instrumentation.exit_stop_replaced",
+        exit_stop_replaced,
+    )
+    record_exit_order_request(
+        owner=owner,
+        entry_order=SimpleNamespace(client_order_id="O-entry"),
+        request=_request(),
+    )
+    handles = submit_pending_exit_orders(owner=owner, trade_id="T-1")
+
+    replaced = replace_exit_stop_if_improved(
+        owner=owner,
+        trade_id="T-1",
+        stop_price=Decimal("97"),
+        min_improvement_bps=10,
+    )
+
+    assert replaced is True
+    exit_stop_replaced.assert_called_once_with(
+        strategy="adaptive_trend_rider",
+        symbol="ETH/USDT:USDT",
+        side="SELL",
+        trade_id="T-1",
+        old_order_id=str(handles.stop_order.client_order_id),
+        new_order_id=str(owner._exit_orders_by_trade_id["T-1"].stop_order.client_order_id),
+        quantity=0.0,
+        previous_stop_price=95.0,
+        new_stop_price=97.0,
+        result="replaced",
+    )
+
+
 def test_activate_profit_runner_moves_stop_to_locked_profit_after_activation_price():
     owner = FakeOwner()
     record_exit_order_request(
@@ -240,6 +304,40 @@ def test_activate_profit_runner_moves_stop_to_locked_profit_after_activation_pri
     )
     owner.cancel_order.assert_called_once_with(old_stop)
     assert owner._exit_orders_by_trade_id["T-1"].profit_runner_active is True
+
+
+def test_activate_profit_runner_emits_activation_event(monkeypatch):
+    owner = FakeOwner()
+    profit_runner_activated = Mock()
+    monkeypatch.setattr(
+        "trader_ai.execution.exit_orders.execution_instrumentation.profit_runner_activated",
+        profit_runner_activated,
+    )
+    record_exit_order_request(
+        owner=owner,
+        entry_order=SimpleNamespace(client_order_id="O-entry"),
+        request=_request(entry_price=Decimal("100"), stop_price=Decimal("95")),
+    )
+    submit_pending_exit_orders(owner=owner, trade_id="T-1")
+
+    activated = activate_profit_runner_if_ready(
+        owner=owner,
+        trade_id="T-1",
+        latest_price=Decimal("110"),
+        min_improvement_bps=10,
+    )
+
+    assert activated is True
+    profit_runner_activated.assert_called_once_with(
+        strategy="adaptive_trend_rider",
+        symbol="ETH/USDT:USDT",
+        side="BUY",
+        trade_id="T-1",
+        latest_price=110.0,
+        activation_price=110.0,
+        locked_stop_price=102.5,
+        result="activated",
+    )
 
 
 def test_activate_profit_runner_waits_until_activation_price_is_crossed():
@@ -360,4 +458,45 @@ def test_cancel_exit_orders_cancels_both_exit_orders():
     assert owner.cancel_order.call_args_list == [
         call(handles.stop_order),
         call(handles.take_profit_order),
+    ]
+
+
+def test_cancel_exit_orders_emits_canceled_events(monkeypatch):
+    owner = FakeOwner()
+    exit_order_canceled = Mock()
+    monkeypatch.setattr(
+        "trader_ai.execution.exit_orders.execution_instrumentation.exit_order_canceled",
+        exit_order_canceled,
+    )
+    record_exit_order_request(
+        owner=owner,
+        entry_order=SimpleNamespace(client_order_id="O-entry"),
+        request=_request(take_profit_order_enabled=True),
+    )
+    handles = submit_pending_exit_orders(owner=owner, trade_id="T-1")
+
+    cancelled = cancel_exit_orders(owner=owner, trade_id="T-1")
+
+    assert cancelled is True
+    assert exit_order_canceled.call_args_list == [
+        call(
+            strategy="adaptive_trend_rider",
+            symbol="ETH/USDT:USDT",
+            side="SELL",
+            trade_id="T-1",
+            order_id=str(handles.stop_order.client_order_id),
+            order_role="stop",
+            reason="trade_exit_cleanup",
+            result="canceled",
+        ),
+        call(
+            strategy="adaptive_trend_rider",
+            symbol="ETH/USDT:USDT",
+            side="SELL",
+            trade_id="T-1",
+            order_id=str(handles.take_profit_order.client_order_id),
+            order_role="take_profit",
+            reason="trade_exit_cleanup",
+            result="canceled",
+        ),
     ]
