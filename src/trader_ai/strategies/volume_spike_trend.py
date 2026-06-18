@@ -41,9 +41,9 @@ class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     rsi_long_high: float = 0.75
     rsi_short_low: float = 0.25
     rsi_short_high: float = 0.50
-    initial_stop_atr_mult: float = 1.5
-    trailing_stop_atr_mult: float = 2.0
-    trailing_activation_atr_mult: float = 2.0
+    initial_stop_atr_mult: float = 3.0
+    trailing_stop_atr_mult: float = 3.5
+    trailing_activation_atr_mult: float = 4.0
     max_hold_bars: int = 288
     cooldown_bars: int = 12
     use_discovery_journal: bool = False
@@ -53,10 +53,10 @@ class VolumeSpikeTrendConfig(StrategyConfig, frozen=True):
     take_profit_order_enabled: bool = False
     take_profit_r_multiple: Decimal = Decimal("2.0")
     profit_runner_enabled: bool = True
-    profit_runner_activation_r_multiple: Decimal = Decimal("2.0")
-    profit_runner_stop_lock_r_multiple: Decimal = Decimal("0.5")
+    profit_runner_activation_r_multiple: Decimal = Decimal("3.0")
+    profit_runner_stop_lock_r_multiple: Decimal = Decimal("0.25")
     trailing_stop_enabled: bool = True
-    trailing_replace_min_bps: int = 25
+    trailing_replace_min_bps: int = 50
     warmup_diagnostics: bool = True
     warmup_log_interval_bars: int = 10
     decision_diagnostics: bool = True
@@ -135,9 +135,7 @@ class _RuntimeVolumeContext:
             self._evaluate_entry(bar)
 
     def on_exit_bar(self, bar: Bar) -> None:
-        if self._position_side is None:
-            return
-        self._manage_position(bar, count_hold_bar=False)
+        return
 
     def _handle_indicators(self, bar: Bar) -> None:
         self.fast_ema.handle_bar(bar)
@@ -240,14 +238,14 @@ class _RuntimeVolumeContext:
             self._best_price = min(self._best_price, low)
 
         if self._position_side == OrderSide.BUY and low <= self._stop_price:
-            self._close_and_reset()
+            self._close_and_reset("stop_hit")
             return
         if self._position_side == OrderSide.SELL and high >= self._stop_price:
-            self._close_and_reset()
+            self._close_and_reset("stop_hit")
             return
 
         if self._bars_in_position >= self.config.max_hold_bars:
-            self._close_and_reset()
+            self._close_and_reset("max_hold")
             return
 
         activation_distance = self.config.trailing_activation_atr_mult * self._entry_atr
@@ -277,7 +275,17 @@ class _RuntimeVolumeContext:
             min_improvement_bps=self.config.trailing_replace_min_bps,
         )
 
-    def _close_and_reset(self) -> None:
+    def _close_and_reset(self, reason: str) -> None:
+        execution_instrumentation.position_close_requested(
+            strategy="volume_spike_trend",
+            symbol=self.ccxt_symbol or str(self.instrument_id),
+            side=self._position_side.name if self._position_side is not None else "UNKNOWN",
+            trade_id=getattr(self, "_current_trade_id", ""),
+            reason=reason,
+            entry_price=self._entry_price,
+            stop_price=self._stop_price,
+            bars_in_position=self._bars_in_position,
+        )
         cancel_exit_orders(
             owner=self.parent,
             trade_id=getattr(self, "_current_trade_id", ""),
@@ -398,8 +406,6 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
             bar.bar_type == getattr(self, "_exit_bar_type", None)
             and self._exit_bar_type != self.config.bar_type
         ):
-            if self._position_side is not None:
-                self._manage_position(bar, count_hold_bar=False)
             return
 
         runtime_exit_context = self._runtime_exit_contexts.get(bar.bar_type)
@@ -676,15 +682,15 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
 
         # Stop check
         if self._position_side == OrderSide.BUY and low <= self._stop_price:
-            self._close_and_reset()
+            self._close_and_reset("stop_hit")
             return
         if self._position_side == OrderSide.SELL and high >= self._stop_price:
-            self._close_and_reset()
+            self._close_and_reset("stop_hit")
             return
 
         # Max hold
         if self._bars_in_position >= self.config.max_hold_bars:
-            self._close_and_reset()
+            self._close_and_reset("max_hold")
             return
 
         # Trailing activation
@@ -719,7 +725,17 @@ class VolumeSpikeTrendStrategy(ExecutionObserverMixin, Strategy):
             min_improvement_bps=self.config.trailing_replace_min_bps,
         )
 
-    def _close_and_reset(self):
+    def _close_and_reset(self, reason: str):
+        execution_instrumentation.position_close_requested(
+            strategy="volume_spike_trend",
+            symbol=self.config.ccxt_symbol or str(self.config.instrument_id),
+            side=self._position_side.name if self._position_side is not None else "UNKNOWN",
+            trade_id=getattr(self, "_current_trade_id", ""),
+            reason=reason,
+            entry_price=self._entry_price,
+            stop_price=self._stop_price,
+            bars_in_position=self._bars_in_position,
+        )
         cancel_exit_orders(
             owner=self,
             trade_id=getattr(self, "_current_trade_id", ""),

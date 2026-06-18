@@ -592,6 +592,38 @@ class ExecutionInstrumentation:
             },
         )
 
+    def position_close_requested(
+        self,
+        *,
+        strategy: str,
+        symbol: str,
+        side: str,
+        trade_id: str,
+        reason: str,
+        **fields: Any,
+    ) -> None:
+        self._emit(
+            message="Trade position close requested",
+            span_name="position.close.request",
+            log_type="trade.position.close_requested",
+            counter_name="trader_position_close_requests_total",
+            counter_labels={
+                "strategy": strategy,
+                "symbol": symbol,
+                "side": side,
+                "reason": reason,
+            },
+            fields={
+                "strategy": strategy,
+                "symbol": symbol,
+                "side": side,
+                "trade_id": trade_id,
+                "reason": reason,
+                "result": "requested",
+                **fields,
+            },
+        )
+
     def position_closed(
         self,
         *,

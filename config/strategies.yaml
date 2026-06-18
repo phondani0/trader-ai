@@ -20,14 +20,17 @@ adaptive_trend_rider:
     fast_ema_period: 10
     slow_ema_period: 20
     max_hold_bars: 288
-    trade_notional_usdt: "150"
+    trade_notional_usdt: "250"
+    initial_stop_atr_mult: 3.0
+    trailing_activation_atr_mult: 4.0
+    trailing_stop_atr_mult: 3.5
     take_profit_order_enabled: false
     take_profit_r_multiple: "2.0"
     profit_runner_enabled: true
-    profit_runner_activation_r_multiple: "2.0"
-    profit_runner_stop_lock_r_multiple: "0.5"
+    profit_runner_activation_r_multiple: "3.0"
+    profit_runner_stop_lock_r_multiple: "0.25"
     trailing_stop_enabled: true
-    trailing_replace_min_bps: 25
+    trailing_replace_min_bps: 50
     warmup_diagnostics: true
     warmup_log_interval_bars: 10
     decision_diagnostics: true
@@ -52,14 +55,17 @@ volume_spike_trend:
   params:
     volume_multiplier: 3.0
     max_hold_bars: 288
-    trade_notional_usdt: "150"
+    trade_notional_usdt: "250"
+    initial_stop_atr_mult: 3.0
+    trailing_activation_atr_mult: 4.0
+    trailing_stop_atr_mult: 3.5
     take_profit_order_enabled: false
     take_profit_r_multiple: "2.0"
     profit_runner_enabled: true
-    profit_runner_activation_r_multiple: "2.0"
-    profit_runner_stop_lock_r_multiple: "0.5"
+    profit_runner_activation_r_multiple: "3.0"
+    profit_runner_stop_lock_r_multiple: "0.25"
     trailing_stop_enabled: true
-    trailing_replace_min_bps: 25
+    trailing_replace_min_bps: 50
     warmup_diagnostics: true
     warmup_log_interval_bars: 10
     decision_diagnostics: true
@@ -83,14 +89,17 @@ squeeze_breakout:
       - XAUT/USDT:USDT
   params:
     max_hold_bars: 288
-    trade_notional_usdt: "150"
+    trade_notional_usdt: "250"
+    initial_stop_atr_mult: 3.0
+    trailing_activation_atr_mult: 4.0
+    trailing_stop_atr_mult: 3.5
     take_profit_order_enabled: false
     take_profit_r_multiple: "2.0"
     profit_runner_enabled: true
-    profit_runner_activation_r_multiple: "2.0"
-    profit_runner_stop_lock_r_multiple: "0.5"
+    profit_runner_activation_r_multiple: "3.0"
+    profit_runner_stop_lock_r_multiple: "0.25"
     trailing_stop_enabled: true
-    trailing_replace_min_bps: 25
+    trailing_replace_min_bps: 50
 
 demo_ema_cross:
   enabled: true
@@ -110,11 +119,14 @@ demo_ema_cross:
       - XAUT/USDT:USDT
   params:
     max_hold_bars: 288
-    trade_notional_usdt: "150"
+    trade_notional_usdt: "250"
+    initial_stop_atr_mult: 3.0
+    trailing_activation_atr_mult: 4.0
+    trailing_stop_atr_mult: 3.5
     take_profit_order_enabled: false
     take_profit_r_multiple: "2.0"
     profit_runner_enabled: true
-    profit_runner_activation_r_multiple: "2.0"
-    profit_runner_stop_lock_r_multiple: "0.5"
+    profit_runner_activation_r_multiple: "3.0"
+    profit_runner_stop_lock_r_multiple: "0.25"
     trailing_stop_enabled: true
-    trailing_replace_min_bps: 25
+    trailing_replace_min_bps: 50

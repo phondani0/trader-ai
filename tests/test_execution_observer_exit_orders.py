@@ -60,3 +60,31 @@ def test_position_changed_submits_pending_exit_orders(monkeypatch):
     )
 
     submit_pending.assert_called_once_with(owner=observer, trade_id="T-1")
+
+
+def test_entry_order_fill_submits_pending_exit_orders(monkeypatch):
+    observer = FakeExecutionObserver()
+    observer._order_trade_ids = {"O-entry": "T-1"}
+    order_filled = Mock()
+    submit_pending = Mock()
+    monkeypatch.setattr(
+        "trader_ai.execution.observer.execution_instrumentation.order_filled",
+        order_filled,
+    )
+    monkeypatch.setattr(
+        "trader_ai.execution.observer.submit_pending_exit_orders",
+        submit_pending,
+    )
+
+    observer.on_order_filled(
+        SimpleNamespace(
+            client_order_id="O-entry",
+            venue_order_id="V-entry",
+            order_side=OrderSide.BUY,
+            position_id="P-1",
+            last_qty=1,
+            last_px=100,
+        )
+    )
+
+    submit_pending.assert_called_once_with(owner=observer, trade_id="T-1")

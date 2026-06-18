@@ -18,6 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
+analyze-bybit-orders = "trader_ai.cli.analyze_bybit_orders:main"
 backtest = "trader_ai.cli.backtest:main"
 benchmark = "trader_ai.cli.benchmark:main"
 compare-strategies = "trader_ai.cli.compare_strategies:main"

@@ -40,3 +40,18 @@ def test_every_strategy_records_signal_generation_before_opening_position():
             )
 
     assert not missing
+
+
+def test_every_strategy_records_internal_position_close_request_reason():
+    missing = []
+    for strategy_file in STRATEGY_FILES:
+        source = strategy_file.read_text(encoding="utf-8")
+        close_methods = source.count("def _close_and_reset")
+        close_request_calls = source.count("execution_instrumentation.position_close_requested")
+        if close_request_calls < close_methods:
+            missing.append(
+                f"{strategy_file.relative_to(PROJECT_ROOT)} "
+                f"has {close_request_calls} close request instrumentation calls for {close_methods} close methods"
+            )
+
+    assert not missing

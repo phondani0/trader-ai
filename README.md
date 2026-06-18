@@ -15,6 +15,8 @@ uv sync
 Run everything from the repo root.
 
 ```bash
+uv run analyze-bybit-orders --since-hours 72
+uv run analyze-bybit-orders --since-hours 72 --fail-unprotected-positions
 uv run backtest --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/btc_backtest
 uv run benchmark
 uv run compare-strategies --instrument btcusdt_perp_binance --data-source ccxt --strategies volume_spike_trend nautilus_ema_cross demo_ema_cross --output-dir output/compare_btc
@@ -28,6 +30,7 @@ uv run start --instrument btcusdt_perp_binance --strategy volume_spike_trend --d
 
 Command roles:
 
+- `analyze-bybit-orders`: read-only Bybit positions/orders/fills/closed-PnL diagnostics from `.env`
 - `backtest`: one strategy on one instrument
 - `benchmark`: default comparison run for the core strategy set
 - `compare-strategies`: compare multiple strategies on one instrument
@@ -36,6 +39,10 @@ Command roles:
 - `parameter-sweep`: grid search one strategy over EMA periods
 - `walk-forward`: generate rolling train/test windows from bar CSVs
 - `papertrade` and `start`: generate the paper-trading bootstrap manifest and env template
+
+For Bybit diagnostics, `analyze-bybit-orders` is read-only and loads `.env`.
+Paper mode defaults to Bybit demo REST. Use `--account-mode testnet` only for testnet keys.
+Use `--fail-unprotected-positions` after deploys to fail fast when any open position lacks a visible reduce-only stop/trigger order.
 
 ## Integration Smoke
 

@@ -62,6 +62,7 @@ class ExecutionObserverMixin:
             fill_price=_event_float(event, "last_px"),
         )
         cancel_sibling_exit_order(owner=self, filled_order_id=_order_id(event))
+        self._submit_pending_exit_orders(event)
 
     def on_position_opened(self, event: Any) -> None:
         execution_instrumentation.position_opened(
