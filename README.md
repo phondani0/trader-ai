@@ -44,6 +44,14 @@ For Bybit diagnostics, `analyze-bybit-orders` is read-only and loads `.env`.
 Paper mode defaults to Bybit demo REST. Use `--account-mode testnet` only for testnet keys.
 Use `--fail-unprotected-positions` after deploys to fail fast when any open position lacks a visible reduce-only stop/trigger order.
 
+Recommended post-deploy safety check:
+
+```bash
+uv run analyze-bybit-orders --since-hours 72 --limit 200 --fail-unprotected-positions
+```
+
+Exit code `2` means at least one open position is unprotected. Stop trading or close/reconcile that position before trusting the account state.
+
 ## Integration Smoke
 
 Use the local simulator smoke after runtime activation or scanner changes:
@@ -161,6 +169,28 @@ When the live node starts, it reconciles the exchange reality (Open Positions vi
 - 🚧 **Unmanaged Position Guard:** If an open exchange position has no matching SQLite record, the symbol is blocked from new entries and logged for review. The bot will not automatically manage or close positions it cannot prove it owns.
 
 *The trading gate will refuse all new entries until the `PositionRecoveryService` completes its audit on startup.*
+
+Current safety boundary:
+
+- New entries submit protection after the entry `OrderFilled` event, because this event reliably carries the original entry `client_order_id`.
+- `PositionOpened`/`PositionChanged` events are fallback signals only; they may identify the position but not the entry order.
+- Existing positions opened before this protection flow may remain unprotected and must be checked with `analyze-bybit-orders --fail-unprotected-positions`.
+- Hydrated/recovered positions restore strategy memory and submit/ensure exchange-side reduce-only stop protection on strategy start.
+- If an exchange position was partially closed while the bot was offline, recovery hydrates the reconciled exchange quantity so the protective order size matches the actual open position.
+
+The required lifecycle test shape for exit-order changes is:
+
+```text
+entry order submitted
+entry OrderFilled with client_order_id
+reduce-only stop/trigger order submitted
+PositionOpened/PositionChanged may arrive with only position_id
+no duplicate protection order is created
+restart recovery hydrates exchange quantity
+strategy on_start ensures recovered-position protection
+```
+
+Do not accept a change that only tests the helper creating stop orders; it must simulate this lifecycle for every affected strategy/runtime path.
 
 ## Layout
 

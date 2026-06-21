@@ -141,6 +141,7 @@ def submit_exit_orders_after_entry(
             trade_id=request.trade_id,
             order_role="exit_orders",
             reason=exc.__class__.__name__,
+            error=str(exc),
             result="error",
             instrument_id=str(request.instrument_id),
             stop_price=float(request.stop_price),
@@ -149,6 +150,7 @@ def submit_exit_orders_after_entry(
         execution_instrumentation.runtime_error(
             component="exit_orders",
             reason=exc.__class__.__name__,
+            error=str(exc),
             strategy=request.strategy_name,
             symbol=request.symbol,
             trade_id=request.trade_id,
@@ -457,7 +459,7 @@ def _find_existing_exit_order(
         return None
 
     for order in cache.orders_open(instrument_id=instrument_id):
-        if not bool(getattr(order, "reduce_only", False)):
+        if not _order_is_reduce_only(order):
             continue
         order_type = getattr(getattr(order, "order_type", None), "name", "")
         if order_type not in order_types:
@@ -466,6 +468,15 @@ def _find_existing_exit_order(
         if tag in tags and f"trade_id={trade_id}" in tags:
             return order
     return None
+
+
+def _order_is_reduce_only(order: Any) -> bool:
+    for attr_name in ("reduce_only", "is_reduce_only", "would_reduce_only"):
+        value = getattr(order, attr_name, None)
+        if value is None:
+            continue
+        return bool(value() if callable(value) else value)
+    return False
 
 
 def _is_stop_improved(

@@ -13,13 +13,18 @@ from nautilus_trader.model.identifiers import InstrumentId
 from trader_ai.execution.exit_orders import EXIT_STOP_TAG
 from trader_ai.execution.exit_orders import submit_pending_exit_orders
 from trader_ai.execution.observer import ExecutionObserverMixin
+from trader_ai.execution.recovery import StrategyPositionState
 from trader_ai.strategies.adaptive_trend_rider import AdaptiveTrendRiderConfig
+from trader_ai.strategies.adaptive_trend_rider import AdaptiveTrendRiderStrategy
 from trader_ai.strategies.adaptive_trend_rider import _RuntimeSymbolContext
 from trader_ai.strategies.macd_demo import DemoEMACrossConfig
+from trader_ai.strategies.macd_demo import DemoEMACrossStrategy
 from trader_ai.strategies.macd_demo import _RuntimeDemoEMAContext
 from trader_ai.strategies.squeeze_breakout import SqueezeBreakoutConfig
+from trader_ai.strategies.squeeze_breakout import SqueezeBreakoutStrategy
 from trader_ai.strategies.squeeze_breakout import _RuntimeSqueezeContext
 from trader_ai.strategies.volume_spike_trend import VolumeSpikeTrendConfig
+from trader_ai.strategies.volume_spike_trend import VolumeSpikeTrendStrategy
 from trader_ai.strategies.volume_spike_trend import _RuntimeVolumeContext
 
 
@@ -223,6 +228,58 @@ def test_runtime_context_trade_lifecycle_submits_protection_once_when_position_e
     ]
     assert parent._exit_order_requests == {}
     parent.close_all_positions.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("strategy_cls", "config_cls", "strategy_name"),
+    [
+        (AdaptiveTrendRiderStrategy, AdaptiveTrendRiderConfig, "adaptive_trend_rider"),
+        (VolumeSpikeTrendStrategy, VolumeSpikeTrendConfig, "volume_spike_trend"),
+        (SqueezeBreakoutStrategy, SqueezeBreakoutConfig, "squeeze_breakout"),
+        (DemoEMACrossStrategy, DemoEMACrossConfig, "demo_ema_cross"),
+    ],
+)
+def test_recovered_strategy_position_submits_protection_on_start(
+    monkeypatch,
+    strategy_cls,
+    config_cls,
+    strategy_name,
+):
+    instrument_id = InstrumentId.from_str("ETHUSDT-LINEAR.BYBIT")
+    bar_type = BarType.from_str("ETHUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL")
+    config = config_cls(
+        instrument_id=instrument_id,
+        bar_type=bar_type,
+        trade_size=Decimal("1.0"),
+        trade_notional_usdt=Decimal("250"),
+    )
+    strategy = strategy_cls(config)
+
+    monkeypatch.setattr(strategy, "register_indicator_for_bars", Mock())
+    monkeypatch.setattr(strategy, "subscribe_bars", Mock())
+    ensure_recovered_exit_orders = Mock()
+    monkeypatch.setattr(strategy, "_ensure_recovered_exit_orders", ensure_recovered_exit_orders)
+    strategy.hydrate_position(
+        StrategyPositionState(
+            strategy_name=strategy_name,
+            symbol="ETH/USDT:USDT",
+            instrument_id=str(instrument_id),
+            position_id="T-recovered",
+            trade_id="T-recovered",
+            side="SELL",
+            quantity=Decimal("0.08"),
+            entry_price=Decimal("1751.58"),
+            entry_atr=Decimal("14"),
+            stop_price=Decimal("1800"),
+            best_price=Decimal("1706.35"),
+            trailing_active=False,
+            bars_in_position=3,
+        )
+    )
+
+    strategy.on_start()
+
+    ensure_recovered_exit_orders.assert_called_once_with()
 
 
 @pytest.mark.parametrize(

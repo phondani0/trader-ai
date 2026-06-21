@@ -21,6 +21,7 @@ from trader_ai.execution.exit_orders import activate_profit_runner_if_ready
 from trader_ai.execution.exit_orders import cancel_exit_orders
 from trader_ai.execution.exit_orders import record_exit_order_request
 from trader_ai.execution.exit_orders import replace_exit_stop_if_improved
+from trader_ai.execution.exit_orders import submit_exit_orders_after_entry
 from trader_ai.execution.instrumentation import execution_instrumentation
 from trader_ai.execution.observer import ExecutionObserverMixin
 from trader_ai.execution.recovery import StrategyPositionState
@@ -54,6 +55,7 @@ class _RuntimeSymbolContext:
         self._prev_trend: int = 0
         self._position_side: OrderSide | None = None
         self._entry_price: float = 0.0
+        self._position_quantity: float = 0.0
         self._best_price: float = 0.0
         self._stop_price: float = 0.0
         self._trailing_active: bool = False
@@ -446,6 +448,7 @@ class AdaptiveTrendRiderStrategy(ExecutionObserverMixin, Strategy):
         self._exit_bar_type = exit_management_bar_type(self.config.bar_type)
         if self._exit_bar_type != self.config.bar_type:
             self.subscribe_bars(self._exit_bar_type)
+        self._ensure_recovered_exit_orders()
 
     def on_bar(self, bar: Bar):
         if (
@@ -829,6 +832,7 @@ class AdaptiveTrendRiderStrategy(ExecutionObserverMixin, Strategy):
     def _reset_position_state(self):
         self._position_side = None
         self._entry_price = 0.0
+        self._position_quantity = 0.0
         self._best_price = 0.0
         self._stop_price = 0.0
         self._entry_atr = 0.0
@@ -855,6 +859,7 @@ class AdaptiveTrendRiderStrategy(ExecutionObserverMixin, Strategy):
 
         self._current_trade_id = state.trade_id
         self._entry_price = state.entry_price
+        self._position_quantity = state.quantity
         self._best_price = state.best_price
         self._stop_price = state.stop_price
         self._entry_atr = state.entry_atr
@@ -884,7 +889,7 @@ class AdaptiveTrendRiderStrategy(ExecutionObserverMixin, Strategy):
             position_id=trade_id,
             trade_id=trade_id,
             side=self._position_side.name if hasattr(self._position_side, "name") else str(self._position_side),
-            quantity=0.0,
+            quantity=self._position_quantity,
             entry_price=self._entry_price,
             entry_atr=self._entry_atr,
             stop_price=self._stop_price,
@@ -896,6 +901,37 @@ class AdaptiveTrendRiderStrategy(ExecutionObserverMixin, Strategy):
                 "trend_bars": self._trend_bars,
                 "prev_trend": self._prev_trend,
             },
+        )
+
+    def _ensure_recovered_exit_orders(self) -> None:
+        if (
+            self._position_side is None
+            or self._position_quantity <= 0
+            or self._entry_price <= 0
+            or self._stop_price <= 0
+        ):
+            return
+        instrument = self.cache.instrument(self.config.instrument_id)
+        quantity = instrument.make_qty(Decimal(str(self._position_quantity)))
+        submit_exit_orders_after_entry(
+            owner=self,
+            request=ExitOrderRequest(
+                instrument=instrument,
+                instrument_id=self.config.instrument_id,
+                position_side=self._position_side,
+                quantity=quantity,
+                entry_price=Decimal(str(self._entry_price)),
+                stop_price=Decimal(str(self._stop_price)),
+                strategy_name=self.execution_strategy_name,
+                symbol=self.config.ccxt_symbol or str(self.config.instrument_id),
+                trade_id=getattr(self, "_current_trade_id", "unknown"),
+                take_profit_order_enabled=self.config.take_profit_order_enabled,
+                take_profit_r_multiple=self.config.take_profit_r_multiple,
+                profit_runner_enabled=self.config.profit_runner_enabled,
+                profit_runner_activation_r_multiple=self.config.profit_runner_activation_r_multiple,
+                profit_runner_stop_lock_r_multiple=self.config.profit_runner_stop_lock_r_multiple,
+            ),
+            on_failure=lambda: self.close_all_positions(self.config.instrument_id),
         )
 
     def _order_quantity(self, instrument, price: Decimal):

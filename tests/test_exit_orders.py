@@ -209,6 +209,64 @@ def test_submit_pending_exit_orders_reuses_existing_tagged_orders():
     owner.submit_order.assert_not_called()
 
 
+def test_submit_pending_exit_orders_reuses_existing_nautilus_reduce_only_orders():
+    stop = SimpleNamespace(
+        client_order_id="O-existing-stop",
+        order_type=SimpleNamespace(name="STOP_MARKET"),
+        is_reduce_only=True,
+        tags=["EXIT_STOP", "trade_id=T-1"],
+    )
+    take_profit = SimpleNamespace(
+        client_order_id="O-existing-tp",
+        order_type=SimpleNamespace(name="LIMIT"),
+        is_reduce_only=True,
+        tags=["EXIT_TAKE_PROFIT", "trade_id=T-1"],
+    )
+    owner = FakeOwner([stop, take_profit])
+    record_exit_order_request(
+        owner=owner,
+        entry_order=SimpleNamespace(client_order_id="O-entry"),
+        request=_request(take_profit_order_enabled=True),
+    )
+
+    handles = submit_pending_exit_orders(owner=owner, trade_id="T-1")
+
+    assert handles.stop_order is stop
+    assert handles.take_profit_order is take_profit
+    owner.order_factory.stop_market.assert_not_called()
+    owner.order_factory.limit.assert_not_called()
+    owner.submit_order.assert_not_called()
+
+
+def test_submit_pending_exit_orders_logs_full_error_message_on_failure(monkeypatch):
+    owner = FakeOwner()
+    owner.order_factory.stop_market.side_effect = TypeError("invalid stop order call")
+    exit_order_failed = Mock()
+    runtime_error = Mock()
+    monkeypatch.setattr(
+        "trader_ai.execution.exit_orders.execution_instrumentation.exit_order_failed",
+        exit_order_failed,
+    )
+    monkeypatch.setattr(
+        "trader_ai.execution.exit_orders.execution_instrumentation.runtime_error",
+        runtime_error,
+    )
+    record_exit_order_request(
+        owner=owner,
+        entry_order=SimpleNamespace(client_order_id="O-entry"),
+        request=_request(),
+    )
+
+    handles = submit_pending_exit_orders(owner=owner, trade_id="T-1")
+
+    assert handles is None
+    owner.close_all_positions.assert_called_once_with("ETHUSDT-LINEAR.BYBIT")
+    assert exit_order_failed.call_args.kwargs["reason"] == "TypeError"
+    assert exit_order_failed.call_args.kwargs["error"] == "invalid stop order call"
+    assert runtime_error.call_args.kwargs["reason"] == "TypeError"
+    assert runtime_error.call_args.kwargs["error"] == "invalid stop order call"
+
+
 def test_replace_exit_stop_if_improved_submits_new_stop_then_cancels_old_stop():
     owner = FakeOwner()
     record_exit_order_request(

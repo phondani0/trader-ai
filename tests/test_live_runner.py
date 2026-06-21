@@ -48,6 +48,7 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
 
     def test_discovery_timer_callback_accepts_nautilus_time_event(self):
         scanner = Mock()
+        scanner.scan_for_momentum.return_value = []
 
         with patch.object(live, "_scanner", scanner):
             live._trigger_discovery_scan(object())
@@ -76,6 +77,27 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             "trader_scanner_duration_seconds",
         )
         tracer.start_as_current_span.assert_called_once_with("scanner.discovery")
+
+    def test_discovery_timer_logs_completed_candidate_count(self):
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "FARTCOIN/USDT:USDT"},
+            {"symbol": "NEAR/USDT:USDT"},
+        ]
+
+        with (
+            patch.object(live, "_scanner", scanner),
+            patch.object(live, "_runtime_node", None),
+            patch.object(live, "logger") as logger,
+        ):
+            live._trigger_discovery_scan(object())
+
+        logger.info.assert_any_call(
+            "MarketScanner discovery completed",
+            log_type="scanner.discovery.completed",
+            candidate_count=2,
+            symbols="FARTCOIN/USDT:USDT, NEAR/USDT:USDT",
+        )
 
     def test_journal_timer_callback_accepts_nautilus_time_event(self):
         journal = Mock()
@@ -397,6 +419,41 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             },
         )
         tracer.start_as_current_span.assert_called()
+
+    def test_activate_runtime_scanner_symbols_logs_selection_skip_reason(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "FARTCOIN/USDT:USDT", "score": 8.0, "volume_24h": 340_000_000},
+        ]
+        node = Mock()
+        node.is_running = True
+        runtime_strategy = Mock()
+        active_symbols = {"BTC/USDT:USDT"}
+
+        with patch.object(live, "logger") as logger:
+            components = live.activate_runtime_scanner_symbols(
+                settings=settings,
+                scanner=scanner,
+                node=node,
+                active_symbols=active_symbols,
+                runtime_strategy=runtime_strategy,
+            )
+
+        self.assertEqual(components, [])
+        runtime_strategy.activate_component.assert_not_called()
+        logger.info.assert_any_call(
+            "Runtime scanner activation skipped",
+            log_type="runtime.activation.skipped",
+            reason="no_symbols_selected",
+            strategy="adaptive_trend_rider",
+            candidate_count=1,
+            selected_count=0,
+            active_symbol_count=1,
+            min_score=10.0,
+            min_24h_volume=50_000_000.0,
+            max_symbols=5,
+        )
 
     def test_restart_recovery_injects_db_owned_component_and_hydrates_strategy(self):
         settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")

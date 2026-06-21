@@ -146,6 +146,8 @@ class PositionRecoveryServiceTest(unittest.TestCase):
         decisions = self.service.reconcile(exchange, db)
 
         self.assertEqual(decisions[0].action, "recover")
+        self.assertIsNotNone(decisions[0].db_state)
+        self.assertEqual(decisions[0].db_state.quantity, 0.05)
         self.assertNotIn("BTC/USDT:USDT", self.service.blocked_symbols)
 
     def test_is_entry_allowed_before_reconciliation(self):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Any
 
 from trader_ai.core.database import DatabaseManager
@@ -330,12 +331,18 @@ class PositionRecoveryService:
                 db_state=db_pos,
             )
 
+        recovered_state = replace(
+            db_pos,
+            quantity=exchange_pos.quantity,
+            entry_price=exchange_pos.avg_entry_price or db_pos.entry_price,
+        )
+
         return ReconciliationDecision(
             symbol=exchange_pos.symbol,
             action="recover",
             reason="matching_position",
             exchange_snapshot=exchange_pos,
-            db_state=db_pos,
+            db_state=recovered_state,
         )
 
     def _apply_decision(

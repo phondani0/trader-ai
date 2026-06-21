@@ -79,6 +79,16 @@ def _trigger_discovery_scan(_event: object | None = None) -> None:
                     log_type="scanner.discovery.started",
                 )
                 candidates = _scanner.scan_for_momentum()
+                logger.info(
+                    "MarketScanner discovery completed",
+                    log_type="scanner.discovery.completed",
+                    candidate_count=len(candidates),
+                    symbols=", ".join(
+                        str(candidate.get("symbol"))
+                        for candidate in candidates
+                        if candidate.get("symbol")
+                    ),
+                )
                 if _runtime_node is not None and _runtime_settings is not None:
                     activate_runtime_scanner_symbols(
                         settings=_runtime_settings,
@@ -466,6 +476,13 @@ def activate_runtime_scanner_symbols(
         strategy_map.setdefault("adaptive_trend_rider", runtime_strategy)
 
     if not strategy_map:
+        logger.info(
+            "Runtime scanner activation skipped",
+            log_type="runtime.activation.skipped",
+            reason="no_runtime_strategies",
+            candidate_count=len(candidates),
+            active_symbol_count=len(active_symbols),
+        )
         return []
     if not bool(getattr(node, "is_running", False)):
         logger.info(
@@ -490,6 +507,20 @@ def activate_runtime_scanner_symbols(
             configured_symbols=seen_symbols,
             config=ScannerExecutionConfig.from_mapping(scanner_config),
         )
+        if not selected_symbols:
+            logger.info(
+                "Runtime scanner activation skipped",
+                log_type="runtime.activation.skipped",
+                reason="no_symbols_selected",
+                strategy=resolved_strategy_name,
+                candidate_count=len(candidates),
+                selected_count=0,
+                active_symbol_count=len(seen_symbols),
+                min_score=float(scanner_config.get("min_score", 0.0)),
+                min_24h_volume=float(scanner_config.get("min_24h_volume", 0.0)),
+                max_symbols=int(scanner_config.get("max_symbols", 0)),
+            )
+            continue
         for symbol in selected_symbols:
             activation_attributes = {
                 "strategy": resolved_strategy_name,
@@ -563,6 +594,13 @@ def activate_runtime_scanner_symbols(
                             "result": "success",
                             **activation_attributes,
                         },
+                    )
+                else:
+                    logger.info(
+                        "Runtime scanner activation skipped",
+                        log_type="runtime.activation.skipped",
+                        reason="activation_returned_false",
+                        **activation_attributes,
                     )
 
     return activated_components
