@@ -489,3 +489,103 @@ def test_runtime_context_closes_position_when_exit_order_submission_fails():
 
     assert parent.submit_order.call_args_list == [call(parent.order_factory.market.return_value)]
     parent.close_all_positions.assert_called_once_with(instrument_id)
+
+
+@pytest.mark.parametrize(
+    ("strategy_cls", "config_cls"),
+    [
+        (AdaptiveTrendRiderStrategy, AdaptiveTrendRiderConfig),
+        (VolumeSpikeTrendStrategy, VolumeSpikeTrendConfig),
+        (SqueezeBreakoutStrategy, SqueezeBreakoutConfig),
+        (DemoEMACrossStrategy, DemoEMACrossConfig),
+    ],
+)
+def test_strategy_clears_optimistic_position_state_when_entry_order_is_rejected(
+    strategy_cls,
+    config_cls,
+):
+    instrument_id = InstrumentId.from_str("ETHUSDT-LINEAR.BYBIT")
+    bar_type = BarType.from_str("ETHUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL")
+    config = config_cls(
+        instrument_id=instrument_id,
+        bar_type=bar_type,
+        trade_size=Decimal("1.0"),
+        trade_notional_usdt=Decimal("10"),
+    )
+    strategy = strategy_cls(config)
+    strategy._current_trade_id = "T-1"
+    strategy._order_trade_ids = {"O-entry": "T-1"}
+    strategy._position_side = OrderSide.BUY
+    strategy._entry_price = 100.0
+    strategy._best_price = 101.0
+    strategy._stop_price = 90.0
+    strategy._entry_atr = 2.0
+    strategy._trailing_active = True
+    strategy._bars_in_position = 4
+
+    strategy.on_order_rejected(
+        SimpleNamespace(
+            client_order_id="O-entry",
+            reason="No order returned after submission",
+        )
+    )
+
+    assert strategy._position_side is None
+    assert strategy._entry_price == 0.0
+    assert strategy._best_price == 0.0
+    assert strategy._stop_price == 0.0
+    assert strategy._entry_atr == 0.0
+    assert strategy._trailing_active is False
+    assert strategy._bars_in_position == 0
+    assert strategy._cooldown_remaining == config.cooldown_bars
+
+
+@pytest.mark.parametrize(
+    ("strategy_cls", "config_cls"),
+    [
+        (AdaptiveTrendRiderStrategy, AdaptiveTrendRiderConfig),
+        (VolumeSpikeTrendStrategy, VolumeSpikeTrendConfig),
+        (SqueezeBreakoutStrategy, SqueezeBreakoutConfig),
+        (DemoEMACrossStrategy, DemoEMACrossConfig),
+    ],
+)
+def test_strategy_clears_position_state_when_exit_order_submission_fails(
+    monkeypatch,
+    strategy_cls,
+    config_cls,
+):
+    instrument_id = InstrumentId.from_str("ETHUSDT-LINEAR.BYBIT")
+    bar_type = BarType.from_str("ETHUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL")
+    config = config_cls(
+        instrument_id=instrument_id,
+        bar_type=bar_type,
+        trade_size=Decimal("1.0"),
+        trade_notional_usdt=Decimal("10"),
+    )
+    strategy = strategy_cls(config)
+    close_calls = []
+
+    def fake_close_all_positions(owner, close_instrument_id):
+        close_calls.append((owner, close_instrument_id))
+
+    monkeypatch.setattr(strategy_cls, "close_all_positions", fake_close_all_positions)
+    strategy._current_trade_id = "T-1"
+    strategy._position_side = OrderSide.BUY
+    strategy._entry_price = 100.0
+    strategy._best_price = 101.0
+    strategy._stop_price = 90.0
+    strategy._entry_atr = 2.0
+    strategy._trailing_active = True
+    strategy._bars_in_position = 4
+
+    strategy._handle_exit_order_failure()
+
+    assert close_calls == [(strategy, instrument_id)]
+    assert strategy._position_side is None
+    assert strategy._entry_price == 0.0
+    assert strategy._best_price == 0.0
+    assert strategy._stop_price == 0.0
+    assert strategy._entry_atr == 0.0
+    assert strategy._trailing_active is False
+    assert strategy._bars_in_position == 0
+    assert strategy._cooldown_remaining == config.cooldown_bars

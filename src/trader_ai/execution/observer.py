@@ -29,6 +29,7 @@ class ExecutionObserverMixin:
             order_id=_order_id(event),
             reason=_event_reason(event),
         )
+        self._handle_order_rejected(event)
 
     def on_order_denied(self, event: Any) -> None:
         execution_instrumentation.risk_checked(
@@ -126,6 +127,42 @@ class ExecutionObserverMixin:
 
     def _submit_pending_exit_orders(self, event: Any) -> None:
         submit_pending_exit_orders(owner=self, trade_id=self._event_trade_id(event))
+
+    def _handle_order_rejected(self, event: Any) -> None:
+        if self._event_trade_id(event) != str(getattr(self, "_current_trade_id", "")):
+            return
+        if getattr(self, "_position_side", None) is None:
+            return
+
+        self._discard_pending_exit_order_requests(self._event_trade_id(event))
+        self._clear_position_state_after_failed_entry()
+
+    def _handle_exit_order_failure(self) -> None:
+        config = getattr(self, "config", None)
+        instrument_id = getattr(config, "instrument_id", None)
+        if instrument_id is not None:
+            self.close_all_positions(instrument_id)
+        self._clear_position_state_after_failed_entry()
+
+    def _clear_position_state_after_failed_entry(self) -> None:
+        reset_position_state = getattr(self, "_reset_position_state", None)
+        if callable(reset_position_state):
+            reset_position_state()
+
+        config = getattr(self, "config", None)
+        cooldown_bars = getattr(config, "cooldown_bars", None)
+        if cooldown_bars is not None and hasattr(self, "_cooldown_remaining"):
+            self._cooldown_remaining = cooldown_bars
+
+    def _discard_pending_exit_order_requests(self, trade_id: str) -> None:
+        requests = getattr(self, "_exit_order_requests", None)
+        if not isinstance(requests, dict):
+            return
+        self._exit_order_requests = {
+            key: request
+            for key, request in requests.items()
+            if getattr(request, "trade_id", None) != trade_id
+        }
 
     def _execution_strategy(self) -> str:
         return str(getattr(self, "execution_strategy_name", "unknown"))

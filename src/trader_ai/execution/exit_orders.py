@@ -118,10 +118,15 @@ def submit_pending_exit_orders(*, owner: Any, trade_id: str) -> ExitOrderHandles
             requests.pop(key, None)
     owner._exit_order_requests = requests
 
+    handle_exit_order_failure = getattr(owner, "_handle_exit_order_failure", None)
     return submit_exit_orders_after_entry(
         owner=owner,
         request=request,
-        on_failure=lambda: owner.close_all_positions(request.instrument_id),
+        on_failure=(
+            handle_exit_order_failure
+            if callable(handle_exit_order_failure)
+            else lambda: owner.close_all_positions(request.instrument_id)
+        ),
     )
 
 

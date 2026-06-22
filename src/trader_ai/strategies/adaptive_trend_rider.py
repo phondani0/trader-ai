@@ -931,7 +931,7 @@ class AdaptiveTrendRiderStrategy(ExecutionObserverMixin, Strategy):
                 profit_runner_activation_r_multiple=self.config.profit_runner_activation_r_multiple,
                 profit_runner_stop_lock_r_multiple=self.config.profit_runner_stop_lock_r_multiple,
             ),
-            on_failure=lambda: self.close_all_positions(self.config.instrument_id),
+            on_failure=self._handle_exit_order_failure,
         )
 
     def _order_quantity(self, instrument, price: Decimal):
