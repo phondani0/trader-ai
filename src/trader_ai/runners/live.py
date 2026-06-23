@@ -79,10 +79,15 @@ def _trigger_discovery_scan(_event: object | None = None) -> None:
                     log_type="scanner.discovery.started",
                 )
                 candidates = _scanner.scan_for_momentum()
+                activation_candidates = [
+                    *candidates,
+                    *build_runtime_preload_candidates(_scanner),
+                ]
                 logger.info(
                     "MarketScanner discovery completed",
                     log_type="scanner.discovery.completed",
                     candidate_count=len(candidates),
+                    runtime_preload_count=len(activation_candidates) - len(candidates),
                     symbols=", ".join(
                         str(candidate.get("symbol"))
                         for candidate in candidates
@@ -95,7 +100,7 @@ def _trigger_discovery_scan(_event: object | None = None) -> None:
                         scanner=_scanner,
                         node=_runtime_node,
                         active_symbols=_runtime_symbols,
-                        candidates=candidates,
+                        candidates=activation_candidates,
                         runtime_strategies=_runtime_strategies,
                     )
             except Exception:
@@ -241,11 +246,13 @@ def build_live_components(
         raise ValueError(f"No enabled live strategies found in {strategies_path or STRATEGIES_PATH}")
 
     configured_symbols = component_ccxt_symbols(components)
+    configured_symbols_by_strategy = component_ccxt_symbols_by_strategy(components)
     components.extend(
         build_scanner_live_components(
             settings,
             scanner_candidates=scanner_candidates or [],
             configured_symbols=configured_symbols,
+            configured_symbols_by_strategy=configured_symbols_by_strategy,
             strategies_path=strategies_path,
         )
     )
@@ -268,16 +275,47 @@ def component_ccxt_symbols(components: list[BacktestComponents]) -> set[str]:
     }
 
 
+def component_ccxt_symbols_by_strategy(
+    components: list[BacktestComponents],
+) -> dict[str, set[str]]:
+    symbols_by_strategy: dict[str, set[str]] = {}
+    for component in components:
+        ccxt_symbol = component.instrument_spec.ccxt_symbol
+        if ccxt_symbol is None:
+            continue
+        symbols_by_strategy.setdefault(component.strategy_name, set()).add(ccxt_symbol)
+    return symbols_by_strategy
+
+
+def active_ccxt_symbols_for_strategy(strategy: object, fallback_symbols: set[str]) -> set[str]:
+    active_ccxt_symbols = getattr(strategy, "active_ccxt_symbols", None)
+    if not callable(active_ccxt_symbols):
+        return set(fallback_symbols)
+
+    try:
+        symbols = active_ccxt_symbols()
+    except TypeError:
+        return set(fallback_symbols)
+
+    if isinstance(symbols, (set, list, tuple)):
+        return {str(symbol) for symbol in symbols}
+    return set(fallback_symbols)
+
+
 def build_scanner_live_components(
     settings,
     *,
     scanner_candidates: list[dict],
     configured_symbols: set[str],
+    configured_symbols_by_strategy: dict[str, set[str]] | None = None,
     strategies_path: str | Path | None = None,
 ) -> list[BacktestComponents]:
     strategy_configs = load_strategy_configs(strategies_path or STRATEGIES_PATH)
     components: list[BacktestComponents] = []
-    seen_symbols = set(configured_symbols)
+    strategy_symbols = configured_symbols_by_strategy or {
+        strategy_name: set(configured_symbols)
+        for strategy_name in strategy_configs
+    }
     scanner_candidates = [candidate for candidate in scanner_candidates if candidate]
     startup_candidates = [
         candidate
@@ -293,6 +331,7 @@ def build_scanner_live_components(
             continue
 
         scanner_config = strategy_config.scanner_execution
+        seen_symbols = set(strategy_symbols.get(resolved_strategy_name, set()))
         selected_symbols = [
             *select_scanner_execution_symbols(
                 startup_candidates,
@@ -431,7 +470,10 @@ def build_runtime_preload_candidates(
     if preload_limit <= 0:
         return []
 
-    symbols = scanner.get_dynamic_universe_symbols()[:preload_limit]
+    symbols = scanner.get_dynamic_universe_symbols()
+    if not isinstance(symbols, (list, tuple)):
+        return []
+    symbols = symbols[:preload_limit]
     return [
         {
             "symbol": symbol,
@@ -493,7 +535,6 @@ def activate_runtime_scanner_symbols(
 
     strategy_configs = load_strategy_configs(STRATEGIES_PATH)
     activated_components: list[BacktestComponents] = []
-    seen_symbols = set(active_symbols)
     for resolved_strategy_name, strategy_config in strategy_configs.items():
         if not strategy_config.enabled:
             continue
@@ -502,6 +543,10 @@ def activate_runtime_scanner_symbols(
             continue
 
         scanner_config = strategy_config.scanner_execution
+        seen_symbols = active_ccxt_symbols_for_strategy(
+            runtime_strategy_for_name,
+            active_symbols,
+        )
         selected_symbols = select_scanner_execution_symbols(
             candidates,
             configured_symbols=seen_symbols,

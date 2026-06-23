@@ -12,6 +12,7 @@ from trader_ai.execution.instrumentation import execution_instrumentation
 
 EXIT_STOP_TAG = "EXIT_STOP"
 EXIT_TAKE_PROFIT_TAG = "EXIT_TAKE_PROFIT"
+_DEFAULT_FAILURE_HANDLER = object()
 
 
 class ExitOrderError(RuntimeError):
@@ -107,27 +108,41 @@ def record_exit_order_request(
     owner._exit_order_requests = requests
 
 
-def submit_pending_exit_orders(*, owner: Any, trade_id: str) -> ExitOrderHandles | None:
+def submit_pending_exit_orders(
+    *,
+    owner: Any,
+    trade_id: str,
+    on_failure: Callable[[], None] | object | None = _DEFAULT_FAILURE_HANDLER,
+) -> ExitOrderHandles | None:
     requests = getattr(owner, "_exit_order_requests", {})
-    request = requests.pop(trade_id, None)
+    request = requests.get(trade_id)
     if request is None:
+        return None
+
+    handle_exit_order_failure = getattr(owner, "_handle_exit_order_failure", None)
+    failure_handler: Callable[[], None] | None
+    if on_failure is _DEFAULT_FAILURE_HANDLER:
+        failure_handler = (
+            handle_exit_order_failure
+            if callable(handle_exit_order_failure)
+            else lambda: owner.close_all_positions(request.instrument_id)
+        )
+    else:
+        failure_handler = on_failure if callable(on_failure) else None
+
+    handles = submit_exit_orders_after_entry(
+        owner=owner,
+        request=request,
+        on_failure=failure_handler,
+    )
+    if handles is None:
         return None
 
     for key, pending_request in list(requests.items()):
         if pending_request.trade_id == request.trade_id:
             requests.pop(key, None)
     owner._exit_order_requests = requests
-
-    handle_exit_order_failure = getattr(owner, "_handle_exit_order_failure", None)
-    return submit_exit_orders_after_entry(
-        owner=owner,
-        request=request,
-        on_failure=(
-            handle_exit_order_failure
-            if callable(handle_exit_order_failure)
-            else lambda: owner.close_all_positions(request.instrument_id)
-        ),
-    )
+    return handles
 
 
 def submit_exit_orders_after_entry(

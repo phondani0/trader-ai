@@ -203,6 +203,7 @@ def test_runtime_context_trade_lifecycle_submits_protection_once_when_position_e
     )
     parent.on_position_opened(
         SimpleNamespace(
+            opening_order_id="O-entry",
             order_side=OrderSide.BUY,
             position_id="ETHUSDT-LINEAR.BYBIT-EXTERNAL",
         )
@@ -225,6 +226,65 @@ def test_runtime_context_trade_lifecycle_submits_protection_once_when_position_e
     assert parent.submit_order.call_args_list == [
         call(parent.order_factory.market.return_value),
         call(parent.order_factory.stop_market.return_value),
+    ]
+    assert parent._exit_order_requests == {}
+    parent.close_all_positions.assert_not_called()
+
+
+def test_order_fill_protection_failure_retries_on_position_opened_without_immediate_close():
+    instrument = FakeInstrument()
+    instrument_id = InstrumentId.from_str("ETHUSDT-LINEAR.BYBIT")
+    parent = FakeRuntimeParent(instrument, instrument_id=instrument_id)
+    stop_order = SimpleNamespace(client_order_id="O-stop")
+    parent.order_factory.stop_market.side_effect = [
+        RuntimeError("Bybit position not ready for reduce-only stop"),
+        stop_order,
+    ]
+    bar_type = BarType.from_str("ETHUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL")
+    config = AdaptiveTrendRiderConfig(
+        instrument_id=instrument_id,
+        bar_type=bar_type,
+        trade_size=Decimal("1.0"),
+        trade_notional_usdt=Decimal("10"),
+    )
+    context = _RuntimeSymbolContext(
+        parent=parent,
+        config=config,
+        instrument=instrument,
+        instrument_id=instrument_id,
+        bar_type=bar_type,
+        ccxt_symbol="ETH/USDT:USDT",
+    )
+    context._current_trade_id = "T-1"
+    context._stop_price = 90.0
+
+    context._submit_market(OrderSide.BUY, Decimal("100"))
+    parent.on_order_filled(
+        SimpleNamespace(
+            client_order_id="O-entry",
+            venue_order_id="V-entry",
+            order_side=OrderSide.BUY,
+            position_id="ETHUSDT-LINEAR.BYBIT-EXTERNAL",
+            last_qty=Decimal("0.1"),
+            last_px=Decimal("100"),
+        )
+    )
+
+    parent.close_all_positions.assert_not_called()
+    assert sorted(parent._exit_order_requests) == ["O-entry", "T-1"]
+
+    parent.on_position_opened(
+        SimpleNamespace(
+            opening_order_id="O-entry",
+            order_side=OrderSide.BUY,
+            position_id="ETHUSDT-LINEAR.BYBIT-EXTERNAL",
+        )
+    )
+
+    assert parent.order_factory.stop_market.call_count == 2
+    assert parent.submit_order.call_args_list == [
+        call(parent.order_factory.market.return_value),
+        call(stop_order),
     ]
     assert parent._exit_order_requests == {}
     parent.close_all_positions.assert_not_called()

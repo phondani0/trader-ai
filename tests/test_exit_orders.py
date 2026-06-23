@@ -261,10 +261,27 @@ def test_submit_pending_exit_orders_logs_full_error_message_on_failure(monkeypat
 
     assert handles is None
     owner.close_all_positions.assert_called_once_with("ETHUSDT-LINEAR.BYBIT")
+    assert sorted(owner._exit_order_requests) == ["O-entry", "T-1"]
     assert exit_order_failed.call_args.kwargs["reason"] == "TypeError"
     assert exit_order_failed.call_args.kwargs["error"] == "invalid stop order call"
     assert runtime_error.call_args.kwargs["reason"] == "TypeError"
     assert runtime_error.call_args.kwargs["error"] == "invalid stop order call"
+
+
+def test_submit_pending_exit_orders_can_skip_failure_callback_for_retryable_attempt():
+    owner = FakeOwner()
+    owner.order_factory.stop_market.side_effect = RuntimeError("position not ready")
+    record_exit_order_request(
+        owner=owner,
+        entry_order=SimpleNamespace(client_order_id="O-entry"),
+        request=_request(),
+    )
+
+    handles = submit_pending_exit_orders(owner=owner, trade_id="T-1", on_failure=None)
+
+    assert handles is None
+    owner.close_all_positions.assert_not_called()
+    assert sorted(owner._exit_order_requests) == ["O-entry", "T-1"]
 
 
 def test_replace_exit_stop_if_improved_submits_new_stop_then_cancels_old_stop():

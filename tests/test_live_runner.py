@@ -96,7 +96,38 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             "MarketScanner discovery completed",
             log_type="scanner.discovery.completed",
             candidate_count=2,
+            runtime_preload_count=0,
             symbols="FARTCOIN/USDT:USDT, NEAR/USDT:USDT",
+        )
+
+    def test_discovery_timer_includes_runtime_preload_candidates_for_activation(self):
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = []
+        scanner.get_dynamic_universe_symbols.return_value = ["SOL/USDT:USDT"]
+        node = Mock()
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+
+        with (
+            patch.object(live, "_scanner", scanner),
+            patch.object(live, "_runtime_node", node),
+            patch.object(live, "_runtime_settings", settings),
+            patch.object(live, "_runtime_symbols", {"BTC/USDT:USDT"}),
+            patch.object(live, "_runtime_strategies", {"adaptive_trend_rider": Mock()}),
+            patch.object(live, "activate_runtime_scanner_symbols") as activate,
+        ):
+            live._trigger_discovery_scan(object())
+
+        activate.assert_called_once()
+        self.assertEqual(
+            activate.call_args.kwargs["candidates"],
+            [
+                {
+                    "symbol": "SOL/USDT:USDT",
+                    "score": float("inf"),
+                    "volume_24h": float("inf"),
+                    "runtime_preload": True,
+                }
+            ],
         )
 
     def test_journal_timer_callback_accepts_nautilus_time_event(self):
@@ -196,8 +227,13 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             component.instrument_spec.ccxt_symbol for component in configured_components
         ].count("BTC/USDT:USDT")
         symbols = [component.instrument_spec.ccxt_symbol for component in components]
+        pairs = [
+            (component.strategy_name, component.instrument_spec.ccxt_symbol)
+            for component in components
+        ]
         self.assertIn("NEAR/USDT:USDT", symbols)
-        self.assertEqual(symbols.count("BTC/USDT:USDT"), configured_btc_count)
+        self.assertGreaterEqual(symbols.count("BTC/USDT:USDT"), configured_btc_count)
+        self.assertEqual(len(pairs), len(set(pairs)))
         self.assertNotIn("THIN/USDT:USDT", symbols)
 
     def test_build_startup_live_components_uses_scanner_snapshot(self):
@@ -383,6 +419,75 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         adaptive_strategy.activate_component.assert_not_called()
         volume_strategy.activate_component.assert_called_once()
 
+    def test_activate_runtime_scanner_symbols_allows_same_symbol_per_strategy(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        scanner.scan_for_momentum.return_value = [
+            {"symbol": "FARTCOIN/USDT:USDT", "score": 14.0, "volume_24h": 340_000_000},
+        ]
+        node = Mock()
+        node.is_running = True
+        adaptive_strategy = Mock()
+        adaptive_strategy.active_ccxt_symbols.return_value = {"BTC/USDT:USDT"}
+        volume_strategy = Mock()
+        volume_strategy.active_ccxt_symbols.return_value = {"ETH/USDT:USDT"}
+        loader = Mock(return_value=[])
+        active_symbols = {"BTC/USDT:USDT", "ETH/USDT:USDT"}
+        configs = {
+            "adaptive_trend_rider": StrategyExecutionConfig(
+                enabled=True,
+                instruments=[],
+                discovery_gate="hard",
+                params={"trade_notional_usdt": "150"},
+                scanner_execution={
+                    "enabled": True,
+                    "max_symbols": 1,
+                    "min_score": 10.0,
+                    "min_24h_volume": 50_000_000.0,
+                    "blacklist": [],
+                    "discovery_gate": "hard",
+                },
+            ),
+            "volume_spike_trend": StrategyExecutionConfig(
+                enabled=True,
+                instruments=[],
+                discovery_gate="hard",
+                params={"trade_notional_usdt": "150"},
+                scanner_execution={
+                    "enabled": True,
+                    "max_symbols": 1,
+                    "min_score": 10.0,
+                    "min_24h_volume": 50_000_000.0,
+                    "blacklist": [],
+                    "discovery_gate": "hard",
+                },
+            ),
+        }
+
+        with patch.object(live, "load_strategy_configs", return_value=configs):
+            components = live.activate_runtime_scanner_symbols(
+                settings=settings,
+                scanner=scanner,
+                node=node,
+                active_symbols=active_symbols,
+                cache_dir=PROJECT_ROOT / "data" / "cache",
+                runtime_strategies={
+                    "adaptive_trend_rider": adaptive_strategy,
+                    "volume_spike_trend": volume_strategy,
+                },
+                warmer=loader,
+            )
+
+        self.assertEqual(
+            [(component.strategy_name, component.instrument_spec.ccxt_symbol) for component in components],
+            [
+                ("adaptive_trend_rider", "FARTCOIN/USDT:USDT"),
+                ("volume_spike_trend", "FARTCOIN/USDT:USDT"),
+            ],
+        )
+        adaptive_strategy.activate_component.assert_called_once()
+        volume_strategy.activate_component.assert_called_once()
+
     def test_activate_runtime_scanner_symbols_records_activation_metric(self):
         settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         scanner = Mock()
@@ -424,7 +529,7 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         scanner = Mock()
         scanner.scan_for_momentum.return_value = [
-            {"symbol": "FARTCOIN/USDT:USDT", "score": 8.0, "volume_24h": 340_000_000},
+            {"symbol": "FARTCOIN/USDT:USDT", "score": 1.0, "volume_24h": 340_000_000},
         ]
         node = Mock()
         node.is_running = True
@@ -450,9 +555,9 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             candidate_count=1,
             selected_count=0,
             active_symbol_count=1,
-            min_score=10.0,
+            min_score=7.0,
             min_24h_volume=50_000_000.0,
-            max_symbols=5,
+            max_symbols=6,
         )
 
     def test_restart_recovery_injects_db_owned_component_and_hydrates_strategy(self):

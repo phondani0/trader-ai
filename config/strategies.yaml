@@ -7,15 +7,17 @@ adaptive_trend_rider:
   discovery_gate: soft
   scanner_execution:
     enabled: true
-    max_symbols: 5
-    min_score: 10.0
+    max_symbols: 6
+    min_score: 7.0
     min_24h_volume: 50000000.0
     preload_runtime_symbols: true
-    runtime_universe_size: 20
+    runtime_universe_size: 12
     discovery_gate: hard
     blacklist:
       - XAU/USDT:USDT
       - XAUT/USDT:USDT
+      - SOXL/USDT:USDT
+      - SPCX/USDT:USDT
   params:
     fast_ema_period: 10
     slow_ema_period: 20
@@ -43,15 +45,17 @@ volume_spike_trend:
   discovery_gate: soft
   scanner_execution:
     enabled: true
-    max_symbols: 3
-    min_score: 12.0
+    max_symbols: 4
+    min_score: 7.5
     min_24h_volume: 50000000.0
-    preload_runtime_symbols: false
-    runtime_universe_size: 0
+    preload_runtime_symbols: true
+    runtime_universe_size: 12
     discovery_gate: hard
     blacklist:
       - XAU/USDT:USDT
       - XAUT/USDT:USDT
+      - SOXL/USDT:USDT
+      - SPCX/USDT:USDT
   params:
     volume_multiplier: 3.0
     max_hold_bars: 288
@@ -78,15 +82,17 @@ squeeze_breakout:
   discovery_gate: soft
   scanner_execution:
     enabled: true
-    max_symbols: 2
-    min_score: 14.0
+    max_symbols: 3
+    min_score: 8.0
     min_24h_volume: 75000000.0
-    preload_runtime_symbols: false
-    runtime_universe_size: 0
+    preload_runtime_symbols: true
+    runtime_universe_size: 12
     discovery_gate: hard
     blacklist:
       - XAU/USDT:USDT
       - XAUT/USDT:USDT
+      - SOXL/USDT:USDT
+      - SPCX/USDT:USDT
   params:
     max_hold_bars: 288
     trade_notional_usdt: "250"
@@ -108,15 +114,17 @@ demo_ema_cross:
   discovery_gate: soft
   scanner_execution:
     enabled: true
-    max_symbols: 2
-    min_score: 13.0
+    max_symbols: 3
+    min_score: 8.0
     min_24h_volume: 75000000.0
-    preload_runtime_symbols: false
-    runtime_universe_size: 0
+    preload_runtime_symbols: true
+    runtime_universe_size: 12
     discovery_gate: hard
     blacklist:
       - XAU/USDT:USDT
       - XAUT/USDT:USDT
+      - SOXL/USDT:USDT
+      - SPCX/USDT:USDT
   params:
     max_hold_bars: 288
     trade_notional_usdt: "250"

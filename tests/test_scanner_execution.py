@@ -51,6 +51,26 @@ class ScannerExecutionTest(unittest.TestCase):
 
         self.assertEqual(selected, ["NEAR/USDT:USDT"])
 
+    def test_select_scanner_execution_symbols_excludes_non_crypto_markets(self):
+        candidates = [
+            {"symbol": "SOXL/USDT:USDT", "score": 30.0, "volume_24h": 500_000_000},
+            {"symbol": "SPCX/USDT:USDT", "score": 29.0, "volume_24h": 500_000_000},
+            {"symbol": "HYPE/USDT:USDT", "score": 14.0, "volume_24h": 100_000_000},
+        ]
+
+        selected = select_scanner_execution_symbols(
+            candidates,
+            configured_symbols=set(),
+            config=ScannerExecutionConfig(
+                enabled=True,
+                max_symbols=3,
+                min_score=10.0,
+                min_24h_volume=50_000_000.0,
+            ),
+        )
+
+        self.assertEqual(selected, ["HYPE/USDT:USDT"])
+
     def test_select_scanner_execution_symbols_disabled_returns_empty(self):
         selected = select_scanner_execution_symbols(
             [{"symbol": "NEAR/USDT:USDT", "score": 14.0, "volume_24h": 100_000_000}],

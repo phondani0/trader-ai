@@ -63,7 +63,7 @@ class ExecutionObserverMixin:
             fill_price=_event_float(event, "last_px"),
         )
         cancel_sibling_exit_order(owner=self, filled_order_id=_order_id(event))
-        self._submit_pending_exit_orders(event)
+        self._submit_pending_exit_orders(event, close_on_failure=False)
 
     def on_position_opened(self, event: Any) -> None:
         execution_instrumentation.position_opened(
@@ -125,8 +125,20 @@ class ExecutionObserverMixin:
             exit_reason=_event_reason(event),
         )
 
-    def _submit_pending_exit_orders(self, event: Any) -> None:
-        submit_pending_exit_orders(owner=self, trade_id=self._event_trade_id(event))
+    def _submit_pending_exit_orders(
+        self,
+        event: Any,
+        *,
+        close_on_failure: bool = True,
+    ) -> None:
+        if close_on_failure:
+            submit_pending_exit_orders(owner=self, trade_id=self._event_trade_id(event))
+        else:
+            submit_pending_exit_orders(
+                owner=self,
+                trade_id=self._event_trade_id(event),
+                on_failure=None,
+            )
 
     def _handle_order_rejected(self, event: Any) -> None:
         if self._event_trade_id(event) != str(getattr(self, "_current_trade_id", "")):
@@ -182,6 +194,8 @@ class ExecutionObserverMixin:
         for order_id in (
             _event_str(event, "client_order_id"),
             _event_str(event, "venue_order_id"),
+            _event_str(event, "opening_order_id"),
+            _event_str(event, "closing_order_id"),
         ):
             if order_id and order_id in trade_ids:
                 return str(trade_ids[order_id])

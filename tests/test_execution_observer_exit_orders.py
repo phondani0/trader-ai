@@ -87,4 +87,8 @@ def test_entry_order_fill_submits_pending_exit_orders(monkeypatch):
         )
     )
 
-    submit_pending.assert_called_once_with(owner=observer, trade_id="T-1")
+    submit_pending.assert_called_once_with(
+        owner=observer,
+        trade_id="T-1",
+        on_failure=None,
+    )
