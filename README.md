@@ -17,11 +17,11 @@ Run everything from the repo root.
 ```bash
 uv run analyze-bybit-orders --since-hours 72
 uv run analyze-bybit-orders --since-hours 72 --fail-unprotected-positions
-uv run backtest --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/btc_backtest
-uv run benchmark
-uv run compare-strategies --instrument btcusdt_perp_binance --data-source ccxt --strategies volume_spike_trend nautilus_ema_cross demo_ema_cross --output-dir output/compare_btc
+uv run backtest --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --use-strategy-config --starting-balance "5000 USDT" --output-dir output/btc_backtest
+uv run benchmark --use-strategy-config --starting-balance "5000 USDT"
+uv run compare-strategies --instrument btcusdt_perp_binance --data-source ccxt --strategies volume_spike_trend nautilus_ema_cross demo_ema_cross --use-strategy-config --starting-balance "5000 USDT" --output-dir output/compare_btc
 uv run integration-smoke --mode local-sim
-uv run research --instruments btcusdt_perp_binance ethusdt_perp_binance --strategies volume_spike_trend nautilus_ema_cross --data-source ccxt --output-dir output/research
+uv run research --instruments btcusdt_perp_binance ethusdt_perp_binance --strategies volume_spike_trend nautilus_ema_cross --data-source ccxt --use-strategy-config --starting-balance "5000 USDT" --output-dir output/research
 uv run parameter-sweep --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --fast-periods 5 8 10 --slow-periods 21 34 55 --output-dir output/sweep_btc
 uv run walk-forward --bars-csv tests/fixtures/btcusdt_15m.csv --train-bars 256 --test-bars 128 --step-bars 128 --output-path output/walk_forward_windows.json
 uv run papertrade --instrument btcusdt_perp_binance --strategy volume_spike_trend --data-source ccxt --output-dir output/paper_bootstrap
@@ -39,6 +39,12 @@ Command roles:
 - `parameter-sweep`: grid search one strategy over EMA periods
 - `walk-forward`: generate rolling train/test windows from bar CSVs
 - `papertrade` and `start`: generate the paper-trading bootstrap manifest and env template
+
+Research commands use strategy class defaults unless `--use-strategy-config` is provided.
+Use `--use-strategy-config` for production-faithful research because it loads strategy params
+from `config/strategies.yaml`, including notional sizing, stop/trailing settings, and
+profit-runner settings.
+Use `--starting-balance "5000 USDT"` to model the current intended account size.
 
 For Bybit diagnostics, `analyze-bybit-orders` is read-only and loads `.env`.
 Paper mode defaults to Bybit demo REST. Use `--account-mode testnet` only for testnet keys.

@@ -30,6 +30,7 @@ _TIMEFRAME_MAP = {
     "4Hour": "4h",
     "1Day": "1d",
 }
+NON_CRYPTO_SYMBOL_TYPES = {"commodity", "stock"}
 
 
 class MarketScanner:
@@ -187,6 +188,13 @@ class MarketScanner:
             for row in self._latest_liquid_universe[: self.dynamic_monitor_size]
         ]
 
+    def get_dynamic_universe_candidates(self) -> list[Dict]:
+        """Return rotating liquid symbols with market metadata for runtime activation."""
+        return [
+            dict(row)
+            for row in self._latest_liquid_universe[: self.dynamic_monitor_size]
+        ]
+
     def get_candidate_context(self, symbol: str) -> Dict | None:
         """Get metadata for an active discovery candidate."""
         for candidate in self.get_active_candidates():
@@ -198,7 +206,8 @@ class MarketScanner:
         ranked: list[Dict] = []
 
         for symbol, ticker in tickers.items():
-            if not self._is_supported_symbol(symbol):
+            market = self._market_for_symbol(symbol)
+            if not self._is_supported_symbol(symbol, market):
                 continue
 
             last_price = float(ticker.get("last", 0.0) or 0.0)
@@ -240,6 +249,7 @@ class MarketScanner:
                     "open_interest_value": open_interest_value,
                     "funding_rate": float(ticker.get("fundingRate", 0.0) or 0.0),
                     "prev_price_1h": float(ticker.get("prevPrice1h", 0.0) or 0.0),
+                    "symbol_type": self._market_symbol_type(market),
                 }
             )
 
@@ -503,9 +513,32 @@ class MarketScanner:
 
         return True
 
+    def _market_for_symbol(self, symbol: str) -> dict | None:
+        markets = getattr(self.exchange, "markets", None)
+        if not markets and callable(getattr(self.exchange, "load_markets", None)):
+            try:
+                markets = self.exchange.load_markets()
+            except Exception:
+                return None
+        if not isinstance(markets, dict):
+            return None
+        market = markets.get(symbol)
+        return market if isinstance(market, dict) else None
+
+    @classmethod
+    def _is_supported_symbol(cls, symbol: str, market: dict | None = None) -> bool:
+        if not (symbol.endswith("/USDT:USDT") or symbol.endswith("/USDT")):
+            return False
+        return cls._market_symbol_type(market) not in NON_CRYPTO_SYMBOL_TYPES
+
     @staticmethod
-    def _is_supported_symbol(symbol: str) -> bool:
-        return symbol.endswith("/USDT:USDT") or symbol.endswith("/USDT")
+    def _market_symbol_type(market: dict | None) -> str:
+        if not market:
+            return ""
+        info = market.get("info", {})
+        if not isinstance(info, dict):
+            return ""
+        return str(info.get("symbolType") or "").lower()
 
     def _score_liquidity(
         self,

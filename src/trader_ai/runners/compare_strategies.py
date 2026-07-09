@@ -26,6 +26,8 @@ def run_strategy_comparison(
     data_source: str,
     output_dir: str | Path | None = None,
     cache_dir: str | Path | None = None,
+    use_strategy_config: bool = False,
+    starting_balance: str | None = None,
 ) -> dict[str, object]:
     return run_batch_research(
         settings_path=settings_path,
@@ -34,4 +36,6 @@ def run_strategy_comparison(
         data_source=data_source,
         output_dir=output_dir,
         cache_dir=cache_dir,
+        use_strategy_config=use_strategy_config,
+        starting_balance=starting_balance,
     )

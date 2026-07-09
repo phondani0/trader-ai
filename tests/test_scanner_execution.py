@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ from trader_ai.runners.scanner_execution import (  # noqa: E402
 from trader_ai.runners.scanner_execution import (  # noqa: E402
     select_scanner_execution_symbols,
 )
+from trader_ai.intelligence.scanner import MarketScanner  # noqa: E402
 
 
 class ScannerExecutionTest(unittest.TestCase):
@@ -53,9 +55,24 @@ class ScannerExecutionTest(unittest.TestCase):
 
     def test_select_scanner_execution_symbols_excludes_non_crypto_markets(self):
         candidates = [
-            {"symbol": "SOXL/USDT:USDT", "score": 30.0, "volume_24h": 500_000_000},
-            {"symbol": "SPCX/USDT:USDT", "score": 29.0, "volume_24h": 500_000_000},
-            {"symbol": "HYPE/USDT:USDT", "score": 14.0, "volume_24h": 100_000_000},
+            {
+                "symbol": "ANYSTOCK/USDT:USDT",
+                "score": 30.0,
+                "volume_24h": 500_000_000,
+                "symbol_type": "stock",
+            },
+            {
+                "symbol": "ANYCOMMODITY/USDT:USDT",
+                "score": 29.0,
+                "volume_24h": 500_000_000,
+                "symbol_type": "commodity",
+            },
+            {
+                "symbol": "FARTCOIN/USDT:USDT",
+                "score": 14.0,
+                "volume_24h": 100_000_000,
+                "symbol_type": "",
+            },
         ]
 
         selected = select_scanner_execution_symbols(
@@ -69,7 +86,51 @@ class ScannerExecutionTest(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(selected, ["HYPE/USDT:USDT"])
+        self.assertEqual(selected, ["FARTCOIN/USDT:USDT"])
+
+    def test_market_scanner_uses_market_symbol_type_to_exclude_non_crypto_universe(self):
+        exchange = SimpleNamespace(
+            markets={
+                "FARTCOIN/USDT:USDT": {"info": {"symbolType": ""}},
+                "NEWSTOCK/USDT:USDT": {"info": {"symbolType": "stock"}},
+                "GOLD/USDT:USDT": {"info": {"symbolType": "commodity"}},
+            }
+        )
+        scanner = MarketScanner(
+            exchange,
+            {
+                "discovery": {
+                    "min_24h_volume": 1,
+                    "max_spread_bps": 300,
+                    "min_last_price": 0,
+                }
+            },
+        )
+
+        universe = scanner._build_liquid_universe(
+            {
+                "FARTCOIN/USDT:USDT": {
+                    "last": 1,
+                    "quoteVolume": 100_000_000,
+                    "bid": 0.99,
+                    "ask": 1.01,
+                },
+                "NEWSTOCK/USDT:USDT": {
+                    "last": 10,
+                    "quoteVolume": 500_000_000,
+                    "bid": 9.99,
+                    "ask": 10.01,
+                },
+                "GOLD/USDT:USDT": {
+                    "last": 100,
+                    "quoteVolume": 500_000_000,
+                    "bid": 99.99,
+                    "ask": 100.01,
+                },
+            }
+        )
+
+        self.assertEqual([row["symbol"] for row in universe], ["FARTCOIN/USDT:USDT"])
 
     def test_select_scanner_execution_symbols_disabled_returns_empty(self):
         selected = select_scanner_execution_symbols(

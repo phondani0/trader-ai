@@ -3,7 +3,7 @@ strategy_name: adaptive_trend_rider
 data_source: ccxt
 venue: BYBIT
 bar_type: "XRPUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL"
-starting_balance: "100000.0 USDT"
+starting_balance: "5000.0 USDT"
 trade_size: "1.0"
 fast_ema_period: 10
 slow_ema_period: 20

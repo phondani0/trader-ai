@@ -389,6 +389,44 @@ def _dedupe_selected_symbols(
     return selected
 
 
+def select_runtime_activation_symbols(
+    candidates: list[dict],
+    *,
+    configured_symbols: set[str],
+    scanner_config: dict[str, object],
+) -> list[str]:
+    config = ScannerExecutionConfig.from_mapping(scanner_config)
+    startup_candidates = [
+        candidate for candidate in candidates if not bool(candidate.get("runtime_preload"))
+    ]
+    runtime_preload_candidates = [
+        candidate for candidate in candidates if bool(candidate.get("runtime_preload"))
+    ]
+    selected_symbols = select_scanner_execution_symbols(
+        startup_candidates,
+        configured_symbols=configured_symbols,
+        config=config,
+    )
+    remaining_slots = max(config.max_symbols - len(selected_symbols), 0)
+    if remaining_slots > 0:
+        selected_symbols.extend(
+            select_scanner_execution_symbols(
+                runtime_preload_candidates,
+                configured_symbols={*configured_symbols, *selected_symbols},
+                config=ScannerExecutionConfig.from_mapping(
+                    {
+                        **scanner_config,
+                        "max_symbols": remaining_slots,
+                    }
+                ),
+            )
+        )
+    return _dedupe_selected_symbols(
+        selected_symbols,
+        configured_symbols=configured_symbols,
+    )
+
+
 def build_startup_live_components(
     settings, 
     *, 
@@ -470,10 +508,29 @@ def build_runtime_preload_candidates(
     if preload_limit <= 0:
         return []
 
+    get_dynamic_universe_candidates = getattr(
+        scanner,
+        "get_dynamic_universe_candidates",
+        None,
+    )
+    if callable(get_dynamic_universe_candidates):
+        candidates = get_dynamic_universe_candidates()
+        if isinstance(candidates, (list, tuple)):
+            return [
+                {
+                    **candidate,
+                    "symbol": candidate.get("symbol"),
+                    "score": float("inf"),
+                    "volume_24h": candidate.get("volume_24h", float("inf")),
+                    "runtime_preload": True,
+                }
+                for candidate in candidates[:preload_limit]
+                if isinstance(candidate, dict) and candidate.get("symbol")
+            ]
+
     symbols = scanner.get_dynamic_universe_symbols()
     if not isinstance(symbols, (list, tuple)):
         return []
-    symbols = symbols[:preload_limit]
     return [
         {
             "symbol": symbol,
@@ -481,7 +538,7 @@ def build_runtime_preload_candidates(
             "volume_24h": float("inf"),
             "runtime_preload": True,
         }
-        for symbol in symbols
+        for symbol in symbols[:preload_limit]
     ]
 
 
@@ -547,10 +604,10 @@ def activate_runtime_scanner_symbols(
             runtime_strategy_for_name,
             active_symbols,
         )
-        selected_symbols = select_scanner_execution_symbols(
+        selected_symbols = select_runtime_activation_symbols(
             candidates,
             configured_symbols=seen_symbols,
-            config=ScannerExecutionConfig.from_mapping(scanner_config),
+            scanner_config=scanner_config,
         )
         if not selected_symbols:
             logger.info(

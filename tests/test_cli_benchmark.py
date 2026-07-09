@@ -26,6 +26,7 @@ class BenchmarkCliTest(unittest.TestCase):
         self.assertEqual(args.instrument, DEFAULT_INSTRUMENT)
         self.assertEqual(args.data_source, DEFAULT_DATA_SOURCE)
         self.assertIsNone(args.strategies)
+        self.assertFalse(args.use_strategy_config)
 
     def test_benchmark_parser_accepts_strategy_overrides(self):
         parser = build_parser()
@@ -39,12 +40,17 @@ class BenchmarkCliTest(unittest.TestCase):
                 "--strategies",
                 "demo_ema_cross",
                 "volume_spike_trend",
+                "--use-strategy-config",
+                "--starting-balance",
+                "5000 USDT",
             ]
         )
 
         self.assertEqual(args.instrument, "ethusdt_perp_binance")
         self.assertEqual(args.data_source, "synthetic")
         self.assertEqual(args.strategies, ["demo_ema_cross", "volume_spike_trend"])
+        self.assertTrue(args.use_strategy_config)
+        self.assertEqual(args.starting_balance, "5000 USDT")
         self.assertEqual(
             DEFAULT_STRATEGIES,
             ["adaptive_trend_rider", "squeeze_breakout", "volume_spike_trend", "nautilus_ema_cross", "demo_ema_cross"],

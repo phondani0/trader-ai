@@ -4,12 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-NON_CRYPTO_MARKET_BASES = {
-    "SOXL",
-    "SPCX",
-    "XAU",
-    "XAUT",
-}
+NON_CRYPTO_SYMBOL_TYPES = {"commodity", "stock"}
 
 
 @dataclass(frozen=True)
@@ -56,7 +51,7 @@ def select_scanner_execution_symbols(
         symbol = str(candidate.get("symbol", ""))
         if not symbol.endswith("/USDT:USDT"):
             continue
-        if _is_non_crypto_market(symbol):
+        if _is_non_crypto_market(candidate):
             continue
         if symbol in configured_symbols or symbol in blacklist:
             continue
@@ -72,6 +67,6 @@ def select_scanner_execution_symbols(
     return selected
 
 
-def _is_non_crypto_market(symbol: str) -> bool:
-    base = symbol.split("/", maxsplit=1)[0].upper()
-    return base in NON_CRYPTO_MARKET_BASES
+def _is_non_crypto_market(candidate: dict[str, Any]) -> bool:
+    symbol_type = str(candidate.get("symbol_type") or "").lower()
+    return symbol_type in NON_CRYPTO_SYMBOL_TYPES

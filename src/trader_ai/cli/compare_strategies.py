@@ -13,6 +13,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--instrument", required=True)
     parser.add_argument("--data-source", default="synthetic")
     parser.add_argument("--strategies", nargs="+", required=True)
+    parser.add_argument("--starting-balance", default=None)
+    parser.add_argument(
+        "--use-strategy-config",
+        action="store_true",
+        help="Load strategy params from config/strategies.yaml for production-faithful research",
+    )
     return parser
 
 
@@ -25,6 +31,8 @@ def main():
         data_source=args.data_source,
         output_dir=args.output_dir,
         cache_dir=args.cache_dir,
+        use_strategy_config=args.use_strategy_config,
+        starting_balance=args.starting_balance,
     )
     print("NautilusTrader strategy comparison completed")
     print(f"cases: {result['cases']}")

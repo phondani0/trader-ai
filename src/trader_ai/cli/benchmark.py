@@ -26,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--instrument", default=DEFAULT_INSTRUMENT)
     parser.add_argument("--data-source", default=DEFAULT_DATA_SOURCE)
     parser.add_argument("--strategies", nargs="+", default=None)
+    parser.add_argument("--starting-balance", default=None)
+    parser.add_argument(
+        "--use-strategy-config",
+        action="store_true",
+        help="Load strategy params from config/strategies.yaml for production-faithful research",
+    )
     return parser
 
 
@@ -39,6 +45,8 @@ def main() -> None:
         data_source=args.data_source,
         output_dir=args.output_dir,
         cache_dir=args.cache_dir,
+        use_strategy_config=args.use_strategy_config,
+        starting_balance=args.starting_balance,
     )
     print("Trader AI benchmark completed")
     print(f"cases: {result['cases']}")

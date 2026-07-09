@@ -488,6 +488,61 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
         adaptive_strategy.activate_component.assert_called_once()
         volume_strategy.activate_component.assert_called_once()
 
+    def test_activate_runtime_scanner_symbols_prefers_strict_candidates_over_preload(self):
+        settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+        scanner = Mock()
+        node = Mock()
+        node.is_running = True
+        runtime_strategy = Mock()
+        runtime_strategy.active_ccxt_symbols.return_value = set()
+        loader = Mock(return_value=[])
+        configs = {
+            "adaptive_trend_rider": StrategyExecutionConfig(
+                enabled=True,
+                instruments=[],
+                discovery_gate="hard",
+                params={"trade_notional_usdt": "150"},
+                scanner_execution={
+                    "enabled": True,
+                    "max_symbols": 1,
+                    "min_score": 7.0,
+                    "min_24h_volume": 50_000_000.0,
+                    "blacklist": [],
+                    "discovery_gate": "hard",
+                    "preload_runtime_symbols": True,
+                    "runtime_universe_size": 12,
+                },
+            ),
+        }
+
+        with patch.object(live, "load_strategy_configs", return_value=configs):
+            components = live.activate_runtime_scanner_symbols(
+                settings=settings,
+                scanner=scanner,
+                node=node,
+                active_symbols=set(),
+                candidates=[
+                    {
+                        "symbol": "ZEC/USDT:USDT",
+                        "score": float("inf"),
+                        "volume_24h": float("inf"),
+                        "runtime_preload": True,
+                    },
+                    {
+                        "symbol": "EVAA/USDT:USDT",
+                        "score": 20.0,
+                        "volume_24h": 100_000_000,
+                    },
+                ],
+                runtime_strategies={"adaptive_trend_rider": runtime_strategy},
+                warmer=loader,
+            )
+
+        self.assertEqual(
+            [component.instrument_spec.ccxt_symbol for component in components],
+            ["EVAA/USDT:USDT"],
+        )
+
     def test_activate_runtime_scanner_symbols_records_activation_metric(self):
         settings = live.load_settings(PROJECT_ROOT / "config" / "settings.yaml")
         scanner = Mock()
@@ -555,9 +610,9 @@ class LiveRunnerTimerCallbackTest(unittest.TestCase):
             candidate_count=1,
             selected_count=0,
             active_symbol_count=1,
-            min_score=7.0,
-            min_24h_volume=50_000_000.0,
-            max_symbols=6,
+            min_score=6.0,
+            min_24h_volume=15_000_000.0,
+            max_symbols=8,
         )
 
     def test_restart_recovery_injects_db_owned_component_and_hydrates_strategy(self):

@@ -32,6 +32,7 @@ from trader_ai.config import InstrumentSpec
 from trader_ai.config import NautilusSettings
 from trader_ai.config import load_instruments
 from trader_ai.config import load_settings
+from trader_ai.config import load_strategy_configs
 from trader_ai.data import generate_synthetic_bars
 from trader_ai.data import load_ccxt_bars
 from trader_ai.data import load_csv_bars
@@ -42,6 +43,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_DIR = PROJECT_ROOT / "output"
 DEFAULT_CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 INSTRUMENTS_PATH = PROJECT_ROOT / "config" / "instruments.yaml"
+STRATEGIES_PATH = PROJECT_ROOT / "config" / "strategies.yaml"
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,7 @@ def build_backtest_components(
     is_live: bool = False,
     discovery_gate: str = "off",
     strategy_params: dict[str, object] | None = None,
+    use_strategy_config: bool = False,
     use_discovery_journal: bool | None = None,
 ) -> BacktestComponents:
     instruments = load_instruments(INSTRUMENTS_PATH)
@@ -79,6 +82,11 @@ def build_backtest_components(
     instrument = _build_instrument(instrument_spec, venue)
     bar_type = BarType.from_str(instrument_spec.bar_type)
     resolved_strategy_name = strategy_name or settings.strategy_name
+    resolved_strategy_params = resolve_backtest_strategy_params(
+        strategy_name=resolved_strategy_name,
+        explicit_params=strategy_params,
+        use_strategy_config=use_strategy_config,
+    )
     strategy = create_strategy(
         name=resolved_strategy_name,
         instrument_id=instrument.id,
@@ -91,7 +99,7 @@ def build_backtest_components(
         ),
         discovery_gate=discovery_gate,
         ccxt_symbol=instrument_spec.ccxt_symbol,
-        params=strategy_params,
+        params=resolved_strategy_params,
     )
     return BacktestComponents(
         venue=venue,
@@ -176,6 +184,8 @@ def run_backtest(
     cache_dir: str | Path | None = None,
     fast_ema_period: int | None = None,
     slow_ema_period: int | None = None,
+    use_strategy_config: bool = False,
+    starting_balance: str | None = None,
 ) -> dict[str, object]:
     settings = (
         load_settings(settings_path)
@@ -189,9 +199,15 @@ def run_backtest(
         strategy_name=strategy_name,
         fast_ema_period=fast_ema_period,
         slow_ema_period=slow_ema_period,
+        use_strategy_config=use_strategy_config,
     )
     resolved_data_source = data_source or settings.data_source
     resolved_cache_dir = Path(cache_dir) if cache_dir is not None else DEFAULT_CACHE_DIR
+    resolved_starting_balance = (
+        starting_balance
+        or components.instrument_spec.starting_balance
+        or settings.starting_balance
+    )
     bars = _load_bars(
         data_source=resolved_data_source,
         settings=settings,
@@ -221,28 +237,14 @@ def run_backtest(
             oms_type=OmsType.NETTING,
             account_type=AccountType.MARGIN,
             starting_balances=[
-                _parse_balance(
-                    components.instrument_spec.starting_balance
-                    or settings.starting_balance
-                )
+                _parse_balance(resolved_starting_balance)
             ],
-            base_currency=_parse_balance_currency(
-                components.instrument_spec.starting_balance or settings.starting_balance
-            ),
+            base_currency=_parse_balance_currency(resolved_starting_balance),
             default_leverage=Decimal(1),
         )
         engine.add_instrument(components.instrument)
         engine.add_data(bars)
-        engine.add_strategy(
-            create_strategy(
-                name=components.strategy_name,
-                instrument_id=components.instrument.id,
-                bar_type=components.bar_type,
-                trade_size=components.instrument_spec.trade_size or settings.trade_size,
-                fast_ema_period=fast_ema_period or settings.fast_ema_period,
-                slow_ema_period=slow_ema_period or settings.slow_ema_period,
-            )
-        )
+        engine.add_strategy(components.strategy)
         engine.run()
         create_tearsheet(
             engine=engine,
@@ -256,16 +258,19 @@ def run_backtest(
         positions.to_csv(positions_path, index=False)
         fills.to_csv(fills_path, index=False)
         account.to_csv(account_path, index=False)
-        monthly_returns = _build_monthly_returns(positions, starting_balance=_parse_balance_amount(
-            components.instrument_spec.starting_balance or settings.starting_balance
-        ))
-        monthly_returns.to_csv(monthly_returns_path, index=False)
-        starting_balance = _parse_balance_amount(
-            components.instrument_spec.starting_balance or settings.starting_balance
+        monthly_returns = _build_monthly_returns(
+            positions,
+            starting_balance=_parse_balance_amount(resolved_starting_balance),
         )
-        final_balance = float(account["total"].iloc[-1]) if len(account) else starting_balance
-        net_pnl = final_balance - starting_balance
-        return_pct = (net_pnl / starting_balance) * 100 if starting_balance else 0.0
+        monthly_returns.to_csv(monthly_returns_path, index=False)
+        starting_balance_amount = _parse_balance_amount(resolved_starting_balance)
+        final_balance = float(account["total"].iloc[-1]) if len(account) else starting_balance_amount
+        net_pnl = final_balance - starting_balance_amount
+        return_pct = (
+            (net_pnl / starting_balance_amount) * 100
+            if starting_balance_amount
+            else 0.0
+        )
         realized_pnl = _sum_realized_pnl(positions)
 
         summary = {
@@ -286,7 +291,9 @@ def run_backtest(
             "cache_dir": str(resolved_cache_dir),
             "fast_ema_period": fast_ema_period or settings.fast_ema_period,
             "slow_ema_period": slow_ema_period or settings.slow_ema_period,
-            "starting_balance": starting_balance,
+            "use_strategy_config": use_strategy_config,
+            "starting_balance": starting_balance_amount,
+            "starting_balance_raw": resolved_starting_balance,
             "final_balance": final_balance,
             "net_pnl": net_pnl,
             "return_pct": return_pct,
@@ -297,6 +304,23 @@ def run_backtest(
         return summary
     finally:
         engine.dispose()
+
+
+def resolve_backtest_strategy_params(
+    *,
+    strategy_name: str,
+    explicit_params: dict[str, object] | None = None,
+    use_strategy_config: bool = False,
+) -> dict[str, object] | None:
+    if explicit_params is not None:
+        return dict(explicit_params)
+    if not use_strategy_config:
+        return None
+    strategy_configs = load_strategy_configs(STRATEGIES_PATH)
+    strategy_config = strategy_configs.get(strategy_name)
+    if strategy_config is None:
+        return None
+    return dict(strategy_config.params)
 
 
 def _build_instrument(instrument_spec: InstrumentSpec, venue: Venue):

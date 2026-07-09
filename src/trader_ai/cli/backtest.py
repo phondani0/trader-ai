@@ -17,6 +17,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fast-ema-period", type=int, default=None)
     parser.add_argument("--slow-ema-period", type=int, default=None)
     parser.add_argument("--ccxt-limit", type=int, default=None)
+    parser.add_argument("--starting-balance", default=None)
+    parser.add_argument(
+        "--use-strategy-config",
+        action="store_true",
+        help="Load strategy params from config/strategies.yaml for production-faithful research",
+    )
     return parser
 
 
@@ -33,6 +39,8 @@ def main():
         fast_ema_period=args.fast_ema_period,
         slow_ema_period=args.slow_ema_period,
         ccxt_limit=args.ccxt_limit,
+        use_strategy_config=args.use_strategy_config,
+        starting_balance=args.starting_balance,
     )
     print("NautilusTrader backtest completed")
     for key, value in result.items():

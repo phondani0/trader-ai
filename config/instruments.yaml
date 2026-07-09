@@ -14,7 +14,7 @@ btcusdt_perp_binance:
   venue: BINANCE
   bar_type: "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
   asset_class: crypto_perpetual
-  starting_balance: "100000 USDT"
+  starting_balance: "5000 USDT"
   trade_size: "1.0"
   ccxt_exchange: binanceusdm
   ccxt_symbol: "BTC/USDT:USDT"
@@ -26,7 +26,7 @@ ethusdt_perp_binance:
   venue: BINANCE
   bar_type: "ETHUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL"
   asset_class: crypto_perpetual
-  starting_balance: "100000 USDT"
+  starting_balance: "5000 USDT"
   trade_size: "0.100"
   ccxt_exchange: binanceusdm
   ccxt_symbol: "ETH/USDT:USDT"
@@ -38,7 +38,7 @@ xrpusdt_linear_bybit:
   venue: BYBIT
   bar_type: "XRPUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL"
   asset_class: crypto_perpetual
-  starting_balance: "100000 USDT"
+  starting_balance: "5000 USDT"
   trade_size: "100"
   ccxt_exchange: bybit
   ccxt_symbol: "XRP/USDT:USDT"
@@ -50,7 +50,7 @@ btcusdt_linear_bybit:
   venue: BYBIT
   bar_type: "BTCUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL"
   asset_class: crypto_perpetual
-  starting_balance: "100000 USDT"
+  starting_balance: "5000 USDT"
   trade_size: "1.0"
   ccxt_exchange: bybit
   ccxt_symbol: "BTC/USDT:USDT"
@@ -62,7 +62,7 @@ ethusdt_linear_bybit:
   venue: BYBIT
   bar_type: "ETHUSDT-LINEAR.BYBIT-15-MINUTE-LAST-EXTERNAL"
   asset_class: crypto_perpetual
-  starting_balance: "100000 USDT"
+  starting_balance: "5000 USDT"
   trade_size: "1.0"
   ccxt_exchange: bybit
   ccxt_symbol: "ETH/USDT:USDT"

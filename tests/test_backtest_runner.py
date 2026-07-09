@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from decimal import Decimal
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +67,21 @@ class BacktestRunnerTest(unittest.TestCase):
             self.assertIn("instrument_id", summary)
             self.assertIn("monthly_returns_path", summary)
 
+    def test_run_backtest_accepts_starting_balance_override(self):
+        with TemporaryDirectory() as tmpdir:
+            result = run_backtest(
+                output_dir=tmpdir,
+                data_source="synthetic",
+                instrument_name="btcusdt_linear_bybit",
+                strategy_name="volume_spike_trend",
+                starting_balance="5000 USDT",
+                use_strategy_config=True,
+            )
+
+            summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(summary["starting_balance"], 5000.0)
+            self.assertEqual(summary["starting_balance_raw"], "5000 USDT")
+
     def test_build_backtest_components_accepts_instrument_and_strategy_override(self):
         settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
 
@@ -81,6 +97,19 @@ class BacktestRunnerTest(unittest.TestCase):
             str(components.bar_type),
             "BTCUSDT-PERP.BINANCE-15-MINUTE-LAST-EXTERNAL",
         )
+
+    def test_build_backtest_components_can_use_strategy_config_params(self):
+        settings = load_settings(PROJECT_ROOT / "config" / "settings.yaml")
+
+        components = build_backtest_components(
+            settings,
+            strategy_name="volume_spike_trend",
+            use_strategy_config=True,
+        )
+
+        self.assertEqual(components.strategy_config.trade_notional_usdt, Decimal("500"))
+        self.assertEqual(components.strategy_config.volume_multiplier, 3.0)
+        self.assertEqual(components.strategy_config.max_hold_bars, 288)
 
     def test_balance_parser_supports_usdt_balances(self):
         balance = _parse_balance("1000 USDT")

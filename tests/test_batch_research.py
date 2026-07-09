@@ -26,6 +26,18 @@ class BatchResearchTest(unittest.TestCase):
         self.assertEqual(cases[0].instrument_name, "synthetic_fx")
         self.assertEqual(cases[-1].strategy_name, "nautilus_ema_cross")
 
+    def test_build_research_cases_marks_strategy_config_usage(self):
+        cases = build_research_cases(
+            instruments=["btcusdt_perp_binance"],
+            strategies=["volume_spike_trend"],
+            data_source="ccxt",
+            use_strategy_config=True,
+            starting_balance="5000 USDT",
+        )
+
+        self.assertTrue(cases[0].use_strategy_config)
+        self.assertEqual(cases[0].starting_balance, "5000 USDT")
+
 
 if __name__ == "__main__":
     unittest.main()

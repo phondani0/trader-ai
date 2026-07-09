@@ -38,6 +38,9 @@ class BacktestCliTest(unittest.TestCase):
                 "8",
                 "--slow-ema-period",
                 "21",
+                "--use-strategy-config",
+                "--starting-balance",
+                "5000 USDT",
             ]
         )
 
@@ -50,6 +53,8 @@ class BacktestCliTest(unittest.TestCase):
         self.assertEqual(args.cache_dir, "data/cache")
         self.assertEqual(args.fast_ema_period, 8)
         self.assertEqual(args.slow_ema_period, 21)
+        self.assertTrue(args.use_strategy_config)
+        self.assertEqual(args.starting_balance, "5000 USDT")
 
 
 if __name__ == "__main__":

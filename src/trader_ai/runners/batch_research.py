@@ -19,6 +19,8 @@ class ResearchCase:
     instrument_name: str
     strategy_name: str
     data_source: str
+    use_strategy_config: bool = False
+    starting_balance: str | None = None
 
 
 def build_research_cases(
@@ -26,12 +28,16 @@ def build_research_cases(
     instruments: list[str],
     strategies: list[str],
     data_source: str,
+    use_strategy_config: bool = False,
+    starting_balance: str | None = None,
 ) -> list[ResearchCase]:
     return [
         ResearchCase(
             instrument_name=instrument_name,
             strategy_name=strategy_name,
             data_source=data_source,
+            use_strategy_config=use_strategy_config,
+            starting_balance=starting_balance,
         )
         for instrument_name in instruments
         for strategy_name in strategies
@@ -46,6 +52,8 @@ def run_batch_research(
     data_source: str,
     output_dir: str | Path | None = None,
     cache_dir: str | Path | None = None,
+    use_strategy_config: bool = False,
+    starting_balance: str | None = None,
 ) -> dict[str, object]:
     resolved_output_dir = Path(output_dir) if output_dir is not None else OUTPUT_DIR
     resolved_cache_dir = Path(cache_dir) if cache_dir is not None else CACHE_DIR
@@ -55,6 +63,8 @@ def run_batch_research(
         instruments=instruments,
         strategies=strategies,
         data_source=data_source,
+        use_strategy_config=use_strategy_config,
+        starting_balance=starting_balance,
     )
     summaries: list[dict[str, object]] = []
     for case in cases:
@@ -74,6 +84,10 @@ def run_batch_research(
             "--cache-dir",
             str(resolved_cache_dir),
         ]
+        if case.use_strategy_config:
+            command.append("--use-strategy-config")
+        if case.starting_balance is not None:
+            command.extend(["--starting-balance", case.starting_balance])
         if settings_path is not None:
             command.extend(["--settings", str(settings_path)])
         subprocess.run(
