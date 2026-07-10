@@ -6,6 +6,7 @@ from typing import Any
 from typing import Callable
 
 from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.objects import Price
 
 from trader_ai.execution.instrumentation import execution_instrumentation
 
@@ -215,7 +216,7 @@ def ensure_exit_orders(*, owner: Any, request: ExitOrderRequest) -> ExitOrderHan
             request.instrument_id,
             side,
             request.quantity,
-            request.instrument.make_price(request.stop_price),
+            _make_exit_order_price(request.instrument, request.stop_price),
             reduce_only=True,
             tags=_exit_order_tags(
                 tag=EXIT_STOP_TAG,
@@ -242,7 +243,7 @@ def ensure_exit_orders(*, owner: Any, request: ExitOrderRequest) -> ExitOrderHan
             request.instrument_id,
             side,
             request.quantity,
-            request.instrument.make_price(take_profit_price),
+            _make_exit_order_price(request.instrument, take_profit_price),
             post_only=False,
             reduce_only=True,
             tags=_exit_order_tags(
@@ -301,7 +302,7 @@ def replace_exit_stop_if_improved(
         request.instrument_id,
         exit_order_side(request.position_side),
         request.quantity,
-        request.instrument.make_price(stop_price),
+        _make_exit_order_price(request.instrument, stop_price),
         reduce_only=True,
         tags=_exit_order_tags(
             tag=EXIT_STOP_TAG,
@@ -335,6 +336,16 @@ def replace_exit_stop_if_improved(
         result="replaced",
     )
     return True
+
+
+def _make_exit_order_price(instrument: Any, price: Decimal) -> Price:
+    try:
+        return instrument.make_price(price)
+    except TypeError:
+        price_precision = getattr(instrument, "price_precision", None)
+        if price_precision is None:
+            raise
+        return Price(price, precision=int(price_precision))
 
 
 def activate_profit_runner_if_ready(

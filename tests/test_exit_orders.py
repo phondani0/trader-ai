@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from unittest.mock import call
 
 from nautilus_trader.model.enums import OrderSide
+from nautilus_trader.model.objects import Price
 
 from trader_ai.execution.exit_orders import ExitOrderRequest
 from trader_ai.execution.exit_orders import activate_profit_runner_if_ready
@@ -20,6 +21,13 @@ from trader_ai.execution.exit_orders import submit_pending_exit_orders
 class FakeInstrument:
     def make_price(self, value):
         return f"price:{value}"
+
+
+class FakeStringPrecisionInstrument:
+    price_precision = "4"
+
+    def make_price(self, value):
+        raise TypeError("'<=' not supported between instances of 'str' and 'int'")
 
 
 class FakeCache:
@@ -266,6 +274,27 @@ def test_submit_pending_exit_orders_logs_full_error_message_on_failure(monkeypat
     assert exit_order_failed.call_args.kwargs["error"] == "invalid stop order call"
     assert runtime_error.call_args.kwargs["reason"] == "TypeError"
     assert runtime_error.call_args.kwargs["error"] == "invalid stop order call"
+
+
+def test_submit_pending_exit_orders_handles_string_price_precision_from_live_instrument():
+    owner = FakeOwner()
+    entry_order = SimpleNamespace(client_order_id="O-entry")
+    record_exit_order_request(
+        owner=owner,
+        entry_order=entry_order,
+        request=_request(
+            instrument=FakeStringPrecisionInstrument(),
+            stop_price=Decimal("95.123456"),
+        ),
+    )
+
+    handles = submit_pending_exit_orders(owner=owner, trade_id="T-1")
+
+    assert handles is not None
+    stop_price = owner.order_factory.stop_market.call_args.args[3]
+    assert isinstance(stop_price, Price)
+    assert str(stop_price) == "95.1235"
+    owner.close_all_positions.assert_not_called()
 
 
 def test_submit_pending_exit_orders_can_skip_failure_callback_for_retryable_attempt():

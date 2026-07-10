@@ -67,6 +67,26 @@ _runtime_symbols: set[str] = set()
 _runtime_strategies: dict[str, object] = {}
 
 
+def build_market_data_exchange(exchange_name: str):
+    exchange_class = getattr(ccxt, exchange_name)
+    return exchange_class({"enableRateLimit": True, "options": {"defaultType": "swap"}})
+
+
+def build_account_exchange(
+    exchange_name: str,
+    *,
+    is_paper: bool,
+    api_key: str,
+    api_secret: str,
+):
+    exchange = build_market_data_exchange(exchange_name)
+    exchange.apiKey = api_key
+    exchange.secret = api_secret
+    if is_paper and hasattr(exchange, "set_sandbox_mode"):
+        exchange.set_sandbox_mode(True)
+    return exchange
+
+
 def _trigger_discovery_scan(_event: object | None = None) -> None:
     """Sidecar task: Run MarketScanner V2."""
     if _scanner:
@@ -896,13 +916,12 @@ def build_live_node(
 
     # Initialize the Sidecars
     global _db, _journal, _scanner
+    exchange_name = primary_component.instrument_spec.ccxt_exchange or "binanceusdm"
     if _db is None:
         _db = DatabaseManager()
-        exchange_name = primary_component.instrument_spec.ccxt_exchange or "binanceusdm"
-        exchange_class = getattr(ccxt, exchange_name)
-        exchange = exchange_class()
-        _journal = DiscoveryJournal(exchange, _db, asdict(settings))
-        _scanner = MarketScanner(exchange, asdict(settings), _journal)
+        market_data_exchange = build_market_data_exchange(exchange_name)
+        _journal = DiscoveryJournal(market_data_exchange, _db, asdict(settings))
+        _scanner = MarketScanner(market_data_exchange, asdict(settings), _journal)
         
     run_id = getattr(settings, "run_id", None) or uuid4().hex
     recovery_service = PositionRecoveryService(_db, run_id=run_id)
@@ -911,10 +930,12 @@ def build_live_node(
     api_key = os.environ.get("EXCHANGE_API_KEY", "")
     api_secret = os.environ.get("EXCHANGE_SECRET_KEY", "")
 
-    exchange.apiKey = api_key
-    exchange.secret = api_secret
-    if is_paper and hasattr(exchange, "set_sandbox_mode"):
-        exchange.set_sandbox_mode(True)
+    exchange = build_account_exchange(
+        exchange_name,
+        is_paper=is_paper,
+        api_key=api_key,
+        api_secret=api_secret,
+    )
 
     try:
         raw_positions = exchange.fetch_positions()

@@ -25,6 +25,35 @@ from trader_ai.execution.recovery import strategy_position_state_from_row  # noq
 
 
 class LiveRunnerTimerCallbackTest(unittest.TestCase):
+    def test_market_data_exchange_stays_public_when_account_exchange_is_paper(self):
+        class FakeExchange:
+            instances = []
+
+            def __init__(self, config=None):
+                self.config = config or {}
+                self.apiKey = ""
+                self.secret = ""
+                self.sandbox_enabled = False
+                self.__class__.instances.append(self)
+
+            def set_sandbox_mode(self, enabled):
+                self.sandbox_enabled = enabled
+
+        with patch.object(live.ccxt, "bybit", FakeExchange):
+            market_data_exchange = live.build_market_data_exchange("bybit")
+            account_exchange = live.build_account_exchange(
+                "bybit",
+                is_paper=True,
+                api_key="key",
+                api_secret="secret",
+            )
+
+        self.assertIsNot(market_data_exchange, account_exchange)
+        self.assertFalse(market_data_exchange.sandbox_enabled)
+        self.assertTrue(account_exchange.sandbox_enabled)
+        self.assertEqual(account_exchange.apiKey, "key")
+        self.assertEqual(account_exchange.secret, "secret")
+
     def test_live_cli_configures_observability_before_run_live(self):
         with (
             patch.object(
