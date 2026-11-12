@@ -2,7 +2,7 @@
 
 `Trader AI` is now a single-project `NautilusTrader` workspace for `15m` crypto research and paper-trading workflows.
 
-The old custom runtime and benchmark stack are gone. The repo now has one application package under [src/trader_ai](/Users/ankit/Work/Projects/solo/trader-ai/src/trader_ai), one config directory under [config](/Users/ankit/Work/Projects/solo/trader-ai/config), one cache directory under [data/cache](/Users/ankit/Work/Projects/solo/trader-ai/data/cache), and one test suite under [tests](/Users/ankit/Work/Projects/solo/trader-ai/tests).
+The old custom runtime and benchmark stack are gone. The repo now has one application package under [src/trader_ai](src/trader_ai), one config directory under [config](config), one cache directory under [data/cache](data/cache), and one test suite under [tests](tests).
 
 ## Setup
 

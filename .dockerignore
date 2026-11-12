@@ -1,0 +1,31 @@
+# Environment & secrets
+.env*
+
+# Runtime data & memory
+data/
+logs/
+*.log
+*.db
+*.sqlite*
+
+# Git & virtualenvs
+.git/
+.venv/
+venv/
+
+# Caches & build outputs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+output/
+scratch/
+dist/
+build/
+
+# Internal agent scaffolding
+.agents/
+.claude/
+docs/superpowers/
+fix_live.py
+test_node.py

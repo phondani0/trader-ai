@@ -1,17 +1,50 @@
-# .gitignore
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
-.env
+*.py[cod]
+*$py.class
+
+# Environment & secrets
+.env*
+*.pem
+*.key
+*.crt
+
+# Runtime data & memory
 data/
 logs/
+*.log
 *.db
+*.sqlite*
+
+# Virtual environments
 .venv/
 venv/
+ENV/
+
+# IDE configs
 .idea/
 .vscode/
+
+# Packaging & builds
 *.egg-info/
 dist/
 build/
+
+# OS artifacts
 .DS_Store
+Thumbs.db
+
+# Test & lint caches
+.pytest_cache/
+.ruff_cache/
+
+# Local runs & scratch
 output/
+scratch/
+fix_live.py
+test_node.py
+
+# Internal AI agent scaffolding (kept local)
+.agents/
+.claude/
+AGENTS.md
